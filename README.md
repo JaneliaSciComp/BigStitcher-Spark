@@ -1,5 +1,7 @@
 # BigStitcher-Spark
-Running compute-intense parts of BigStitcher distributed
+Running compute-intense parts of BigStitcher distributed. For now we support fusion using affine transformation models (including translations of course). It should scale very well to large datasets as it tests for each block that is written which images are overlapping.
+
+Sharing this early as it might be useful ...
 
 Here is my example config:
 
