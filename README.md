@@ -3,11 +3,11 @@ Running compute-intense parts of BigStitcher distributed. For now we support **f
 
 Sharing this early as it might be useful ...
 
-Here is my example config:
+Here is my example config for this [example dataset](https://drive.google.com/file/d/1mhXelaF1yXZmch2Lw6rMCl6p4V0kUDQc/view?usp=sharing):
 
 ```
--x '/Users/spreibi/Documents/Microscopy/Stitching/Truman/standard/dataset.xml'
--o '/Users/spreibi/Documents/Microscopy/Stitching/Truman/standard/test-spark.n5'
+-x '~/test/dataset.xml'
+-o '~/test/test-spark.n5'
 -d '/ch488/s0'
 --UINT8
 --minIntensity 10
