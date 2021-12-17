@@ -86,11 +86,6 @@
     </repositories>
     <dependencies>
         <dependency>
-            <groupId>com.github.PreibischLab</groupId>
-            <artifactId>RS-FISH</artifactId>
-            <version>71d1612</version>
-        </dependency>
-        <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-s3</artifactId>
             <version>${aws-java-sdk-s3.version}</version>
@@ -179,6 +174,15 @@
             <artifactId>netty</artifactId>
             <version>3.9.9.Final</version>
         </dependency>
+        <dependency>
+        	<groupId>net.preibisch</groupId>
+        	<artifactId>BigStitcher</artifactId>
+        	<version>0.8.3</version>
+        </dependency>
+		<dependency>
+			<groupId>info.picocli</groupId>
+			<artifactId>picocli</artifactId>
+		</dependency>
     </dependencies>
     <groupId>net.preibisch</groupId>
     <build>
