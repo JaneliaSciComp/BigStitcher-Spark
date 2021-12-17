@@ -20,7 +20,7 @@ And for local spark you need JVM paramters (8 cores, 50GB RAM):
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-Ask you sysadmin how to run it on your cluster. `mvn clean package` builds `target/BigStitcher-Spark-jar-with-dependencies.jar` for distribution.
+Ask your sysadmin for help how to run it on your cluster. `mvn clean package` builds `target/BigStitcher-Spark-jar-with-dependencies.jar` for distribution.
 
 
 You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the n5-utils package (https://github.com/saalfeldlab/n5-utils).
