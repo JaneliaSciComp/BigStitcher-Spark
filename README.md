@@ -10,10 +10,12 @@ Here is my example config:
 -o '/Users/spreibi/Documents/Microscopy/Stitching/Truman/standard/test-spark.n5'
 -d '/ch488/s0'
 --UINT8
---minIntensity 0
---maxIntensity 255
+--minIntensity 10
+--maxIntensity 512
 --channelId 0
 ```
+*Note: here I save it as UNIT8 [0..255] and scale all intensities between `10` and `512` to that range. If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required.*
+
 
 And for local spark you need JVM paramters (8 cores, 50GB RAM):
 
