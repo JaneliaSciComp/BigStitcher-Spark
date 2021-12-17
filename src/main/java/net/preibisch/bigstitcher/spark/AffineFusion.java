@@ -16,14 +16,20 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
+import net.imglib2.FinalRealInterval;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -342,6 +348,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		n5.setAttribute( n5Dataset, "min", min);
 
+		System.out.println( "numBlocks = " + Grid.create( dimensions, blockSize).size() );
+
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
@@ -353,28 +361,58 @@ public class AffineFusion implements Callable<Void>, Serializable
 								dimensions,
 								blockSize));
 
-		System.out.println( "numBlocks = " + Grid.create( dimensions, blockSize).size() );
-
 		final long time = System.currentTimeMillis();
 
 		rdd.foreach(
 				gridBlock -> {
 					final SpimData2 dataLocal = new XmlIoSpimData2( "" ).load( xmlPath );
 
+					// be smarter, test which ViewIds are actually needed for the block we want to fuse
+					final Interval fusedBlock =
+							Intervals.translate(
+									Intervals.translate(
+											new FinalInterval( gridBlock[1] ), // blocksize
+											gridBlock[0] ), // block offset
+									min ); // min of the randomaccessbileinterval
+
 					// recover views to process
 					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
+
 					for ( int i = 0; i < serializedViewIds.length; ++i )
-						viewIdsLocal.add( new ViewId( serializedViewIds[i][0], serializedViewIds[i][1] ));
+					{
+						final ViewId viewId =  new ViewId( serializedViewIds[i][0], serializedViewIds[i][1] );
+						final Dimensions dim = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() ).getImageSize( viewId.getTimePointId() );
 
-					// TODO: be smarter, test which ViewIds are actually needed for the block we want to fuse
+						final ViewRegistration reg = dataLocal.getViewRegistrations().getViewRegistration( viewId );
+						reg.updateModel();
+						final AffineTransform3D model = reg.getModel();
 
-					final N5Writer n5Writer = new N5FSWriter(n5Path);
+						// expand to be conservative ...
+						final Interval bounds = Intervals.expand( Intervals.largestContainedInterval( model.estimateBounds( new FinalInterval( dim ) ) ), 2 );
+						final Interval intersection = Intervals.intersect( fusedBlock, bounds );
+
+						boolean overlaps = true;
+
+						for ( int d = 0; d < intersection.numDimensions(); ++d )
+							if ( intersection.dimension( d ) < 0 )
+								overlaps = false;
+
+						if ( overlaps )
+							viewIdsLocal.add( viewId );
+					}
+
+					// nothing to save...
+					if ( viewIdsLocal.size() == 0 )
+						return;
+
 					final RandomAccessibleInterval<FloatType> source =
 									FusionTools.fuseVirtual(
 											dataLocal,
 											viewIdsLocal,
 											new FinalInterval(minBB, maxBB),
 											Double.NaN ).getA();
+
+					final N5Writer n5Writer = new N5FSWriter(n5Path);
 
 					if ( uint8 )
 					{
