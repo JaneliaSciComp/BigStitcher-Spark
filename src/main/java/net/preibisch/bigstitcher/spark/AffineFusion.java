@@ -366,14 +366,15 @@ public class AffineFusion implements Callable<Void>, Serializable
 					for ( int i = 0; i < serializedViewIds.length; ++i )
 						viewIdsLocal.add( new ViewId( serializedViewIds[i][0], serializedViewIds[i][1] ));
 
+					// TODO: be smarter, test which ViewIds are actually needed for the block we want to fuse
+
 					final N5Writer n5Writer = new N5FSWriter(n5Path);
 					final RandomAccessibleInterval<FloatType> source =
-							Views.zeroMin(
 									FusionTools.fuseVirtual(
 											dataLocal,
 											viewIdsLocal,
 											new FinalInterval(minBB, maxBB),
-											Double.NaN ).getA() );
+											Double.NaN ).getA();
 
 					if ( uint8 )
 					{
