@@ -46,6 +46,13 @@
         </developer>
     </developers>
 
+	<contributors>
+       <contributor>
+            <name>Marwan Zouinkhi</name>
+            <url>https://</url>
+        </contributor>
+	</contributors>
+
     <mailingLists>
         <mailingList>
             <name>ImageJ Forum</name>
