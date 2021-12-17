@@ -10,11 +10,11 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 -o '~/test/test-spark.n5'
 -d '/ch488/s0'
 --UINT8
---minIntensity 10
---maxIntensity 512
+--minIntensity 1
+--maxIntensity 254
 --channelId 0
 ```
-*Note: here I save it as UINT8 [0..255] and scale all intensities between `10` and `512` to that range. If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
+*Note: here I save it as UINT8 [0..255] and scale all intensities between `1` and `254` to that range (so it is more obvious what happens). If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
 
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
 
