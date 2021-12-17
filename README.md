@@ -16,6 +16,8 @@ Here is my example config:
 ```
 *Note: here I save it as UINT8 [0..255] and scale all intensities between `10` and `512` to that range. If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
 
+***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
+
 
 And for local spark you need JVM paramters (8 cores, 50GB RAM):
 
