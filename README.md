@@ -18,6 +18,7 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
 
+*The blocksize is currently hardcoded to `128x128x128`, but can easily be added as another parameter (pull requests welcome :).`
 
 And for local spark you need JVM paramters (8 cores, 50GB RAM):
 
