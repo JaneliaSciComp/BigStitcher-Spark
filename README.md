@@ -14,7 +14,7 @@ Here is my example config:
 --maxIntensity 512
 --channelId 0
 ```
-*Note: here I save it as UINT8 [0..255] and scale all intensities between `10` and `512` to that range. If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required.*
+*Note: here I save it as UINT8 [0..255] and scale all intensities between `10` and `512` to that range. If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` is also supported.*
 
 
 And for local spark you need JVM paramters (8 cores, 50GB RAM):
