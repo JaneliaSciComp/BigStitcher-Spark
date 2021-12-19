@@ -3,7 +3,6 @@ package net.preibisch.bigstitcher.spark;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.Callable;
 
@@ -17,11 +16,9 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
-import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
@@ -33,6 +30,8 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Grid;
+import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
@@ -89,99 +88,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "--maxIntensity" }, required = false, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
 
-	public static ArrayList< ViewId > getViewIds( final SpimData2 data )
-	{
-		// select views to process
-		final ArrayList< ViewId > viewIds = new ArrayList< ViewId >();
-		viewIds.addAll( data.getSequenceDescription().getViewDescriptions().values() );
-
-		// filter not present ViewIds
-		SpimData2.filterMissingViews( data, viewIds );
-
-		return viewIds;
-	}
-
-	public static ArrayList< ViewId > getViewIds( final SpimData2 data, final ArrayList<ViewId> vi )
-	{
-		// select views to process
-		final ArrayList< ViewId > viewIds = new ArrayList< ViewId >();
-
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-		{
-			for ( final ViewId v : vi )
-				if ( vd.getTimePointId() == v.getTimePointId() && vd.getViewSetupId() == v.getViewSetupId() )
-					viewIds.add( vd );
-		}
-
-		// filter not present ViewIds
-		SpimData2.filterMissingViews( data, viewIds );
-
-		return viewIds;
-	}
-
-	public static ArrayList< ViewId > getViewIds(
-			final SpimData2 data,
-			final HashSet<Integer> a,
-			final HashSet<Integer> c,
-			final HashSet<Integer> i,
-			final HashSet<Integer> ti,
-			final HashSet<Integer> tp )
-	{
-		// select views to process
-		final ArrayList< ViewId > viewIds = new ArrayList< ViewId >();
-
-		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-		{
-			if (
-					( a == null || a.contains( vd.getViewSetup().getAngle().getId() )) &&
-					( c == null || c.contains( vd.getViewSetup().getChannel().getId() )) &&
-					( i == null || i.contains( vd.getViewSetup().getIllumination().getId() )) &&
-					( ti == null || ti.contains( vd.getViewSetup().getTile().getId() )) &&
-					( tp == null || tp.contains( vd.getTimePointId() )) )
-			{
-				viewIds.add( vd );
-			}
-		}
-
-		// filter not present ViewIds
-		SpimData2.filterMissingViews( data, viewIds );
-
-		return viewIds;
-	}
-
-	public static HashSet< Integer > parseIdList( String idList )
-	{
-		if ( idList == null )
-			return null;
-
-		idList = idList.trim();
-
-		if ( idList.length() == 0 )
-			return null;
-
-		final String[] ids = idList.split( "," );
-		final HashSet< Integer > hash = new HashSet<>();
-
-		for ( int i = 0; i < ids.length; ++i )
-			hash.add( Integer.parseInt( ids[ i ].trim() ) );
-
-		return hash;
-	}
-
-	public static ArrayList<ViewId> viewId( final String[] s )
-	{
-		final ArrayList<ViewId> viewIds = new ArrayList<>();
-		for ( final String s0 : s )
-			viewIds.add( viewId( s0 ) );
-		return viewIds;
-	}
-
-	public static ViewId viewId( final String s )
-	{
-		final String[] e = s.trim().split( "," );
-		return new ViewId( Integer.parseInt( e[0].trim()), Integer.parseInt( e[1].trim() ) );
-	}
-
 	@Override
 	public Void call() throws Exception
 	{
@@ -207,43 +113,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final SpimData2 data = io.load( xmlPath );
 
 		// select views to process
-		final ArrayList< ViewId > viewIds;
-
-		if ( vi != null )
-		{
-			System.out.println( "Parsing selected ViewIds ... ");
-			ArrayList<ViewId> parsedViews = viewId( vi );
-			viewIds = getViewIds( data, parsedViews );
-		}
-		else if ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null )
-		{
-			System.out.print( "Parsing selected angle ids ... ");
-			final HashSet<Integer> a = parseIdList( angleIds );
-			System.out.println( a != null ? a : "all" );
-
-			System.out.print( "Parsing selected channel ids ... ");
-			final HashSet<Integer> c = parseIdList( channelIds );
-			System.out.println( c != null ? c : "all" );
-
-			System.out.print( "Parsing selected illumination ids ... ");
-			final HashSet<Integer> i = parseIdList( illuminationIds );
-			System.out.println( i != null ? i : "all" );
-
-			System.out.print( "Parsing selected tile ids ... ");
-			final HashSet<Integer> ti = parseIdList( tileIds );
-			System.out.println( ti != null ? ti : "all" );
-
-			System.out.print( "Parsing selected timepoint ids ... ");
-			final HashSet<Integer> tp = parseIdList( timepointIds );
-			System.out.println( tp != null ? tp : "all" );
-
-			viewIds = getViewIds( data, a, c, i, ti, tp );
-		}
-		else
-		{
-			// get all
-			viewIds = getViewIds( data );
-		}
+		final ArrayList< ViewId > viewIds =
+				Import.createViewIds(
+						data, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		if ( viewIds.size() == 0 )
 		{
@@ -325,13 +197,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 			range = ( this.maxIntensity - this.minIntensity ) / 65535.0;
 		else
 			range = 0;
-		final int[][] serializedViewIds = new int[ viewIds.size() ][ 2 ];
-
-		for ( int i = 0; i < viewIds.size(); ++i )
-		{
-			serializedViewIds[ i ][ 0 ] = viewIds.get( i ).getTimePointId();
-			serializedViewIds[ i ][ 1 ] = viewIds.get( i ).getViewSetupId();
-		}
+		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
 
 		for ( int d = 0; d < minBB.length; ++d )
 		{
@@ -380,7 +246,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 					for ( int i = 0; i < serializedViewIds.length; ++i )
 					{
-						final ViewId viewId =  new ViewId( serializedViewIds[i][0], serializedViewIds[i][1] );
+						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 						final Dimensions dim = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() ).getImageSize( viewId.getTimePointId() );
 
 						final ViewRegistration reg = dataLocal.getViewRegistrations().getViewRegistration( viewId );
