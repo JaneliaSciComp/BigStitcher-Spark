@@ -40,7 +40,7 @@ import net.preibisch.mvrecon.process.fusion.FusionTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class AffineFusion implements Callable<Void>, Serializable 
+public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
@@ -91,23 +91,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Override
 	public Void call() throws Exception
 	{
-		if ( uint8 && uint16 )
-		{
-			System.err.println( "Please only select UINT8, UINT16 or nothing (FLOAT32)." );
-			System.exit(0);
-		}
-
-		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) )
-		{
-			System.err.println( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
-			System.exit(0);
-		}
-
-		if ( vi != null && ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null ) )
-		{
-			System.err.println( "You can only specify ViewIds (-vi) OR angles, channels, illuminations, tiles, timepoints." );
-			System.exit(0);
-		}
+		if ( !Import.testInputParamters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds) )
+			System.exit( 1 );
 
 		final XmlIoSpimData2 io = new XmlIoSpimData2( "" );
 		final SpimData2 data = io.load( xmlPath );
@@ -119,32 +104,20 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		if ( viewIds.size() == 0 )
 		{
-			System.err.println( "No views to fuse left." );
-			System.exit(0);
-		}
-
-		System.out.println( "Following ViewIds will be fused: ");
-		for ( final ViewId v : viewIds )
-			System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-		System.out.println();
-
-		BoundingBox bb = null;
-
-		if ( boundingBoxName == null )
-		{
-			bb = BoundingBoxTools.maximalBoundingBox( data, viewIds, "All Views" );
+			System.err.println( "No views to fuse." );
+			System.exit(1);
 		}
 		else
 		{
-			final List<BoundingBox> boxes = BoundingBoxTools.getAllBoundingBoxes( data, null, false );
-
-			for ( final BoundingBox box : boxes )
-				if ( box.getTitle().equals( boundingBoxName ) )
-					bb = box;
-
-			if ( bb == null )
-				throw new RuntimeException( "Bounding box '" + boundingBoxName + "' not present in XML." );
+			System.out.println( "Following ViewIds will be fused: ");
+			for ( final ViewId v : viewIds )
+				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
+			System.out.println();
 		}
+
+		final BoundingBox bb = Import.getBoundingBox( data, viewIds, boundingBoxName );
+		if ( bb == null )
+			System.exit( 1 );
 
 		final int[] blockSize = new int[] { 128, 128, 128 };
 
@@ -180,13 +153,21 @@ public class AffineFusion implements Callable<Void>, Serializable
 		//ImageJFunctions.show( virtual, Executors.newFixedThreadPool( Runtime.getRuntime().availableProcessors() ) );
 		//SimpleMultiThreading.threadHaltUnClean();
 
+		//
 		// final variables for Spark
+		//
 		final String n5Path = this.n5Path;
 		final String n5Dataset = this.n5Dataset;
 		final String xmlPath = this.xmlPath;
-		final N5Writer n5 = new N5FSWriter(n5Path);
 		final long[] minBB = new long[ bb.numDimensions() ];
 		final long[] maxBB = new long[ bb.numDimensions() ];
+
+		for ( int d = 0; d < minBB.length; ++d )
+		{
+			minBB[ d ] = bb.min( d );
+			maxBB[ d ] = bb.max( d );
+		}
+
 		final boolean uint8 = this.uint8;
 		final boolean uint16 = this.uint16;
 		final double minIntensity = (uint8 || uint16 ) ? this.minIntensity : 0;
@@ -199,11 +180,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 			range = 0;
 		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
 
-		for ( int d = 0; d < minBB.length; ++d )
-		{
-			minBB[ d ] = bb.min( d );
-			maxBB[ d ] = bb.max( d );
-		}
+		final N5Writer n5 = new N5FSWriter(n5Path);
 
 		n5.createDataset(
 				n5Dataset,

@@ -2,13 +2,78 @@ package net.preibisch.bigstitcher.spark.util;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 
 public class Import {
+
+	public static BoundingBox getBoundingBox(
+			final SpimData2 data,
+			final List< ViewId > viewIds,
+			final String boundingBoxName )
+	{
+		BoundingBox bb = null;
+
+		if ( boundingBoxName == null )
+		{
+			bb = BoundingBoxTools.maximalBoundingBox( data, viewIds, "All Views" );
+		}
+		else
+		{
+			final List<BoundingBox> boxes = BoundingBoxTools.getAllBoundingBoxes( data, null, false );
+
+			for ( final BoundingBox box : boxes )
+				if ( box.getTitle().equals( boundingBoxName ) )
+					bb = box;
+
+			if ( bb == null )
+			{
+				System.out.println( "Bounding box '" + boundingBoxName + "' not present in XML." );
+				return null;
+			}
+		}
+
+		return bb;
+	}
+
+	public static boolean testInputParamters(
+			final boolean uint8,
+			final boolean uint16,
+			final Double minIntensity,
+			final Double maxIntensity,
+			final String[] vi,
+			final String angleIds, 
+			final String channelIds,
+			final String illuminationIds,
+			final String tileIds,
+			final String timepointIds )
+	{
+		if ( uint8 && uint16 )
+		{
+			System.err.println( "Please only select UINT8, UINT16 or nothing (FLOAT32)." );
+			return false;
+		}
+
+		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) )
+		{
+			System.err.println( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
+			return false;
+		}
+
+		if ( vi != null && ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null ) )
+		{
+			System.err.println( "You can only specify ViewIds (-vi) OR angles, channels, illuminations, tiles, timepoints." );
+			return false;
+		}
+
+		return true;
+	}
 
 	public static ArrayList< ViewId > createViewIds(
 			final SpimData data,
