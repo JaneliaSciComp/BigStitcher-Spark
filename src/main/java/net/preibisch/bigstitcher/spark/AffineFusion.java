@@ -3,7 +3,6 @@ package net.preibisch.bigstitcher.spark;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.Callable;
 
 import org.apache.spark.SparkConf;
@@ -15,14 +14,11 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
-import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
-import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -32,10 +28,10 @@ import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -224,23 +220,11 @@ public class AffineFusion implements Callable<Void>, Serializable
 					for ( int i = 0; i < serializedViewIds.length; ++i )
 					{
 						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
-						final Dimensions dim = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() ).getImageSize( viewId.getTimePointId() );
-
-						final ViewRegistration reg = dataLocal.getViewRegistrations().getViewRegistration( viewId );
-						reg.updateModel();
-						final AffineTransform3D model = reg.getModel();
 
 						// expand to be conservative ...
-						final Interval bounds = Intervals.expand( Intervals.largestContainedInterval( model.estimateBounds( new FinalInterval( dim ) ) ), 2 );
-						final Interval intersection = Intervals.intersect( fusedBlock, bounds );
+						final Interval bounds = Intervals.expand( ViewUtil.getTransformedBoundingBox( dataLocal, viewId ), 2 );
 
-						boolean overlaps = true;
-
-						for ( int d = 0; d < intersection.numDimensions(); ++d )
-							if ( intersection.dimension( d ) < 0 )
-								overlaps = false;
-
-						if ( overlaps )
+						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
 							viewIdsLocal.add( viewId );
 					}
 
