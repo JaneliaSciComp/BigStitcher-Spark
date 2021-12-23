@@ -31,3 +31,7 @@ Ask your sysadmin for help how to run it on your cluster. `mvn clean package` bu
 You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the n5-utils package (https://github.com/saalfeldlab/n5-utils).
 
 You can create a multiresolution pyramid of this data using https://github.com/saalfeldlab/n5-spark
+
+
+***Update: now there is support for non-rigid distributed fusion using `net.preibisch.bigstitcher.spark.NonRigidFusionSpark`***
+In order to run it one needs to additionally define the corresponding **interest points**, e.g. `-ip beads` that will be used to compute the non-rigid transformation.
