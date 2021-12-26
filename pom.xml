@@ -192,35 +192,57 @@
 		</dependency>
     </dependencies>
     <groupId>net.preibisch</groupId>
-    <build>
-        <finalName>BigStitcher-Spark</finalName>
-        <plugins>
-
-            <!-- other Maven plugins ... -->
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.1.1</version>
-
-                <configuration>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                </configuration>
-
-                <executions>
-                    <execution>
-                        <id>make-assembly</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                    </execution>
-                </executions>
-
-            </plugin>
-        </plugins>
-    </build>
+	<profiles>
+	<profile>
+			<id>fatjar</id>
+			<build>
+				<plugins>
+					<!-- Maven shade for Uber Jar -->
+					<!-- https://maven.apache.org/plugins/maven-shade-plugin/shade-mojo.html -->
+					<!-- https://databricks.gitbooks.io/databricks-spark-knowledge-base/content/troubleshooting/missing_dependencies_in_jar_files.html -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-shade-plugin</artifactId>
+						<configuration>
+							<!-- Do not minimize for now to speed up packaging. -->
+							<transformers combine.children="append">
+								<transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+									<resource>META-INF/json/mpicbg.spim.data.generic.sequence.ImgLoaderIo</resource>
+								</transformer>
+							</transformers>
+							<!--<minimizeJar>true</minimizeJar> -->
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/*.SF</exclude>
+										<exclude>META-INF/*.DSA</exclude>
+										<exclude>META-INF/*.RSA</exclude>
+									</excludes>
+								</filter>
+							</filters>
+							<!-- Additional configuration. -->
+							<relocations>
+								<relocation>
+									<pattern>org.apache.commons.compress</pattern>
+									<shadedPattern>org.janelia.saalfeldlab.org.apache.commons.compress</shadedPattern>
+								</relocation>
+							</relocations>
+						</configuration>
+						<!-- binds by default to package phase -->
+						<executions>
+							<execution>
+								<phase>package</phase>
+								<goals>
+									<goal>shade</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- Maven shade end -->
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>
