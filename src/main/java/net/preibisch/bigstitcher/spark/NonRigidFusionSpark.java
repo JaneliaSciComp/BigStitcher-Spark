@@ -17,6 +17,7 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -230,13 +231,18 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 					// recover views to process
 					final List< ViewId > viewsToFuse = new ArrayList<>(); // fuse
 					final List< ViewId > allViews = new ArrayList<>();
-					
+
+					// Create N5ImageLoader outside of loop to reduce total number of created fetcher threads.
+					// TODO: parameterize N5ImageLoader fetcher thread count to allow override in Spark environments
+					final ImgLoader imgLoader = dataLocal.getSequenceDescription().getImgLoader();
+
 					for ( int i = 0; i < serializedViewIds.length; ++i )
 					{
 						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 
 						// expand by 50 to be conservative for non-rigid overlaps
-						final Interval bounds = Intervals.expand( ViewUtil.getTransformedBoundingBox(dataLocal, viewId), 50 );
+						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, imgLoader );
+						final Interval bounds = Intervals.expand( boundingBox, 50 );
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
 							viewsToFuse.add( viewId );
@@ -254,11 +260,13 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 
 					for ( final ViewId viewId : allViews )
 					{
-						final Interval boundsView = Intervals.expand( ViewUtil.getTransformedBoundingBox( dataLocal, viewId ), 25 );
+						final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, imgLoader );
+						final Interval boundsView = Intervals.expand( boundingBoxView, 25 );
 
 						for ( final ViewId fusedId : viewsToFuse )
 						{
-							final Interval boundsFused = Intervals.expand( ViewUtil.getTransformedBoundingBox( dataLocal, fusedId ), 25 );
+							final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId, imgLoader );
+							final Interval boundsFused = Intervals.expand( boundingBoxFused, 25 );
 							
 							if ( ViewUtil.overlaps( boundsView, boundsFused ))
 							{

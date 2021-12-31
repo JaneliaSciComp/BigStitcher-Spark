@@ -2,6 +2,8 @@ package net.preibisch.bigstitcher.spark.util;
 
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.sequence.ImgLoader;
+import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
@@ -21,9 +23,12 @@ public class ViewUtil {
 		return true;
 	}
 
-	public static Interval getTransformedBoundingBox( final SpimData data, final ViewId viewId )
+	public static Interval getTransformedBoundingBox( final SpimData data,
+													  final ViewId viewId,
+													  final ImgLoader imgLoader )
 	{
-		final Dimensions dim = data.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() ).getImageSize( viewId.getTimePointId() );
+		final SetupImgLoader<?> setupImgLoader = imgLoader.getSetupImgLoader(viewId.getViewSetupId());
+		final Dimensions dim = setupImgLoader.getImageSize(viewId.getTimePointId() );
 
 		final ViewRegistration reg = data.getViewRegistrations().getViewRegistration( viewId );
 		reg.updateModel();
