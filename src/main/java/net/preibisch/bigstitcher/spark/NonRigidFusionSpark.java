@@ -22,6 +22,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
+import net.imglib2.parallel.SequentialExecutorService;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -281,7 +282,7 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 					final boolean useContentBased = false;
 					final boolean displayDistances = false;
 
-					final ExecutorService service = Executors.newFixedThreadPool( 1 );
+					final ExecutorService service = new SequentialExecutorService();
 
 					final RandomAccessibleInterval< FloatType > source =
 							NonRigidTools.fuseVirtualInterpolatedNonRigid(
@@ -300,7 +301,7 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 									downsampling,
 									null,
 									service ).getA();
-					
+
 					service.shutdown();
 
 					final N5Writer n5Writer = new N5FSWriter(n5Path);
