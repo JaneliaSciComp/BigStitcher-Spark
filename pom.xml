@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.scijava</groupId>
         <artifactId>pom-scijava</artifactId>
-        <version>30.0.0</version>
+        <version>31.1.0</version>
         <relativePath/>
     </parent>
 
@@ -92,6 +92,11 @@
         </repository>
     </repositories>
     <dependencies>
+        <dependency>
+            <groupId>sc.fiji</groupId>
+            <artifactId>spim_data</artifactId>
+            <version>2.2.7</version>
+        </dependency>
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-s3</artifactId>
@@ -185,6 +190,12 @@
         	<groupId>net.preibisch</groupId>
         	<artifactId>BigStitcher</artifactId>
         	<version>0.8.3</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>sc.fiji</groupId>
+                    <artifactId>spim_data</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 		<dependency>
 			<groupId>info.picocli</groupId>

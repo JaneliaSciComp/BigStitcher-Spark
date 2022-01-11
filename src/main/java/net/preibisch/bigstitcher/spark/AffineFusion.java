@@ -14,6 +14,7 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -217,12 +218,17 @@ public class AffineFusion implements Callable<Void>, Serializable
 					// recover views to process
 					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
 
+					// Create N5ImageLoader outside of loop to reduce total number of created fetcher threads.
+					// TODO: parameterize N5ImageLoader fetcher thread count to allow override in Spark environments
+					final ImgLoader imgLoader = dataLocal.getSequenceDescription().getImgLoader();
+
 					for ( int i = 0; i < serializedViewIds.length; ++i )
 					{
 						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 
 						// expand to be conservative ...
-						final Interval bounds = Intervals.expand( ViewUtil.getTransformedBoundingBox( dataLocal, viewId ), 2 );
+						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, imgLoader );
+						final Interval bounds = Intervals.expand( boundingBox, 2 );
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
 							viewIdsLocal.add( viewId );
