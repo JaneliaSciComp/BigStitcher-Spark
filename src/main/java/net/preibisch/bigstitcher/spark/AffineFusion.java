@@ -36,6 +36,7 @@ import net.preibisch.mvrecon.process.fusion.FusionTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+@SuppressWarnings("FieldMayBeFinal")
 public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
@@ -49,39 +50,39 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-x", "--xml" }, required = true, description = "path to the BigStitcher xml, e.g. /home/project.xml")
 	private String xmlPath = null;
 
-	@Option(names = { "-b", "--boundingBox" }, required = false, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
+	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
 
 	
-	@Option(names = { "--angleId" }, required = false, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
+	@Option(names = { "--angleId" }, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
 	private String angleIds = null;
 
-	@Option(names = { "--tileId" }, required = false, description = "list the tile ids that should be fused into a single image, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
+	@Option(names = { "--tileId" }, description = "list the tile ids that should be fused into a single image, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
 	private String tileIds = null;
 
-	@Option(names = { "--illuminationId" }, required = false, description = "list the illumination ids that should be fused into a single image, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
+	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be fused into a single image, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
 	private String illuminationIds = null;
 
-	@Option(names = { "--channelId" }, required = false, description = "list the channel ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --channelId '0,1,2' (default: all channels)")
+	@Option(names = { "--channelId" }, description = "list the channel ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --channelId '0,1,2' (default: all channels)")
 	private String channelIds = null;
 
-	@Option(names = { "--timepointId" }, required = false, description = "list the timepoint ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --timepointId '0,1,2' (default: all time points)")
+	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --timepointId '0,1,2' (default: all time points)")
 	private String timepointIds = null;
 
-	@Option(names = { "-vi" }, required = false, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
+	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	private String[] vi = null;
 
 	
-	@Option(names = { "--UINT16" }, required = false, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
+	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
 	private boolean uint16 = false;
 
-	@Option(names = { "--UINT8" }, required = false, description = "save as UINT8 [0...255], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
+	@Option(names = { "--UINT8" }, description = "save as UINT8 [0...255], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
 	private boolean uint8 = false;
 
-	@Option(names = { "--minIntensity" }, required = false, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
+	@Option(names = { "--minIntensity" }, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
 	private Double minIntensity = null;
 
-	@Option(names = { "--maxIntensity" }, required = false, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
+	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
 
 	@Override
@@ -276,7 +277,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 		return null;
 	}
 
-	public static final void main(final String... args) {
+	public static void main(final String... args) {
 
 		System.out.println(Arrays.toString(args));
 
