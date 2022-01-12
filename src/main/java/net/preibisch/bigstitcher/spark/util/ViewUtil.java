@@ -5,6 +5,7 @@ import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
+
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -24,17 +25,15 @@ public class ViewUtil {
 	}
 
 	public static Interval getTransformedBoundingBox( final SpimData data,
-													  final ViewId viewId,
-													  final ImgLoader imgLoader )
+													  final ViewId viewId )
 	{
+		final ImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
 		final SetupImgLoader<?> setupImgLoader = imgLoader.getSetupImgLoader(viewId.getViewSetupId());
 		final Dimensions dim = setupImgLoader.getImageSize(viewId.getTimePointId() );
 
 		final ViewRegistration reg = data.getViewRegistrations().getViewRegistration( viewId );
 		reg.updateModel();
 
-		final Interval bounds = Intervals.largestContainedInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
-
-		return bounds;
+		return Intervals.largestContainedInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
 	}
 }

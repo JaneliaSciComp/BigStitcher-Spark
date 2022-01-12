@@ -3,7 +3,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <artifactId>BigStitcher-Spark</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.2-SNAPSHOT</version>
 
     <parent>
         <groupId>org.scijava</groupId>
@@ -77,6 +77,8 @@
 
     <properties>
         <scijava.jvm.version>1.8</scijava.jvm.version>
+        <bigdataviewer-core.version>10.3.0</bigdataviewer-core.version>
+        <spim_data.version>2.2.7</spim_data.version>
         <license.licenseName>gpl_v2</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
     </properties>
@@ -94,8 +96,11 @@
     <dependencies>
         <dependency>
             <groupId>sc.fiji</groupId>
+            <artifactId>bigdataviewer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>sc.fiji</groupId>
             <artifactId>spim_data</artifactId>
-            <version>2.2.7</version>
         </dependency>
         <dependency>
             <groupId>com.amazonaws</groupId>
@@ -190,12 +195,6 @@
         	<groupId>net.preibisch</groupId>
         	<artifactId>BigStitcher</artifactId>
         	<version>0.8.3</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>sc.fiji</groupId>
-                    <artifactId>spim_data</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 		<dependency>
 			<groupId>info.picocli</groupId>

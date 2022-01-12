@@ -6,7 +6,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+
+import mpicbg.spim.data.sequence.ViewId;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -17,8 +18,6 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
-import mpicbg.spim.data.sequence.ImgLoader;
-import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -34,7 +33,6 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
 import picocli.CommandLine;
@@ -100,8 +98,7 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 		if ( !Import.testInputParamters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds) )
 			System.exit( 1 );
 
-		final XmlIoSpimData2 io = new XmlIoSpimData2( "" );
-		final SpimData2 data = io.load( xmlPath );
+		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
 
 		// select views to process
 		final ArrayList< ViewId > viewIds =
@@ -219,7 +216,7 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 
 		rdd.foreach(
 				gridBlock -> {
-					final SpimData2 dataLocal = new XmlIoSpimData2( "" ).load( xmlPath );
+					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
 
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
 					final Interval fusedBlock =
@@ -233,16 +230,12 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 					final List< ViewId > viewsToFuse = new ArrayList<>(); // fuse
 					final List< ViewId > allViews = new ArrayList<>();
 
-					// Create N5ImageLoader outside of loop to reduce total number of created fetcher threads.
-					// TODO: parameterize N5ImageLoader fetcher thread count to allow override in Spark environments
-					final ImgLoader imgLoader = dataLocal.getSequenceDescription().getImgLoader();
-
 					for ( int i = 0; i < serializedViewIds.length; ++i )
 					{
 						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 
 						// expand by 50 to be conservative for non-rigid overlaps
-						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, imgLoader );
+						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
 						final Interval bounds = Intervals.expand( boundingBox, 50 );
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
@@ -261,12 +254,12 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 
 					for ( final ViewId viewId : allViews )
 					{
-						final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, imgLoader );
+						final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
 						final Interval boundsView = Intervals.expand( boundingBoxView, 25 );
 
 						for ( final ViewId fusedId : viewsToFuse )
 						{
-							final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId, imgLoader );
+							final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId );
 							final Interval boundsFused = Intervals.expand( boundingBoxFused, 25 );
 							
 							if ( ViewUtil.overlaps( boundsView, boundsFused ))
