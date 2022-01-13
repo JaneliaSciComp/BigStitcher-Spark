@@ -1,6 +1,7 @@
 package net.preibisch.bigstitcher.spark.util;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
@@ -17,6 +18,7 @@ public class Import {
 			final SpimData2 data,
 			final List< ViewId > viewIds,
 			final String boundingBoxName )
+			throws IllegalArgumentException
 	{
 		BoundingBox bb = null;
 
@@ -34,15 +36,14 @@ public class Import {
 
 			if ( bb == null )
 			{
-				System.out.println( "Bounding box '" + boundingBoxName + "' not present in XML." );
-				return null;
+				throw new IllegalArgumentException( "Bounding box '" + boundingBoxName + "' not present in XML." );
 			}
 		}
 
 		return bb;
 	}
 
-	public static boolean testInputParamters(
+	public static void validateInputParameters(
 			final boolean uint8,
 			final boolean uint16,
 			final Double minIntensity,
@@ -53,26 +54,20 @@ public class Import {
 			final String illuminationIds,
 			final String tileIds,
 			final String timepointIds )
+			throws IllegalArgumentException
 	{
-		if ( uint8 && uint16 )
-		{
-			System.err.println( "Please only select UINT8, UINT16 or nothing (FLOAT32)." );
-			return false;
+		if ( uint8 && uint16 ) {
+			throw new IllegalArgumentException( "Please only select UINT8, UINT16 or nothing (FLOAT32)." );
 		}
 
-		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) )
-		{
-			System.err.println( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
-			return false;
+		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) ) {
+			throw new IllegalArgumentException( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
 		}
 
-		if ( vi != null && ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null ) )
-		{
-			System.err.println( "You can only specify ViewIds (-vi) OR angles, channels, illuminations, tiles, timepoints." );
-			return false;
+		if ( vi != null &&
+			 ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null ) ) {
+			throw new IllegalArgumentException( "You can only specify ViewIds (-vi) OR angles, channels, illuminations, tiles, timepoints." );
 		}
-
-		return true;
 	}
 
 	public static ArrayList< ViewId > createViewIds(
@@ -128,8 +123,7 @@ public class Import {
 	public static ArrayList< ViewId > getViewIds( final SpimData data )
 	{
 		// select views to process
-		final ArrayList< ViewId > viewIds = new ArrayList< ViewId >();
-		viewIds.addAll( data.getSequenceDescription().getViewDescriptions().values() );
+		final ArrayList<ViewId> viewIds = new ArrayList<>(data.getSequenceDescription().getViewDescriptions().values());
 
 		// filter not present ViewIds
 		SpimData2.filterMissingViews( data, viewIds );
@@ -140,7 +134,7 @@ public class Import {
 	public static ArrayList< ViewId > getViewIds( final SpimData data, final ArrayList<ViewId> vi )
 	{
 		// select views to process
-		final ArrayList< ViewId > viewIds = new ArrayList< ViewId >();
+		final ArrayList< ViewId > viewIds = new ArrayList<>();
 
 		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
 		{
@@ -164,7 +158,7 @@ public class Import {
 			final HashSet<Integer> tp )
 	{
 		// select views to process
-		final ArrayList< ViewId > viewIds = new ArrayList< ViewId >();
+		final ArrayList< ViewId > viewIds = new ArrayList<>();
 
 		for ( final ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
 		{
@@ -198,8 +192,9 @@ public class Import {
 		final String[] ids = idList.split( "," );
 		final HashSet< Integer > hash = new HashSet<>();
 
-		for ( int i = 0; i < ids.length; ++i )
-			hash.add( Integer.parseInt( ids[ i ].trim() ) );
+		for (final String id : ids) {
+			hash.add(Integer.parseInt(id.trim()));
+		}
 
 		return hash;
 	}
@@ -216,5 +211,9 @@ public class Import {
 	{
 		final String[] e = s.trim().split( "," );
 		return new ViewId( Integer.parseInt( e[0].trim()), Integer.parseInt( e[1].trim() ) );
+	}
+
+	public static int[] csvStringToIntArray(final String csvString) {
+		return Arrays.stream(csvString.split(",")).mapToInt(Integer::parseInt).toArray();
 	}
 }

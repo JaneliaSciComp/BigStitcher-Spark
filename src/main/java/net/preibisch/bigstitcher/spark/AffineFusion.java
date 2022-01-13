@@ -47,6 +47,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-d", "--n5Dataset" }, required = true, description = "N5 dataset - it is highly recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
 	private String n5Dataset = null;
 
+	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,128")
+	private String blockSizeString = "128,128,128";
+
 	@Option(names = { "-x", "--xml" }, required = true, description = "path to the BigStitcher xml, e.g. /home/project.xml")
 	private String xmlPath = null;
 
@@ -88,8 +91,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Override
 	public Void call() throws Exception
 	{
-		if ( !Import.testInputParamters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds) )
-			System.exit( 1 );
+		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
 
@@ -100,8 +102,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		if ( viewIds.size() == 0 )
 		{
-			System.err.println( "No views to fuse." );
-			System.exit(1);
+			throw new IllegalArgumentException( "No views to fuse." );
 		}
 		else
 		{
@@ -112,10 +113,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 		}
 
 		final BoundingBox bb = Import.getBoundingBox( data, viewIds, boundingBoxName );
-		if ( bb == null )
-			System.exit( 1 );
 
-		final int[] blockSize = new int[] { 128, 128, 128 };
+		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 
 		System.out.println( "Fusing: " + bb.getTitle() + ": " + Util.printInterval( bb )  + " with blocksize " + Util.printCoordinates( blockSize ) );
 
