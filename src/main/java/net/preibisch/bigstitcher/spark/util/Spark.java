@@ -1,9 +1,12 @@
 package net.preibisch.bigstitcher.spark.util;
 
 import java.util.List;
+import java.util.Map;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.sequence.SequenceDescription;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 
 import org.apache.spark.SparkEnv;
@@ -69,18 +72,31 @@ public class Spark {
 		if (sparkJobSpimData2 == null) {
 
 			final SpimData2 data = new XmlIoSpimData2(clusterExt).load(xmlPath);
+			final SequenceDescription sequenceDescription = data.getSequenceDescription();
+
 			// set number of fetcher threads to 0 for spark usage
-			final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
+			final BasicImgLoader imgLoader = sequenceDescription.getImgLoader();
 			if (imgLoader instanceof ViewerImgLoader) {
 				((ViewerImgLoader) imgLoader).setNumFetcherThreads(0);
 			}
+
+			// force lazy load of view data to prevent concurrent access issues later
+			final Map<ViewId, ViewDescription> viewDescriptions = sequenceDescription.getViewDescriptions();
+			sequenceDescription.getViewSetupsOrdered();
+
+			final ViewId firstViewId = viewDescriptions.keySet().stream().findFirst()
+					.orElseThrow(() -> new SpimDataException("cannot find first viewId in data with clusterExt " +
+															 clusterExt + " and xmlPath " + xmlPath));
+
+			final int firstSetupId = firstViewId.getViewSetupId();
+			imgLoader.getSetupImgLoader(firstSetupId);
 
 			sparkJobSpimData2ClusterExt = clusterExt;
 			sparkJobSpimData2XmlPath = xmlPath;
 			sparkJobSpimData2 = data;
 
-			LOG.info("loadSpimData2: loaded {} for clusterExt={}, xmlPath={} on executorId={}",
-					 sparkJobSpimData2, clusterExt, xmlPath, getSparkExecutorId());
+			LOG.info("loadSpimData2: loaded {} with firstSetupId {} for clusterExt={}, xmlPath={} on executorId={}",
+					 sparkJobSpimData2, firstSetupId, clusterExt, xmlPath, getSparkExecutorId());
 
 		} else {
 			validateSpimData2Location(clusterExt, xmlPath);
