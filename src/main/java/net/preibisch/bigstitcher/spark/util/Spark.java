@@ -41,8 +41,7 @@ public class Spark {
 	}
 
 	/**
-	 * @return the single common data instance for the current spark job (JVM).
-	 *         This instance is optimized for use within single-threaded Spark tasks.
+	 * @return a new data instance optimized for use within single-threaded Spark tasks.
 	 */
 	public static SpimData2 getSparkJobSpimData2(final String clusterExt,
 												 final String xmlPath)
