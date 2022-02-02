@@ -5,8 +5,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 
-import mpicbg.spim.data.sequence.ViewId;
-
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -16,6 +14,7 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -33,6 +32,7 @@ import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -75,7 +75,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	private String[] vi = null;
 
-	
+
+	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
+	private boolean preserveAnisotropy = false;
+
+	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
+	private double anisotropyFactor = Double.NaN;
+
+
 	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
 	private boolean uint16 = false;
 
@@ -136,6 +143,22 @@ public class AffineFusion implements Callable<Void>, Serializable
 			dataType = DataType.FLOAT32;
 		}
 
+		if ( preserveAnisotropy )
+		{
+			System.out.println( "Preserving anisotropy.");
+
+			if ( Double.isNaN( anisotropyFactor ) )
+			{
+				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( data, viewIds );
+
+				System.out.println( "Anisotropy factor [computed from data]: " + anisotropyFactor );
+			}
+			else
+			{
+				System.out.println( "Anisotropy factor [provided]: " + anisotropyFactor );
+			}
+		}
+
 		final long[] dimensions = new long[ bb.numDimensions() ];
 		bb.dimensions( dimensions );
 
@@ -174,6 +197,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 		else
 			range = 0;
 		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
+		final boolean useAF = preserveAnisotropy;
+		final double af = anisotropyFactor;
 
 		final N5Writer n5 = new N5FSWriter(n5Path);
 
@@ -232,12 +257,28 @@ public class AffineFusion implements Callable<Void>, Serializable
 					if ( viewIdsLocal.size() == 0 )
 						return;
 
-					final RandomAccessibleInterval<FloatType> source =
-									FusionTools.fuseVirtual(
-											dataLocal,
-											viewIdsLocal,
-											new FinalInterval(minBB, maxBB),
-											Double.NaN ).getA();
+					final RandomAccessibleInterval<FloatType> source;
+
+					if ( useAF )
+					{
+						source = FusionTools.fuseVirtual(
+								dataLocal,
+								viewIdsLocal,
+								true,
+								false,
+								1,
+								new FinalInterval(minBB, maxBB),
+								Double.NaN,
+								null ).getA();
+					}
+					else
+					{
+						source = FusionTools.fuseVirtual(
+								dataLocal,
+								viewIdsLocal,
+								new FinalInterval(minBB, maxBB),
+								Double.NaN ).getA();
+					}
 
 					final N5Writer n5Writer = new N5FSWriter(n5Path);
 
