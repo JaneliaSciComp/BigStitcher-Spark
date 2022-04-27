@@ -25,7 +25,7 @@ And for local spark you need JVM paramters (8 cores, 50GB RAM):
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data, you need to set a common path for extracting the HDF5 binaries (see here), e.g.***
+Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data, you need to set a common path for extracting the HDF5 binaries (see [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
 ```
 --conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
 ```
