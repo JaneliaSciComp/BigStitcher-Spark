@@ -3,7 +3,7 @@ Running compute-intense parts of BigStitcher distributed. For now we support **f
 
 Sharing this early as it might be useful ...
 
-Here is my example config for this [example dataset](https://drive.google.com/file/d/1mhXelaF1yXZmch2Lw6rMCl6p4V0kUDQc/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
+Here is my example config for this [example dataset](https://drive.google.com/file/d/1SXossOV3gOdIWI4RcDn-YjUYS9SMh5mm/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
 
 ```
 -x '~/test/dataset.xml'
