@@ -1,8 +1,24 @@
 package net.preibisch.bigstitcher.spark;
 
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.concurrent.Callable;
+
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
+
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -22,29 +38,15 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.GzipCompression;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
-
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.concurrent.Callable;
 
 @SuppressWarnings("FieldMayBeFinal")
 public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
-	enum StorageType { n5, zarr }
+	enum StorageType { N5, ZARR }
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
 	private String n5Path = null;
@@ -52,7 +54,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-d", "--n5Dataset" }, required = true, description = "N5 dataset - it is highly recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
 	private String n5Dataset = null;
 
-	@Option(names = {"-s", "--storage"}, defaultValue = "n5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS, description = "Dataset storage type")
+	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Dataset storage type")
 	private StorageType storageType = null;
 
 	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,128")
@@ -208,21 +211,17 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final boolean useAF = preserveAnisotropy;
 		final double af = anisotropyFactor;
 
-		final N5Writer n5;
-		if (storageType == StorageType.n5) {
-			n5 = new N5FSWriter(n5Path);
-		} else {
-			n5 = new N5ZarrWriter(n5Path);
-		}
+		final N5Writer driverVolumeWriter =
+				StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
 
-		n5.createDataset(
+		driverVolumeWriter.createDataset(
 				n5Dataset,
 				dimensions,
 				blockSize,
 				dataType,
 				new GzipCompression( 1 ) );
 
-		n5.setAttribute( n5Dataset, "min", minBB);
+		driverVolumeWriter.setAttribute( n5Dataset, "min", minBB);
 		System.out.println( "numBlocks = " + Grid.create( dimensions, blockSize).size() );
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
@@ -288,11 +287,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 								new FinalInterval(minBB, maxBB),
 								Double.NaN ).getA();
 
-					final N5Writer n5Writer;
-					if (storageType == StorageType.n5)
-						n5Writer = new N5FSWriter(n5Path);
-					else
-						n5Writer = new N5ZarrWriter(n5Path);
+					final N5Writer executorVolumeWriter =
+							StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
 
 					if ( uint8 )
 					{
@@ -302,7 +298,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 										new UnsignedByteType());
 
 						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2]);
+						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 					else if ( uint16 )
 					{
@@ -312,12 +308,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 										new UnsignedShortType());
 
 						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2]);
+						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 					else
 					{
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2]);
+						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 				});
 
