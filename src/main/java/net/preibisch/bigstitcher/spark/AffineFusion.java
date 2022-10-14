@@ -3,6 +3,7 @@ package net.preibisch.bigstitcher.spark;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.Callable;
 
 import mpicbg.spim.data.sequence.ViewId;
@@ -20,6 +21,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -186,18 +188,28 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		n5.setAttribute( n5Dataset, "min", min);
 
-		System.out.println( "numBlocks = " + Grid.create( dimensions, blockSize).size() );
+		final List<long[][]> grid = Grid.create( dimensions, blockSize );
+
+		/*
+		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
+
+		final List<long[][]> grid = Grid.create(dimensions,
+				new int[] {
+						blockSize[0] * 4,
+						blockSize[1] * 4,
+						blockSize[2] * 4
+				},
+				blockSize);
+		*/
+
+		System.out.println( "numBlocks = " + grid.size() );
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<long[][]> rdd =
-				sc.parallelize(
-						Grid.create(
-								dimensions,
-								blockSize));
+		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
 		final long time = System.currentTimeMillis();
 
@@ -228,6 +240,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 							viewIdsLocal.add( viewId );
 					}
 
+					//SimpleMultiThreading.threadWait( 10000 );
+
 					// nothing to save...
 					if ( viewIdsLocal.size() == 0 )
 						return;
@@ -249,7 +263,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 										new UnsignedByteType());
 
 						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2]);
+						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
 					}
 					else if ( uint16 )
 					{
@@ -259,12 +273,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 										new UnsignedShortType());
 
 						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2]);
+						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedShortType());
 					}
 					else
 					{
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2]);
+						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new FloatType());
 					}
 				});
 
