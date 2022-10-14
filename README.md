@@ -3,7 +3,7 @@ Running compute-intense parts of BigStitcher distributed. For now we support **f
 
 Sharing this early as it might be useful ...
 
-Here is my example config for this [example dataset](https://drive.google.com/file/d/1mhXelaF1yXZmch2Lw6rMCl6p4V0kUDQc/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
+Here is my example config for this [example dataset](https://drive.google.com/file/d/1SXossOV3gOdIWI4RcDn-YjUYS9SMh5mm/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
 
 ```
 -x '~/test/dataset.xml'
@@ -18,14 +18,17 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
 
-*The blocksize is currently hardcoded to `128x128x128`, but can easily be added as another parameter (pull requests welcome :).*
+The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
 And for local spark you need JVM paramters (8 cores, 50GB RAM):
 
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
+Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
+```
+--conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
+```
 
 
 You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the n5-utils package (https://github.com/saalfeldlab/n5-utils).

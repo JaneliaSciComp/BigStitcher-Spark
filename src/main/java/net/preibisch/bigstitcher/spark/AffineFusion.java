@@ -6,8 +6,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 
-import mpicbg.spim.data.sequence.ViewId;
-
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -16,12 +14,16 @@ import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
 
+import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.registration.ViewTransformAffine;
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
-import net.imglib2.multithreading.SimpleMultiThreading;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -35,6 +37,7 @@ import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -43,11 +46,17 @@ public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
+	enum StorageType { N5, ZARR }
+
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
 	private String n5Path = null;
 
 	@Option(names = { "-d", "--n5Dataset" }, required = true, description = "N5 dataset - it is highly recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
 	private String n5Dataset = null;
+
+	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Dataset storage type")
+	private StorageType storageType = null;
 
 	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,128")
 	private String blockSizeString = "128,128,128";
@@ -77,7 +86,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	private String[] vi = null;
 
-	
+
+	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
+	private boolean preserveAnisotropy = false;
+
+	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
+	private double anisotropyFactor = Double.NaN;
+
+
 	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
 	private boolean uint16 = false;
 
@@ -114,11 +130,11 @@ public class AffineFusion implements Callable<Void>, Serializable
 			System.out.println();
 		}
 
-		final BoundingBox bb = Import.getBoundingBox( data, viewIds, boundingBoxName );
+		BoundingBox boundingBox = Import.getBoundingBox( data, viewIds, boundingBoxName );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 
-		System.out.println( "Fusing: " + bb.getTitle() + ": " + Util.printInterval( bb )  + " with blocksize " + Util.printCoordinates( blockSize ) );
+		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox )  + " with blocksize " + Util.printCoordinates( blockSize ) );
 
 		final DataType dataType;
 
@@ -138,11 +154,37 @@ public class AffineFusion implements Callable<Void>, Serializable
 			dataType = DataType.FLOAT32;
 		}
 
-		final long[] dimensions = new long[ bb.numDimensions() ];
-		bb.dimensions( dimensions );
+		//
+		// final variables for Spark
+		//
+		final long[] minBB = boundingBox.minAsLongArray();
+		final long[] maxBB = boundingBox.maxAsLongArray();
 
-		final long[] min = new long[ bb.numDimensions() ];
-		bb.min( min );
+		if ( preserveAnisotropy )
+		{
+			System.out.println( "Preserving anisotropy.");
+
+			if ( Double.isNaN( anisotropyFactor ) )
+			{
+				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( data, viewIds );
+
+				System.out.println( "Anisotropy factor [computed from data]: " + anisotropyFactor );
+			}
+			else
+			{
+				System.out.println( "Anisotropy factor [provided]: " + anisotropyFactor );
+			}
+
+			// prepare downsampled boundingbox
+			minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
+			maxBB[ 2 ] = Math.round( Math.ceil( maxBB[ 2 ] / anisotropyFactor ) );
+
+			boundingBox = new BoundingBox( new FinalInterval(minBB, maxBB) );
+
+			System.out.println( "Adjusted bounding box (anistropy preserved: " + Util.printInterval( boundingBox ) );
+		}
+
+		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
 		// display virtually
 		//final RandomAccessibleInterval< FloatType > virtual = FusionTools.fuseVirtual( data, viewIds, bb, Double.NaN ).getA();
@@ -150,20 +192,10 @@ public class AffineFusion implements Callable<Void>, Serializable
 		//ImageJFunctions.show( virtual, Executors.newFixedThreadPool( Runtime.getRuntime().availableProcessors() ) );
 		//SimpleMultiThreading.threadHaltUnClean();
 
-		//
-		// final variables for Spark
-		//
 		final String n5Path = this.n5Path;
 		final String n5Dataset = this.n5Dataset;
 		final String xmlPath = this.xmlPath;
-		final long[] minBB = new long[ bb.numDimensions() ];
-		final long[] maxBB = new long[ bb.numDimensions() ];
-
-		for ( int d = 0; d < minBB.length; ++d )
-		{
-			minBB[ d ] = bb.min( d );
-			maxBB[ d ] = bb.max( d );
-		}
+		final StorageType storageType = this.storageType;
 
 		final boolean uint8 = this.uint8;
 		final boolean uint16 = this.uint16;
@@ -176,17 +208,18 @@ public class AffineFusion implements Callable<Void>, Serializable
 		else
 			range = 0;
 		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
+		final boolean useAF = preserveAnisotropy;
+		final double af = anisotropyFactor;
 
-		final N5Writer n5 = new N5FSWriter(n5Path);
+		final N5Writer driverVolumeWriter =
+				StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
 
-		n5.createDataset(
+		driverVolumeWriter.createDataset(
 				n5Dataset,
 				dimensions,
 				blockSize,
 				dataType,
 				new GzipCompression( 1 ) );
-
-		n5.setAttribute( n5Dataset, "min", min);
 
 		final List<long[][]> grid = Grid.create( dimensions, blockSize );
 
@@ -203,6 +236,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 		*/
 
 		System.out.println( "numBlocks = " + grid.size() );
+
+		driverVolumeWriter.setAttribute( n5Dataset, "min", minBB);
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
 
@@ -223,7 +258,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 									Intervals.translate(
 											new FinalInterval( gridBlock[1] ), // blocksize
 											gridBlock[0] ), // block offset
-									min ); // min of the randomaccessbileinterval
+									minBB ); // min of the randomaccessbileinterval
 
 					// recover views to process
 					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
@@ -232,9 +267,22 @@ public class AffineFusion implements Callable<Void>, Serializable
 					{
 						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 
+						if ( useAF )
+						{
+							// get updated registration for views to fuse AND all other views that may influence the fusion
+							final ViewRegistration vr = dataLocal.getViewRegistrations().getViewRegistration( viewId );
+							final AffineTransform3D aniso = new AffineTransform3D();
+							aniso.set(
+									1.0, 0.0, 0.0, 0.0,
+									0.0, 1.0, 0.0, 0.0,
+									0.0, 0.0, 1.0/af, 0.0 );
+							vr.preconcatenateTransform( new ViewTransformAffine( "preserve anisotropy", aniso));
+							vr.updateModel();
+						}
+
 						// expand to be conservative ...
-						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
-						final Interval bounds = Intervals.expand( boundingBox, 2 );
+						final Interval boundingBoxLocal = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
+						final Interval bounds = Intervals.expand( boundingBoxLocal, 2 );
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
 							viewIdsLocal.add( viewId );
@@ -246,14 +294,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 					if ( viewIdsLocal.size() == 0 )
 						return;
 
-					final RandomAccessibleInterval<FloatType> source =
-									FusionTools.fuseVirtual(
-											dataLocal,
-											viewIdsLocal,
-											new FinalInterval(minBB, maxBB),
-											Double.NaN ).getA();
+					final RandomAccessibleInterval<FloatType> source = FusionTools.fuseVirtual(
+								dataLocal,
+								viewIdsLocal,
+								new FinalInterval(minBB, maxBB),
+								Double.NaN ).getA();
 
-					final N5Writer n5Writer = new N5FSWriter(n5Path);
+					final N5Writer executorVolumeWriter =
+							StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
 
 					if ( uint8 )
 					{
@@ -263,7 +311,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 										new UnsignedByteType());
 
 						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
+						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
+						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 					else if ( uint16 )
 					{
@@ -273,12 +322,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 										new UnsignedShortType());
 
 						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedShortType());
+						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedShortType());
+						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 					else
 					{
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new FloatType());
+						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new FloatType());
+						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 				});
 
