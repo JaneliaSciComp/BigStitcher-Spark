@@ -4,10 +4,12 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -18,20 +20,21 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
-import mpicbg.spim.data.sequence.ImgLoader;
+import bdv.export.ExportMipmapInfo;
 import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
+import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.Converters;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -49,6 +52,9 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 
 	@Option(names = "--blockSizeScale", description = "how much the blocksize is scaled for processing, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32")
 	private String blockSizeScaleString = "3,3,1";
+
+	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (full res 1,1,1 is always created), e.g. 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
+	private String downsampling = null;
 
 	@Option(names = { "-o", "--n5Path" }, description = "N5 path for saving, default: 'folder of the xml'/dataset.n5")
 	private String n5Path = null;
@@ -107,6 +113,9 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 		// all ViewSetupIds (needed to create N5 datasets)
 		final HashMap<Integer, long[]> viewSetupIds = new HashMap<>();
 
+		// all ViewSetups for estimating downsampling
+		final List< ViewSetup > viewSetups = new ArrayList<>();
+
 		for ( final ViewId viewId : viewIds )
 		{
 			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
@@ -131,7 +140,37 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 				});
 
 			viewSetupIds.put( viewId.getViewSetupId(), vd.getViewSetup().getSize().dimensionsAsLongArray() );
+			viewSetups.add( vd.getViewSetup() );
 		}
+
+		// estimate or read downsampling factors
+		final int[][] downsampling;
+
+		if ( this.downsampling == null )
+		{
+			final Map<Integer, ExportMipmapInfo> mipmaps = Resave_HDF5.proposeMipmaps( viewSetups );
+
+			int[][] tmp = mipmaps.values().iterator().next().getExportResolutions();
+
+			for ( final ExportMipmapInfo info : mipmaps.values() )
+				if (info.getExportResolutions().length > tmp.length)
+					tmp = info.getExportResolutions();
+
+			// omit (1,1,1)
+			downsampling = new int[tmp.length - 1][];
+
+			for ( int i = 0; i < tmp.length - 1; ++i )
+				downsampling[ i ] = tmp[ i + 1 ];
+		}
+		else
+		{
+			downsampling = Import.csvStringToDownsampling( this.downsampling );
+		}
+
+		System.out.println( "Selected downsampling steps (1, 1, 1) is always written first:" );
+
+		for ( int i = 0; i < downsampling.length; ++i )
+			System.out.println( Util.printCoordinates( downsampling[i] ) );
 
 		// create one dataset per ViewSetupId
 		for ( final Entry<Integer, long[]> viewSetup: viewSetupIds.entrySet() )
@@ -148,15 +187,22 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 			else
 				throw new RuntimeException("Unsupported pixel type: " + type.getClass().getCanonicalName() );
 
-			// ViewSetupId needs to contain: {"downsamplingFactors":[[1,1,1],[2,2,1]],"dataType":"uint16"}
-			n5.createDataset(
-					"setup" + viewSetup.getKey(),
-					viewSetup.getValue(),
-					blockSize,
-					dataType,
-					new GzipCompression( 1 ) );
+			// TODO: ViewSetupId needs to contain: {"downsamplingFactors":[[1,1,1],[2,2,1]],"dataType":"uint16"}
+			final String n5Dataset = "setup" + viewSetup.getKey();
 
-			System.out.println( "Creating dataset: " + "'setup" + viewSetup.getKey() + "'" );
+			System.out.println( "Creating group: " + "'setup" + viewSetup.getKey() + "'" );
+
+			// including [1,1,1]
+			final int downsamplingFull[][] = new int[ downsampling.length + 1 ][];
+
+			downsamplingFull[ 0 ] = new int[] { 1,1,1 };
+
+			for ( int i = 0; i < downsamplingFull.length - 1; ++i )
+				downsamplingFull[ i + 1 ] = downsampling[ i ];
+
+			n5.createGroup( n5Dataset );
+			n5.setAttribute( n5Dataset, "downsamplingFactors", downsamplingFull );
+			n5.setAttribute( n5Dataset, "dataType", dataType );
 		}
 
 		System.out.println( "numBlocks = " + allGrids.size() );
@@ -166,9 +212,14 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<long[][]> rdd = sc.parallelize(allGrids);
+		//
+		// Save s0 level
+		//
+		final long time = System.currentTimeMillis();
 
-		rdd.foreach(
+		final JavaRDD<long[][]> rdds0 = sc.parallelize(allGrids);
+
+		rdds0.foreach(
 				gridBlock -> {
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
 					final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
@@ -209,11 +260,17 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 					}
 				});
 
-		final long time = System.currentTimeMillis();
+		System.out.println( "Resaved N5 s0 level, took: " + (System.currentTimeMillis() - time ) + " ms." );
+
+		//
+		// Save remaining downsampling levels (s1 ... sN)
+		//
+		for ( final int[] ds : downsampling )
+		{
+			
+		}
 
 		sc.close();
-
-		System.out.println( "Resaved N5, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		return null;
 	}

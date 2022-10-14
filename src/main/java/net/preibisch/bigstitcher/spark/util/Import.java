@@ -214,6 +214,37 @@ public class Import {
 	}
 
 	public static int[] csvStringToIntArray(final String csvString) {
-		return Arrays.stream(csvString.split(",")).mapToInt(Integer::parseInt).toArray();
+		return Arrays.stream(csvString.split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
+	}
+
+	/**
+	 * converts a String like '2,2,1; 4,4,1; 8,8,2' to downsampling levels in int[][] and omits '1,1,1'
+	 * @param csvString
+	 * @return
+	 */
+	public static int[][] csvStringToDownsampling(final String csvString) {
+
+		final String[] split = csvString.split(";");
+
+		final int[][] downsampling;
+
+		int[][] tmp = new int[split.length][];
+		for ( int i = 0; i < split.length; ++i )
+			tmp[ i ] = Arrays.stream(split[ i ].split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
+
+		if ( tmp.length > 0 && Arrays.stream(tmp[0]).boxed().anyMatch( n -> n == 1 ) && Arrays.stream(tmp[0]).boxed().distinct().count() == 1 )
+		{
+			// omit (1,1,1)
+			downsampling = new int[tmp.length - 1][];
+
+			for ( int i = 0; i < tmp.length - 1; ++i )
+				downsampling[ i ] = tmp[ i + 1 ];
+		}
+		else
+		{
+			downsampling = tmp;
+		}
+
+		return downsampling;
 	}
 }
