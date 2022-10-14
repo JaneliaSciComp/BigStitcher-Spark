@@ -48,7 +48,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 	private String blockSizeString = "128,128,32";
 
 	@Option(names = "--blockSizeScale", description = "how much the blocksize is scaled for processing, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32")
-	private String blockSizeScaleString = "4,4,1";
+	private String blockSizeScaleString = "3,3,1";
 
 	@Option(names = { "-o", "--n5Path" }, description = "N5 path for saving, default: 'folder of the xml'/dataset.n5")
 	private String n5Path = null;
@@ -101,7 +101,10 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 		final N5Writer n5 = new N5FSWriter(n5Path);
 		System.out.println( "Setting up N5 write for basepath: " + n5Path );
 
+		// all grids across all ViewId's
 		final ArrayList<long[][]> allGrids = new ArrayList<>();
+
+		// all ViewSetupIds (needed to create N5 datasets)
 		final HashMap<Integer, long[]> viewSetupIds = new HashMap<>();
 
 		for ( final ViewId viewId : viewIds )
@@ -189,6 +192,20 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 					{
 						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
 						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedShortType());
+					}
+					else if ( dataType == DataType.UINT8 )
+					{
+						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
+						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedByteType());
+					}
+					else if ( dataType == DataType.FLOAT32 )
+					{
+						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
+						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new FloatType());
+					}
+					else
+					{
+						throw new RuntimeException("Unsupported pixel type: " + dataType );
 					}
 				});
 
