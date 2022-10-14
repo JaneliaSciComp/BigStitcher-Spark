@@ -97,6 +97,7 @@
         <dependency>
             <groupId>sc.fiji</groupId>
             <artifactId>bigdataviewer-core</artifactId>
+            <version>10.3.0</version>
         </dependency>
         <dependency>
             <groupId>sc.fiji</groupId>
@@ -191,11 +192,11 @@
             <artifactId>netty</artifactId>
             <version>3.9.9.Final</version>
         </dependency>
-        <dependency>
-        	<groupId>net.preibisch</groupId>
-        	<artifactId>BigStitcher</artifactId>
-        	<version>0.8.3</version>
-        </dependency>
+		<dependency>
+			<groupId>net.preibisch</groupId>
+			<artifactId>multiview-reconstruction</artifactId>
+			<version>0.11.2</version>
+		</dependency>
 		<dependency>
 			<groupId>info.picocli</groupId>
 			<artifactId>picocli</artifactId>
