@@ -13,6 +13,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
 
@@ -46,7 +47,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
-	enum StorageType { N5, ZARR }
+	enum StorageType { N5, ZARR, HDF5 }
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
 	private String n5Path = null;
@@ -55,7 +56,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 	private String n5Dataset = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type")
+			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark HDF5)")
 	private StorageType storageType = null;
 
 	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,128")
@@ -105,6 +106,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
+
+	// only supported for local spark HDF5 writes, needs to share a writer instance
+	private static N5HDF5Writer hdf5DriverVolumeWriter = null;
 
 	@Override
 	public Void call() throws Exception
@@ -211,8 +215,25 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final boolean useAF = preserveAnisotropy;
 		final double af = anisotropyFactor;
 
-		final N5Writer driverVolumeWriter =
-				StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
+		try
+		{
+			// trigger the N5-blosc error, because if it is triggered for the first
+			// time inside Spark, everything crashes
+			new N5FSWriter(null);
+		}
+		catch (Exception e ) {}
+
+		final N5Writer driverVolumeWriter;
+		if ( StorageType.N5.equals(storageType) )
+			driverVolumeWriter = new N5FSWriter(n5Path);
+		else if ( StorageType.ZARR.equals(storageType) )
+			driverVolumeWriter = new N5ZarrWriter(n5Path);
+		else if ( StorageType.HDF5.equals(storageType) )
+			driverVolumeWriter = hdf5DriverVolumeWriter = new N5HDF5Writer(n5Path);
+		else
+			throw new RuntimeException( "storageType " + storageType + " not supported." );
+
+		System.out.println( "Format being written: " + storageType );
 
 		driverVolumeWriter.createDataset(
 				n5Dataset,
@@ -300,8 +321,17 @@ public class AffineFusion implements Callable<Void>, Serializable
 								new FinalInterval(minBB, maxBB),
 								Double.NaN ).getA();
 
-					final N5Writer executorVolumeWriter =
-							StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
+					final N5Writer executorVolumeWriter;
+					//		StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
+
+					if ( StorageType.N5.equals(storageType) )
+						executorVolumeWriter = new N5FSWriter(n5Path);
+					else if ( StorageType.ZARR.equals(storageType) )
+						executorVolumeWriter = new N5ZarrWriter(n5Path);
+					else if ( StorageType.HDF5.equals(storageType) )
+						executorVolumeWriter = hdf5DriverVolumeWriter;
+					else
+						throw new RuntimeException( "storageType " + storageType + " not supported." );
 
 					if ( uint8 )
 					{
