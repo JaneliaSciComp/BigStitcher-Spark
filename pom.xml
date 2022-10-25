@@ -76,7 +76,7 @@
 	</ciManagement>
 
     <properties>
-        <scijava.jvm.version>1.8</scijava.jvm.version>
+        <!-- <scijava.jvm.version>1.8</scijava.jvm.version> -->
         <bigdataviewer-core.version>10.3.0</bigdataviewer-core.version>
         <spim_data.version>2.2.7</spim_data.version>
         <license.licenseName>gpl_v2</license.licenseName>
@@ -209,8 +209,15 @@
 			<groupId>org.janelia.saalfeldlab</groupId>
 			<artifactId>n5-hdf5</artifactId>
 		</dependency>
-    </dependencies>
-    <groupId>net.preibisch</groupId>
+		<!-- https://mvnrepository.com/artifact/net.java.dev.jna/jna needed for M1 native library loading -->
+		<dependency>
+			<groupId>net.java.dev.jna</groupId>
+			<artifactId>jna</artifactId>
+			<version>5.7.0</version>
+		</dependency>
+	</dependencies>
+	<groupId>net.preibisch</groupId>
+
 	<profiles>
 	<profile>
 			<id>fatjar</id>
