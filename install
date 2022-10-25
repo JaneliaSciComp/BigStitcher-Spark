@@ -83,7 +83,7 @@ echo '#!/bin/bash' > affine-fusion
 echo '' >> affine-fusion
 echo "JAR=\$HOME/.m2/repository/net/preibisch/BigStitcher-Spark/${VERSION}/BigStitcher-Spark-${VERSION}.jar" >> affine-fusion
 echo 'java \' >> affine-fusion
-echo "  -Xmx${MEM}g -Dspark.master=local${THREADS} \\" >> affine-fusion
+echo "  -Xmx${MEM}g -Dspark.master=local[${THREADS}] \\" >> affine-fusion
 #echo '  -XX:+UseConcMarkSweepGC \' >> affine-fusion
 echo -n '  -cp $JAR:' >> affine-fusion
 echo -n $(cat cp.txt) >> affine-fusion
