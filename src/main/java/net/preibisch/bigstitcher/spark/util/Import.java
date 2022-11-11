@@ -5,9 +5,14 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
+import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.bigstitcher.spark.AffineFusion.StorageType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
@@ -218,7 +223,7 @@ public class Import {
 	}
 
 	/**
-	 * converts a String like '2,2,1; 4,4,1; 8,8,2' to downsampling levels in int[][] and omits '1,1,1'
+	 * converts a String like '1,1,1; 2,2,1; 4,4,1; 8,8,2' to downsampling levels in int[][]
 	 * @param csvString
 	 * @return
 	 */
@@ -226,25 +231,59 @@ public class Import {
 
 		final String[] split = csvString.split(";");
 
-		final int[][] downsampling;
-
-		int[][] tmp = new int[split.length][];
+		final int[][] downsampling = new int[split.length][];
 		for ( int i = 0; i < split.length; ++i )
-			tmp[ i ] = Arrays.stream(split[ i ].split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
+			downsampling[ i ] = Arrays.stream(split[ i ].split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
 
-		if ( tmp.length > 0 && Arrays.stream(tmp[0]).boxed().anyMatch( n -> n == 1 ) && Arrays.stream(tmp[0]).boxed().distinct().count() == 1 )
+		return downsampling;
+	}
+
+	/**
+	 * tests that the first downsampling is [1,1,....1]
+	 *
+	 * @param downsampling
+	 * @return
+	 */
+	public static boolean testFirstDownsamplingIsPresent(final int[][] downsampling)
+	{
+		if ( downsampling.length > 0 && Arrays.stream(downsampling[0]).boxed().anyMatch( n -> n == 1 ) && Arrays.stream(downsampling[0]).boxed().distinct().count() == 1 )
+			return true;
+		else
+			return false;
+	}
+
+	public static ViewId getViewId(final String bdvString )
+	{
+		final String[] entries = bdvString.trim().split( "," );
+		final int timepointId = Integer.parseInt( entries[ 0 ].trim() );
+		final int viewSetupId = Integer.parseInt( entries[ 1 ].trim() );
+
+		return new ViewId(timepointId, viewSetupId);
+	}
+
+	public static String createBDVPath(final String bdvString, final StorageType storageType)
+	{
+		final ViewId viewId = getViewId(bdvString);
+
+		String path = null;
+
+		if ( StorageType.N5.equals(storageType) )
 		{
-			// omit (1,1,1)
-			downsampling = new int[tmp.length - 1][];
-
-			for ( int i = 0; i < tmp.length - 1; ++i )
-				downsampling[ i ] = tmp[ i + 1 ];
+			path = "setup" + viewId.getViewSetupId() + "/" + "timepoint" + viewId.getTimePointId() + "/s0";
+		}
+		else if ( StorageType.HDF5.equals(storageType) )
+		{
+			path = "t" + String.format("%05d", viewId.getTimePointId()) + "/" + "s" + String.format("%02d", viewId.getViewSetupId()) + "/0/cells";
 		}
 		else
 		{
-			downsampling = tmp;
+			System.out.println( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
+			System.exit( 0 );
 		}
 
-		return downsampling;
+		System.out.println( "Saving BDV-compatible " + storageType + " using ViewSetupId=" + viewId.getViewSetupId() + ", TimepointId=" + viewId.getTimePointId()  );
+		System.out.println( "path=" + path );
+
+		return path;
 	}
 }

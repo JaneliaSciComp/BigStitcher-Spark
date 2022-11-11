@@ -1,14 +1,20 @@
 package net.preibisch.bigstitcher.spark;
 
+import java.io.File;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
@@ -17,13 +23,34 @@ import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
 
+import bdv.img.n5.N5ImageLoader;
+import bdv.util.BdvFunctions;
+import mpicbg.spim.data.SpimData;
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.XmlIoSpimData;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.registration.ViewTransformAffine;
+import mpicbg.spim.data.sequence.Angle;
+import mpicbg.spim.data.sequence.Channel;
+import mpicbg.spim.data.sequence.FinalVoxelDimensions;
+import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.ImgLoader;
+import mpicbg.spim.data.sequence.SequenceDescription;
+import mpicbg.spim.data.sequence.Tile;
+import mpicbg.spim.data.sequence.TimePoint;
+import mpicbg.spim.data.sequence.TimePoints;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.ViewSetup;
+import mpicbg.spim.data.sequence.VoxelDimensions;
+import net.imglib2.Dimensions;
+import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
@@ -31,6 +58,8 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.AffineFusion.StorageType;
+import net.preibisch.bigstitcher.spark.util.BDV;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -47,13 +76,19 @@ public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
-	enum StorageType { N5, ZARR, HDF5 }
+	public enum StorageType { N5, ZARR, HDF5 }
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
 	private String n5Path = null;
 
-	@Option(names = { "-d", "--n5Dataset" }, required = true, description = "N5 dataset - it is highly recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
+	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "N5 dataset - it is  recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
 	private String n5Dataset = null;
+
+	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. -b 0,0 or -b 4,1")
+	private String bdvString = null;
+
+	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (if --bdv was selected), e.g. /home/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
+	private String xmlOutPath = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark HDF5)")
@@ -62,12 +97,11 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,128")
 	private String blockSizeString = "128,128,128";
 
-	@Option(names = { "-x", "--xml" }, required = true, description = "path to the BigStitcher xml, e.g. /home/project.xml")
+	@Option(names = { "-x", "--xml" }, required = true, description = "path to the existing BigStitcher xml, e.g. /home/project.xml")
 	private String xmlPath = null;
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
-
 	
 	@Option(names = { "--angleId" }, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
 	private String angleIds = null;
@@ -113,6 +147,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Override
 	public Void call() throws Exception
 	{
+		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
+		{
+			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) OR the BigDataViewer specification (e.g. -b 4,1)");
+			System.exit( 0 );
+		}
+
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
@@ -197,9 +237,10 @@ public class AffineFusion implements Callable<Void>, Serializable
 		//SimpleMultiThreading.threadHaltUnClean();
 
 		final String n5Path = this.n5Path;
-		final String n5Dataset = this.n5Dataset;
+		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : Import.createBDVPath( this.bdvString, this.storageType );
 		final String xmlPath = this.xmlPath;
 		final StorageType storageType = this.storageType;
+		final Compression compression = new GzipCompression( 1 );
 
 		final boolean uint8 = this.uint8;
 		final boolean uint16 = this.uint16;
@@ -240,7 +281,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 				dimensions,
 				blockSize,
 				dataType,
-				new GzipCompression( 1 ) );
+				compression );
 
 		final List<long[][]> grid = Grid.create( dimensions, blockSize );
 
@@ -260,7 +301,29 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		driverVolumeWriter.setAttribute( n5Dataset, "min", minBB);
 
+		// saving metadata if it is bdv-compatible (we do this first since it might fail)
+		if ( bdvString != null )
+		{
+			BDV.writeBDVMetaData(
+					driverVolumeWriter,
+					storageType,
+					dataType,
+					dimensions,
+					compression,
+					blockSize,
+					this.bdvString,
+					this.n5Path,
+					this.xmlOutPath,
+					this.angleIds,
+					this.illuminationIds, 
+					this.channelIds,
+					this.tileIds );
+
+			System.out.println( "Done writing BDV metadata.");
+		}
+
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
+		conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
@@ -268,7 +331,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
 		final long time = System.currentTimeMillis();
-
 		rdd.foreach(
 				gridBlock -> {
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
@@ -371,7 +433,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 		return null;
 	}
 
-	public static void main(final String... args) {
+	public static void main(final String... args) throws SpimDataException {
+
+		//final XmlIoSpimData io = new XmlIoSpimData();
+		//final SpimData spimData = io.load( "/Users/preibischs/Documents/Microscopy/Stitching/Truman/standard/output/dataset.xml" );
+		//BdvFunctions.show( spimData );
+		//SimpleMultiThreading.threadHaltUnClean();
 
 		System.out.println(Arrays.toString(args));
 
