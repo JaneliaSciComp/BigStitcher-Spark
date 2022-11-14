@@ -5,10 +5,6 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 
-import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
-import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
-
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -89,7 +85,7 @@ public class Import {
 		if ( vi != null )
 		{
 			System.out.println( "Parsing selected ViewIds ... ");
-			ArrayList<ViewId> parsedViews = Import.viewId( vi );
+			ArrayList<ViewId> parsedViews = Import.getViewIds( vi );
 			viewIds = Import.getViewIds( data, parsedViews );
 		}
 		else if ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null )
@@ -204,18 +200,12 @@ public class Import {
 		return hash;
 	}
 
-	public static ArrayList<ViewId> viewId( final String[] s )
+	public static ArrayList<ViewId> getViewIds( final String[] s )
 	{
 		final ArrayList<ViewId> viewIds = new ArrayList<>();
 		for ( final String s0 : s )
-			viewIds.add( viewId( s0 ) );
+			viewIds.add( getViewId( s0 ) );
 		return viewIds;
-	}
-
-	public static ViewId viewId( final String s )
-	{
-		final String[] e = s.trim().split( "," );
-		return new ViewId( Integer.parseInt( e[0].trim()), Integer.parseInt( e[1].trim() ) );
 	}
 
 	public static int[] csvStringToIntArray(final String csvString) {
