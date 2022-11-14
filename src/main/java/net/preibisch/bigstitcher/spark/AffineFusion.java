@@ -320,9 +320,11 @@ public class AffineFusion implements Callable<Void>, Serializable
 					this.tileIds );
 
 			System.out.println( "Done writing BDV metadata.");
+			//System.exit( 0 );
 		}
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
+		// TODO: REMOVE
 		conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);

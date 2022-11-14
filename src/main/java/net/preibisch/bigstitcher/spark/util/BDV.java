@@ -11,7 +11,10 @@ import java.util.Map;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import bdv.img.hdf5.Hdf5ImageLoader;
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.SpimDataException;
@@ -32,7 +35,13 @@ import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalDimensions;
+import net.imglib2.img.Img;
+import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.type.numeric.integer.IntType;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Intervals;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.AffineFusion.StorageType;
 
 public class BDV {
@@ -67,141 +76,31 @@ public class BDV {
 
 			System.out.println( "XML: " + xmlOutPath.getAbsolutePath() );
 
-			if ( xmlOutPath.exists() )
-			{
-				System.out.println( "XML exists. Parsing and adding.");
-				final XmlIoSpimData io = new XmlIoSpimData();
-				final SpimData spimData = io.load( xmlOutPath.getAbsolutePath() );
+			final Pair<Boolean, Boolean> exists = writeSpimData(
+					viewId,
+					storageType,
+					dimensions,
+					n5Path,
+					xmlOutPath,
+					angleIds,
+					illuminationIds, 
+					channelIds,
+					tileIds );
 
-				boolean tpExists = false;
-				boolean viewSetupExists = false;
-
-				for ( final ViewDescription viewId2 : spimData.getSequenceDescription().getViewDescriptions().values() )
-				{
-					if ( viewId2.equals( viewId ) )
-					{
-						System.out.println( "ViewId you specified already exists in the XML, cannot continue." );
-						System.exit( 0 );
-					}
-
-					if ( viewId2.getTimePointId() == viewId.getTimePointId() )
-						tpExists = true;
-
-					if ( viewId2.getViewSetupId() == viewId.getViewSetupId() )
-					{
-						viewSetupExists = true;
-
-						// dimensions have to match
-						if ( !Intervals.equalDimensions( new FinalDimensions( dimensions ), viewId2.getViewSetup().getSize() ) )
-						{
-							System.out.println( "ViewSetup you specified already exists in the XML, but with different dimensions, cannot continue." );
-							System.exit( 0 );
-						}
-					}
-				}
-
-				final List<ViewSetup> setups = new ArrayList<>( spimData.getSequenceDescription().getViewSetups().values() );
-
-				if ( !viewSetupExists )
-				{
-					final Iterator<ViewSetup> i = setups.iterator();
-					ViewSetup tmp = i.next();
-
-					Channel c0 = tmp.getChannel();
-					Angle a0 = tmp.getAngle();
-					Illumination i0 = tmp.getIllumination();
-					Tile t0 = tmp.getTile();
-
-					while ( i.hasNext() )
-					{
-						tmp = i.next();
-						if ( tmp.getChannel().getId() > c0.getId() )
-							c0 = tmp.getChannel();
-						if ( tmp.getAngle().getId() > a0.getId() )
-							a0 = tmp.getAngle();
-						if ( tmp.getIllumination().getId() > i0.getId() )
-							i0 = tmp.getIllumination();
-						if ( tmp.getTile().getId() > t0.getId() )
-							t0 = tmp.getTile();
-					}
-
-					if ( angleIds != null )
-						a0 = new Angle( a0.getId() + 1 );
-					if ( illuminationIds != null )
-						i0 = new Illumination( i0.getId() + 1 );
-					if ( tileIds != null )
-						t0 = new Tile( t0.getId() + 1 );
-					if ( tileIds != null || ( angleIds == null && illuminationIds == null && tileIds == null && tpExists ) ) // nothing was defined, then increase channel
-						c0 = new Channel( c0.getId() + 1 );
-
-					final Dimensions d0 = new FinalDimensions( dimensions );
-					final VoxelDimensions vd0 = new FinalVoxelDimensions( "px", 1, 1, 1 );
-
-					setups.add( new ViewSetup( viewId.getViewSetupId(), "setup " + viewId.getViewSetupId(), d0, vd0, t0, c0, a0, i0 ) );
-				}
-
-				final TimePoints timepoints;
-				if ( !tpExists )
-				{
-					final List<TimePoint> tps = spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered();
-					tps.add( new TimePoint( viewId.getTimePointId() ) );
-					timepoints = new TimePoints( tps );
-				}
-				else
-				{
-					timepoints = spimData.getSequenceDescription().getTimePoints();
-				}
-
-				final Map<ViewId, ViewRegistration> registrations = spimData.getViewRegistrations().getViewRegistrations();
-				registrations.put( viewId, new ViewRegistration( viewId.getTimePointId(), viewId.getViewSetupId() ) );
-				final ViewRegistrations viewRegistrations = new ViewRegistrations( registrations );
-
-				final SequenceDescription sequence = new SequenceDescription(timepoints, setups, null);
-				sequence.setImgLoader( new N5ImageLoader( new File( n5Path ), sequence) );
-
-				final SpimData spimDataNew = new SpimData( xmlOutPath.getParentFile(), sequence, viewRegistrations);
-				new XmlIoSpimData().save( spimDataNew, xmlOutPath.getAbsolutePath() );
-			}
-			else
-			{
-				System.out.println( "New XML.");
-
-				final ArrayList< ViewSetup > setups = new ArrayList<>();
-
-				final Channel c0 = new Channel( 0 );
-				final Angle a0 = new Angle( 0 );
-				final Illumination i0 = new Illumination( 0 );
-				final Tile t0 = new Tile( 0 );
-
-				final Dimensions d0 = new FinalDimensions( dimensions );
-				final VoxelDimensions vd0 = new FinalVoxelDimensions( "px", 1, 1, 1 );
-				setups.add( new ViewSetup( viewId.getViewSetupId(), "setup " + viewId.getViewSetupId(), d0, vd0, t0, c0, a0, i0 ) );
-
-				final ArrayList< TimePoint > tps = new ArrayList<>();
-				tps.add( new TimePoint( viewId.getTimePointId() ) );
-				final TimePoints timepoints = new TimePoints( tps );
-
-				final HashMap< ViewId, ViewRegistration > registrations = new HashMap<>();
-				registrations.put( viewId, new ViewRegistration( viewId.getTimePointId(), viewId.getViewSetupId() ) );
-				final ViewRegistrations viewRegistrations = new ViewRegistrations( registrations );
-
-				final SequenceDescription sequence = new SequenceDescription(timepoints, setups, null);
-				sequence.setImgLoader( new N5ImageLoader( new File( n5Path ), sequence) );
-
-				final SpimData spimData = new SpimData( xmlOutPath.getParentFile(), sequence, viewRegistrations);
-
-				new XmlIoSpimData().save( spimData, xmlOutPath.getAbsolutePath() );
-			}
-
-			// set N5 attributes for setup
-			// e.g. {"compression":{"type":"gzip","useZlib":false,"level":1},"downsamplingFactors":[[1,1,1],[2,2,1]],"blockSize":[128,128,32],"dataType":"uint16","dimensions":[512,512,86]}
 			String ds = "setup" + viewId.getViewSetupId();
-			System.out.println( "setting attributes for '" + "setup" + viewId.getViewSetupId() + "'");
-			driverVolumeWriter.setAttribute(ds, "dataType", dataType );
-			driverVolumeWriter.setAttribute(ds, "blockSize", blockSize );
-			driverVolumeWriter.setAttribute(ds, "dimensions", dimensions );
-			driverVolumeWriter.setAttribute(ds, "compression", compression );
-			driverVolumeWriter.setAttribute(ds, "downsamplingFactors", new int[][] {{1,1,1}} );
+
+			// if viewsetup does not exist
+			if ( !exists.getB() )
+			{
+				// set N5 attributes for setup
+				// e.g. {"compression":{"type":"gzip","useZlib":false,"level":1},"downsamplingFactors":[[1,1,1],[2,2,1]],"blockSize":[128,128,32],"dataType":"uint16","dimensions":[512,512,86]}
+				System.out.println( "setting attributes for '" + "setup" + viewId.getViewSetupId() + "'");
+				driverVolumeWriter.setAttribute(ds, "dataType", dataType );
+				driverVolumeWriter.setAttribute(ds, "blockSize", blockSize );
+				driverVolumeWriter.setAttribute(ds, "dimensions", dimensions );
+				driverVolumeWriter.setAttribute(ds, "compression", compression );
+				driverVolumeWriter.setAttribute(ds, "downsamplingFactors", new int[][] {{1,1,1}} );
+			}
 
 			// set N5 attributes for timepoint
 			// e.g. {"resolution":[1.0,1.0,3.0],"saved_completely":true,"multiScale":true}
@@ -217,8 +116,48 @@ public class BDV {
 		}
 		else if ( StorageType.HDF5.equals(storageType) )
 		{
-			System.out.println( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
-			System.exit( 0 );
+			final File xmlOutPath;
+			if ( xmlOutPathString == null )
+				xmlOutPath = new File( new File( n5Path ).getParent(), "dataset.xml" );
+			else
+				xmlOutPath = new File( xmlOutPathString );
+
+			System.out.println( "XML: " + xmlOutPath.getAbsolutePath() );
+
+			final Pair<Boolean, Boolean> exists = writeSpimData(
+					viewId,
+					storageType,
+					dimensions,
+					n5Path,
+					xmlOutPath,
+					angleIds,
+					illuminationIds, 
+					channelIds,
+					tileIds );
+
+			// if viewsetup does not exist
+			if ( !exists.getB() )
+			{
+				final Img<IntType> subdivisions = ArrayImgs.ints( blockSize, new long[] { 3, 1 } );
+				final Img<DoubleType> resolutions = ArrayImgs.doubles( new double[] { 1,1,1}, new long[] { 3, 1 } );
+
+				driverVolumeWriter.createDataset(
+						"s" + String.format("%02d", viewId.getViewSetupId()) + "/subdivisions",
+						new long[] { 3, 1 },
+						new int[] { 3, 1 },
+						DataType.INT32,
+						new RawCompression() );
+
+				driverVolumeWriter.createDataset(
+						"s" + String.format("%02d", viewId.getViewSetupId()) + "/resolutions",
+						new long[] { 3, 1 },
+						new int[] { 3, 1 },
+						DataType.FLOAT64,
+						new RawCompression() );
+
+				N5Utils.saveBlock(subdivisions, driverVolumeWriter, "s" + String.format("%02d", viewId.getViewSetupId()) + "/subdivisions", new long[] {0,0,0} );
+				N5Utils.saveBlock(resolutions, driverVolumeWriter, "s" + String.format("%02d", viewId.getViewSetupId()) + "/resolutions", new long[] {0,0,0} );
+			}
 		}
 		else
 		{
@@ -226,4 +165,173 @@ public class BDV {
 			System.exit( 0 );
 		}
 	}
+
+	/**
+	 * 
+	 * @param viewId
+	 * @param storageType
+	 * @param dimensions
+	 * @param n5Path
+	 * @param xmlOutPath
+	 * @param angleIds
+	 * @param illuminationIds
+	 * @param channelIds
+	 * @param tileIds
+	 * @return if timepoint and viewsetup already exist
+	 * @throws SpimDataException
+	 */
+	public static Pair<Boolean, Boolean> writeSpimData(
+			final ViewId viewId,
+			final StorageType storageType,
+			final long[] dimensions,
+			final String n5Path,
+			final File xmlOutPath,
+			final String angleIds,
+			final String illuminationIds, 
+			final String channelIds,
+			final String tileIds ) throws SpimDataException
+	{
+		if ( xmlOutPath.exists() )
+		{
+			System.out.println( "XML exists. Parsing and adding.");
+			final XmlIoSpimData io = new XmlIoSpimData();
+			final SpimData spimData = io.load( xmlOutPath.getAbsolutePath() );
+
+			boolean tpExists = false;
+			boolean viewSetupExists = false;
+
+			for ( final ViewDescription viewId2 : spimData.getSequenceDescription().getViewDescriptions().values() )
+			{
+				if ( viewId2.equals( viewId ) )
+				{
+					System.out.println( "ViewId you specified already exists in the XML, cannot continue." );
+					System.exit( 0 );
+				}
+
+				if ( viewId2.getTimePointId() == viewId.getTimePointId() )
+					tpExists = true;
+
+				if ( viewId2.getViewSetupId() == viewId.getViewSetupId() )
+				{
+					viewSetupExists = true;
+
+					// dimensions have to match
+					if ( !Intervals.equalDimensions( new FinalDimensions( dimensions ), viewId2.getViewSetup().getSize() ) )
+					{
+						System.out.println( "ViewSetup you specified already exists in the XML, but with different dimensions, cannot continue." );
+						System.exit( 0 );
+					}
+				}
+			}
+
+			final List<ViewSetup> setups = new ArrayList<>( spimData.getSequenceDescription().getViewSetups().values() );
+
+			if ( !viewSetupExists )
+			{
+				final Iterator<ViewSetup> i = setups.iterator();
+				ViewSetup tmp = i.next();
+
+				Channel c0 = tmp.getChannel();
+				Angle a0 = tmp.getAngle();
+				Illumination i0 = tmp.getIllumination();
+				Tile t0 = tmp.getTile();
+
+				while ( i.hasNext() )
+				{
+					tmp = i.next();
+					if ( tmp.getChannel().getId() > c0.getId() )
+						c0 = tmp.getChannel();
+					if ( tmp.getAngle().getId() > a0.getId() )
+						a0 = tmp.getAngle();
+					if ( tmp.getIllumination().getId() > i0.getId() )
+						i0 = tmp.getIllumination();
+					if ( tmp.getTile().getId() > t0.getId() )
+						t0 = tmp.getTile();
+				}
+
+				if ( angleIds != null )
+					a0 = new Angle( a0.getId() + 1 );
+				if ( illuminationIds != null )
+					i0 = new Illumination( i0.getId() + 1 );
+				if ( tileIds != null )
+					t0 = new Tile( t0.getId() + 1 );
+				if ( tileIds != null || ( angleIds == null && illuminationIds == null && tileIds == null && tpExists ) ) // nothing was defined, then increase channel
+					c0 = new Channel( c0.getId() + 1 );
+
+				final Dimensions d0 = new FinalDimensions( dimensions );
+				final VoxelDimensions vd0 = new FinalVoxelDimensions( "px", 1, 1, 1 );
+
+				setups.add( new ViewSetup( viewId.getViewSetupId(), "setup " + viewId.getViewSetupId(), d0, vd0, t0, c0, a0, i0 ) );
+			}
+
+			final TimePoints timepoints;
+			if ( !tpExists )
+			{
+				final List<TimePoint> tps = spimData.getSequenceDescription().getTimePoints().getTimePointsOrdered();
+				tps.add( new TimePoint( viewId.getTimePointId() ) );
+				timepoints = new TimePoints( tps );
+			}
+			else
+			{
+				timepoints = spimData.getSequenceDescription().getTimePoints();
+			}
+
+			final Map<ViewId, ViewRegistration> registrations = spimData.getViewRegistrations().getViewRegistrations();
+			registrations.put( viewId, new ViewRegistration( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+			final ViewRegistrations viewRegistrations = new ViewRegistrations( registrations );
+
+			final SequenceDescription sequence = new SequenceDescription(timepoints, setups, null);
+
+			if ( StorageType.N5.equals(storageType) )
+				sequence.setImgLoader( new N5ImageLoader( new File( n5Path ), sequence) );
+			else if ( StorageType.HDF5.equals(storageType) )
+				sequence.setImgLoader( new Hdf5ImageLoader( new File( n5Path ), null, sequence) );
+			else
+				throw new RuntimeException( storageType + " not supported." );
+
+			final SpimData spimDataNew = new SpimData( xmlOutPath.getParentFile(), sequence, viewRegistrations);
+			new XmlIoSpimData().save( spimDataNew, xmlOutPath.getAbsolutePath() );
+
+			return new ValuePair<>(tpExists, viewSetupExists);
+		}
+		else
+		{
+			System.out.println( "New XML.");
+
+			final ArrayList< ViewSetup > setups = new ArrayList<>();
+
+			final Channel c0 = new Channel( 0 );
+			final Angle a0 = new Angle( 0 );
+			final Illumination i0 = new Illumination( 0 );
+			final Tile t0 = new Tile( 0 );
+
+			final Dimensions d0 = new FinalDimensions( dimensions );
+			final VoxelDimensions vd0 = new FinalVoxelDimensions( "px", 1, 1, 1 );
+			setups.add( new ViewSetup( viewId.getViewSetupId(), "setup " + viewId.getViewSetupId(), d0, vd0, t0, c0, a0, i0 ) );
+
+			final ArrayList< TimePoint > tps = new ArrayList<>();
+			tps.add( new TimePoint( viewId.getTimePointId() ) );
+			final TimePoints timepoints = new TimePoints( tps );
+
+			final HashMap< ViewId, ViewRegistration > registrations = new HashMap<>();
+			registrations.put( viewId, new ViewRegistration( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+			final ViewRegistrations viewRegistrations = new ViewRegistrations( registrations );
+
+			final SequenceDescription sequence = new SequenceDescription(timepoints, setups, null);
+			if ( StorageType.N5.equals(storageType) )
+				sequence.setImgLoader( new N5ImageLoader( new File( n5Path ), sequence) );
+			else if ( StorageType.HDF5.equals(storageType) )
+				sequence.setImgLoader( new Hdf5ImageLoader( new File( n5Path ), null, sequence) );
+			else
+				throw new RuntimeException( storageType + " not supported." );
+
+			final SpimData spimData = new SpimData( xmlOutPath.getParentFile(), sequence, viewRegistrations);
+
+			new XmlIoSpimData().save( spimData, xmlOutPath.getAbsolutePath() );
+
+			return new ValuePair<>(false, false);
+		}
+		
+	}
+
 }
