@@ -429,6 +429,10 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		sc.close();
 
+		// close HDF5 writer
+		if ( hdf5DriverVolumeWriter != null )
+			hdf5DriverVolumeWriter.close();
+
 		System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset );
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
