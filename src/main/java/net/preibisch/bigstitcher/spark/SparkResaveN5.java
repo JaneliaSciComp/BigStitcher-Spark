@@ -8,8 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.Callable;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -36,6 +34,7 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -47,45 +46,25 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 	@Option(names = { "-x", "--xml" }, required = true, description = "path to the BigStitcher xml, e.g. /home/project.xml")
 	private String xmlPath = null;
 
-	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,32")
-	private String blockSizeString = "128,128,32";
+	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
+	private String blockSizeString = "128,128,128";
 
-	@Option(names = "--blockSizeScale", description = "how much the blocksize is scaled for processing, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32")
+	@Option(names = "--blockSizeScale", description = "how much the blocksize is scaled for processing, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32 (default: 3,3,1)")
 	private String blockSizeScaleString = "3,3,1";
 
-	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (full res 1,1,1 is always created), e.g. 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
+	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (must contain full res 1,1,1 that is always created), e.g. 1,1,1; 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
 	private String downsampling = null;
 
-	@Option(names = { "-o", "--n5Path" }, description = "N5 path for saving, default: 'folder of the xml'/dataset.n5")
+	@Option(names = { "-o", "--n5Path" }, description = "N5 path for saving, (default: 'folder of the xml'/dataset.n5)")
 	private String n5Path = null;
-
-	@Option(names = { "--angleId" }, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
-	private String angleIds = null;
-
-	@Option(names = { "--tileId" }, description = "list the tile ids that should be fused into a single image, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
-	private String tileIds = null;
-
-	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be fused into a single image, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
-	private String illuminationIds = null;
-
-	@Option(names = { "--channelId" }, description = "list the channel ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --channelId '0,1,2' (default: all channels)")
-	private String channelIds = null;
-
-	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --timepointId '0,1,2' (default: all time points)")
-	private String timepointIds = null;
-
-	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
-	private String[] vi = null;
 
 	@Override
 	public Void call() throws Exception
 	{
 		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
 
-		// select views to process
-		final ArrayList< ViewId > viewIds =
-				Import.createViewIds(
-						data, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		// process all views
+		final ArrayList< ViewId > viewIds = Import.getViewIds( data );
 
 		if ( viewIds.size() == 0 )
 		{
@@ -111,7 +90,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 		final ArrayList<long[][]> allGrids = new ArrayList<>();
 
 		// all ViewSetupIds (needed to create N5 datasets)
-		final HashMap<Integer, long[]> viewSetupIds = new HashMap<>();
+		final HashMap<Integer, long[]> viewSetupIdToDimensions = new HashMap<>();
 
 		// all ViewSetups for estimating downsampling
 		final List< ViewSetup > viewSetups = new ArrayList<>();
@@ -139,7 +118,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 					vd.getViewSetup().getSize().dimensionsAsLongArray()
 				});
 
-			viewSetupIds.put( viewId.getViewSetupId(), vd.getViewSetup().getSize().dimensionsAsLongArray() );
+			viewSetupIdToDimensions.put( viewId.getViewSetupId(), vd.getViewSetup().getSize().dimensionsAsLongArray() );
 			viewSetups.add( vd.getViewSetup() );
 		}
 
@@ -156,24 +135,23 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 				if (info.getExportResolutions().length > tmp.length)
 					tmp = info.getExportResolutions();
 
-			// omit (1,1,1)
-			downsampling = new int[tmp.length - 1][];
-
-			for ( int i = 0; i < tmp.length - 1; ++i )
-				downsampling[ i ] = tmp[ i + 1 ];
+			downsampling = tmp;
 		}
 		else
 		{
 			downsampling = Import.csvStringToDownsampling( this.downsampling );
 		}
 
-		System.out.println( "Selected downsampling steps (1, 1, 1) is always written first:" );
+		if ( !Import.testFirstDownsamplingIsPresent( downsampling ) )
+			throw new RuntimeException( "First downsampling step is not [1,1,...1], stopping." );
+
+		System.out.println( "Selected downsampling steps:" );
 
 		for ( int i = 0; i < downsampling.length; ++i )
 			System.out.println( Util.printCoordinates( downsampling[i] ) );
 
 		// create one dataset per ViewSetupId
-		for ( final Entry<Integer, long[]> viewSetup: viewSetupIds.entrySet() )
+		for ( final Entry<Integer, long[]> viewSetup: viewSetupIdToDimensions.entrySet() )
 		{
 			final Object type = data.getSequenceDescription().getImgLoader().getSetupImgLoader( viewSetup.getKey() ).getImageType();
 			final DataType dataType;
@@ -192,17 +170,23 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 
 			System.out.println( "Creating group: " + "'setup" + viewSetup.getKey() + "'" );
 
-			// including [1,1,1]
-			final int downsamplingFull[][] = new int[ downsampling.length + 1 ][];
-
-			downsamplingFull[ 0 ] = new int[] { 1,1,1 };
-
-			for ( int i = 0; i < downsamplingFull.length - 1; ++i )
-				downsamplingFull[ i + 1 ] = downsampling[ i ];
-
 			n5.createGroup( n5Dataset );
-			n5.setAttribute( n5Dataset, "downsamplingFactors", downsamplingFull );
+			n5.setAttribute( n5Dataset, "downsamplingFactors", downsampling );
 			n5.setAttribute( n5Dataset, "dataType", dataType );
+		}
+
+		// create all image (s0) datasets
+		for ( final ViewId viewId : viewIds )
+		{
+			final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s0";
+			final DataType dataType = n5.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
+
+			n5.createDataset(
+					dataset,
+					viewSetupIdToDimensions.get( viewId.getViewSetupId() ), // dimensions
+					blockSize,
+					dataType,
+					new GzipCompression( 1 ) );
 		}
 
 		System.out.println( "numBlocks = " + allGrids.size() );
@@ -232,13 +216,6 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 					final DataType dataType = n5Lcl.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
 					final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s0";
 
-					n5Lcl.createDataset(
-							dataset,
-							gridBlock[ 4 ], // dimensions
-							blockSize,
-							dataType,
-							new GzipCompression( 1 ) );
-
 					if ( dataType == DataType.UINT16 )
 					{
 						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
@@ -265,9 +242,35 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 		//
 		// Save remaining downsampling levels (s1 ... sN)
 		//
-		for ( final int[] ds : downsampling )
+		for ( int level = 1; level < downsampling.length; ++level )
 		{
-			
+			final int[] ds = new int[ downsampling[ 0 ].length ];
+
+			for ( int d = 0; d < ds.length; ++d )
+				ds[ d ] = downsampling[ level ][ d ] / downsampling[ level - 1 ][ d ];
+
+			System.out.println( "Downsampling: " + Util.printCoordinates( downsampling[ level ] ) + " with relative downsampling of " + Util.printCoordinates( ds ));
+
+			// all grids across all ViewId's
+			final ArrayList<long[][]> allGridsDS = new ArrayList<>();
+
+			// adjust dimensions
+			//for ( final Entry<Integer, long[]> viewSetup: viewSetupIds.entrySet() )
+			for ( final ViewId viewId : viewIds )
+			{
+				final long[] dimFullRes = viewSetupIdToDimensions.get( viewId.getViewSetupId() );
+
+				/*
+				final List<long[][]> grid = Grid.create(
+						,
+						new int[] {
+								blockSize[0] * blockSizeScale[ 0 ],
+								blockSize[1] * blockSizeScale[ 1 ],
+								blockSize[2] * blockSizeScale[ 2 ]
+						},
+						blockSize);
+				*/
+			}
 		}
 
 		sc.close();
