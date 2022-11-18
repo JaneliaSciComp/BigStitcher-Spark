@@ -43,7 +43,6 @@ import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-@SuppressWarnings("FieldMayBeFinal")
 public class NonRigidFusionSpark implements Callable<Void>, Serializable
 {
 	/**
