@@ -317,14 +317,14 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 						final String datasetPrev = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s-1);
 						final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s);
 
-						final RandomAccessibleInterval img = N5Utils.open(n5Lcl, datasetPrev);
-						RandomAccessibleInterval downsampled = img;
 
 						if ( dataType == DataType.UINT16 )
 						{
-							for ( int d = 0; d < img.numDimensions(); ++d )
+							RandomAccessibleInterval<UnsignedShortType> downsampled = N5Utils.open(n5Lcl, datasetPrev);;
+
+							for ( int d = 0; d < downsampled.numDimensions(); ++d )
 								downsampled = LazyHalfPixelDownsample2x.init(
-										Views.extendBorder( downsampled ),
+										downsampled,
 										new FinalInterval( downsampled ),
 										new UnsignedShortType(),
 										blockSize,
@@ -335,9 +335,11 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 						}
 						else if ( dataType == DataType.UINT8 )
 						{
-							for ( int d = 0; d < img.numDimensions(); ++d )
+							RandomAccessibleInterval<UnsignedByteType> downsampled = N5Utils.open(n5Lcl, datasetPrev);
+
+							for ( int d = 0; d < downsampled.numDimensions(); ++d )
 								downsampled = LazyHalfPixelDownsample2x.init(
-										Views.extendBorder( downsampled ),
+										downsampled,
 										new FinalInterval( downsampled ),
 										new UnsignedByteType(),
 										blockSize,
@@ -348,9 +350,11 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 						}
 						else if ( dataType == DataType.FLOAT32 )
 						{
-							for ( int d = 0; d < img.numDimensions(); ++d )
+							RandomAccessibleInterval<FloatType> downsampled = N5Utils.open(n5Lcl, datasetPrev);;
+
+							for ( int d = 0; d < downsampled.numDimensions(); ++d )
 								downsampled = LazyHalfPixelDownsample2x.init(
-										Views.extendBorder( downsampled ),
+										downsampled,
 										new FinalInterval( downsampled ),
 										new FloatType(),
 										blockSize,
