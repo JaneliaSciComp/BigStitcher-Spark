@@ -44,7 +44,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class SparkResaveN5 implements Callable<Void>, Serializable
+public class ResaveN5 implements Callable<Void>, Serializable
 {
 
 	private static final long serialVersionUID = 1890656279324908516L;
@@ -242,6 +242,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 
 					final SetupImgLoader< ? > imgLoader = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );
 
+					@SuppressWarnings("rawtypes")
 					final RandomAccessibleInterval img = imgLoader.getImage( viewId.getTimePointId() );
 
 					final N5Writer n5Lcl = new N5FSWriter(n5Path);
@@ -251,16 +252,19 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 
 					if ( dataType == DataType.UINT16 )
 					{
+						@SuppressWarnings("unchecked")
 						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
 						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedShortType());
 					}
 					else if ( dataType == DataType.UINT8 )
 					{
+						@SuppressWarnings("unchecked")
 						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
 						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedByteType());
 					}
 					else if ( dataType == DataType.FLOAT32 )
 					{
+						@SuppressWarnings("unchecked")
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
 						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new FloatType());
 					}
@@ -423,7 +427,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new SparkResaveN5()).execute(args));
+		System.exit(new CommandLine(new ResaveN5()).execute(args));
 	}
 
 }
