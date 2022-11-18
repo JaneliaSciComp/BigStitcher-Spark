@@ -32,9 +32,11 @@ import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.mvrecon.fiji.plugin.Data_Explorer;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -50,7 +52,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 	private String blockSizeString = "128,128,128";
 
 	@Option(names = "--blockSizeScale", description = "how much the blocksize is scaled for processing, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32 (default: 3,3,1)")
-	private String blockSizeScaleString = "3,3,1";
+	private String blockSizeScaleString = "2,2,1";
 
 	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (must contain full res 1,1,1 that is always created), e.g. 1,1,1; 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
 	private String downsampling = null;
@@ -200,7 +202,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 		// Save s0 level
 		//
 		final long time = System.currentTimeMillis();
-
+		/*
 		final JavaRDD<long[][]> rdds0 = sc.parallelize(allGrids);
 
 		rdds0.foreach(
@@ -209,6 +211,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 					final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
 
 					final SetupImgLoader< ? > imgLoader = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );
+
 					final RandomAccessibleInterval img = imgLoader.getImage( viewId.getTimePointId() );
 
 					final N5Writer n5Lcl = new N5FSWriter(n5Path);
@@ -236,7 +239,7 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 						throw new RuntimeException("Unsupported pixel type: " + dataType );
 					}
 				});
-
+		*/
 		System.out.println( "Resaved N5 s0 level, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		//
@@ -258,22 +261,42 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 			//for ( final Entry<Integer, long[]> viewSetup: viewSetupIds.entrySet() )
 			for ( final ViewId viewId : viewIds )
 			{
-				final long[] dimFullRes = viewSetupIdToDimensions.get( viewId.getViewSetupId() );
+				final long[] previousDim = n5.getAttribute( "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (level-1), "dimensions", long[].class );
+				final long[] dim = new long[ previousDim.length ];
+				for ( int d = 0; d < dim.length; ++d )
+					dim[ d ] = previousDim[ d ] / 2;
+				final DataType dataType = n5.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
 
-				/*
+				System.out.println( Group.pvid( viewId ) + ": s" + (level-1) + " dim=" + Util.printCoordinates( previousDim ) + ", s" + level + " dim=" + Util.printCoordinates( dim ) + ", datatype=" + dataType );
+
+				final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + level;
+
+				n5.createDataset(
+						dataset,
+						dim, // dimensions
+						blockSize,
+						dataType,
+						new GzipCompression( 1 ) );
+
 				final List<long[][]> grid = Grid.create(
-						,
+						dim,
 						new int[] {
-								blockSize[0] * blockSizeScale[ 0 ],
-								blockSize[1] * blockSizeScale[ 1 ],
-								blockSize[2] * blockSizeScale[ 2 ]
+								blockSize[0],
+								blockSize[1],
+								blockSize[2]
 						},
 						blockSize);
-				*/
+
+				allGridsDS.addAll( grid );
 			}
+
+			System.out.println( "s" + level + " num blocks=" + allGridsDS.size() );
 		}
 
 		sc.close();
+
+		Thread.sleep( 100 );
+		System.out.println( "resaved successfully." );
 
 		return null;
 	}
