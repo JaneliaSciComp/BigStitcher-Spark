@@ -91,10 +91,10 @@ public class AffineFusion implements Callable<Void>, Serializable
 	private String xmlOutPath = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark HDF5)")
+			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
 	private StorageType storageType = null;
 
-	@Option(names = "--blockSize", description = "blockSize, e.g. 128,128,128")
+	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
 	@Option(names = { "-x", "--xml" }, required = true, description = "path to the existing BigStitcher xml, e.g. /home/project.xml")
@@ -149,7 +149,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 	{
 		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
 		{
-			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) OR the BigDataViewer specification (e.g. -b 4,1)");
+			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) OR the BigDataViewer specification (e.g. --bdv 0,1)");
 			System.exit( 0 );
 		}
 
@@ -325,7 +325,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
 		// TODO: REMOVE
-		conf.set("spark.driver.bindAddress", "127.0.0.1");
+		//conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
@@ -386,7 +386,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 								Double.NaN ).getA();
 
 					final N5Writer executorVolumeWriter;
-					//		StorageType.N5.equals(storageType) ? new N5FSWriter(n5Path) : new N5ZarrWriter(n5Path);
 
 					if ( StorageType.N5.equals(storageType) )
 						executorVolumeWriter = new N5FSWriter(n5Path);
