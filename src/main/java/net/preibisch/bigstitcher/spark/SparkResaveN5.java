@@ -15,6 +15,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
@@ -23,6 +24,7 @@ import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
+import net.imglib2.FinalInterval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
@@ -35,7 +37,9 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.Data_Explorer;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -258,7 +262,6 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 			final ArrayList<long[][]> allGridsDS = new ArrayList<>();
 
 			// adjust dimensions
-			//for ( final Entry<Integer, long[]> viewSetup: viewSetupIds.entrySet() )
 			for ( final ViewId viewId : viewIds )
 			{
 				final long[] previousDim = n5.getAttribute( "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (level-1), "dimensions", long[].class );
@@ -287,10 +290,82 @@ public class SparkResaveN5 implements Callable<Void>, Serializable
 						},
 						blockSize);
 
-				allGridsDS.addAll( grid );
+				// add timepointId and ViewSetupId to the gridblock
+				for ( final long[][] gridBlock : grid )
+					allGridsDS.add( new long[][]{
+						gridBlock[ 0 ].clone(),
+						gridBlock[ 1 ].clone(),
+						gridBlock[ 2 ].clone(),
+						new long[] { viewId.getTimePointId(), viewId.getViewSetupId() }
+					});
 			}
 
 			System.out.println( "s" + level + " num blocks=" + allGridsDS.size() );
+
+			final JavaRDD<long[][]> rddsN = sc.parallelize(allGridsDS);
+
+			final int s = level;
+			final long timeS = System.currentTimeMillis();
+
+			rddsN.foreach(
+					gridBlock -> {
+						final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
+
+						final N5Writer n5Lcl = new N5FSWriter(n5Path);
+
+						final DataType dataType = n5Lcl.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
+						final String datasetPrev = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s-1);
+						final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s);
+
+						final RandomAccessibleInterval img = N5Utils.open(n5Lcl, datasetPrev);
+						RandomAccessibleInterval downsampled = img;
+
+						if ( dataType == DataType.UINT16 )
+						{
+							for ( int d = 0; d < img.numDimensions(); ++d )
+								downsampled = LazyHalfPixelDownsample2x.init(
+										Views.extendBorder( downsampled ),
+										new FinalInterval( downsampled ),
+										new UnsignedShortType(),
+										blockSize,
+										d);
+
+							final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
+							N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedShortType());
+						}
+						else if ( dataType == DataType.UINT8 )
+						{
+							for ( int d = 0; d < img.numDimensions(); ++d )
+								downsampled = LazyHalfPixelDownsample2x.init(
+										Views.extendBorder( downsampled ),
+										new FinalInterval( downsampled ),
+										new UnsignedByteType(),
+										blockSize,
+										d);
+
+							final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
+							N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedByteType());
+						}
+						else if ( dataType == DataType.FLOAT32 )
+						{
+							for ( int d = 0; d < img.numDimensions(); ++d )
+								downsampled = LazyHalfPixelDownsample2x.init(
+										Views.extendBorder( downsampled ),
+										new FinalInterval( downsampled ),
+										new FloatType(),
+										blockSize,
+										d);
+
+							final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
+							N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new FloatType());
+						}
+						else
+						{
+							throw new RuntimeException("Unsupported pixel type: " + dataType );
+						}
+					});
+
+			System.out.println( "Resaved N5 s" + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
 		}
 
 		sc.close();
