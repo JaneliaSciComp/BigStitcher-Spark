@@ -229,6 +229,20 @@ public class Import {
 	}
 
 	/**
+	 * converts a List of Strings like '[1,1,1][ 2,2,1][ 4,4,1 ][ 8,8,2] to downsampling levels in int[][]
+	 * @param csvString
+	 * @return
+	 */
+	public static int[][] csvStringListToDownsampling(final List<String> csvString) {
+
+		final int[][] downsampling = new int[csvString.size()][];
+		for ( int i = 0; i < csvString.size(); ++i )
+			downsampling[ i ] = Arrays.stream(csvString.get( i ).split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
+
+		return downsampling;
+	}
+
+	/**
 	 * tests that the first downsampling is [1,1,....1]
 	 *
 	 * @param downsampling
@@ -267,8 +281,7 @@ public class Import {
 		}
 		else
 		{
-			System.out.println( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
-			System.exit( 0 );
+			new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
 		}
 
 		System.out.println( "Saving BDV-compatible " + storageType + " using ViewSetupId=" + viewId.getViewSetupId() + ", TimepointId=" + viewId.getTimePointId()  );

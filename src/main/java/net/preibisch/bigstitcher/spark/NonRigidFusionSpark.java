@@ -26,11 +26,13 @@ import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
 import net.imglib2.parallel.SequentialExecutorService;
+import net.imglib2.type.numeric.integer.ShortType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
+import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.AffineFusion.StorageType;
 import net.preibisch.bigstitcher.spark.util.BDV;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -124,6 +126,12 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
+		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
+		{
+			System.out.println( "BDV-compatible HDF5 only supports 16-bit output for now. Please use '--UINT16' flag for fusion." );
+			System.exit( 0 );
+		}
+
 		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
 
 		// select views to process
@@ -163,6 +171,11 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 		{
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT8;
+		}
+		else if ( uint16 && bdvString != null && StorageType.HDF5.equals( storageType ) )
+		{
+			System.out.println( "Fusing to INT16 (for BDV compliance, which is treated as UINT16), min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
+			dataType = DataType.INT16;
 		}
 		else if ( uint16)
 		{
@@ -406,8 +419,24 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedShortType());
 
-						//final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
+						{
+							// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
+							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
+							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
+							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
+							final RandomAccessibleInterval< ShortType > sourceINT16 = 
+									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
+
+							// why???
+							//final RandomAccessibleInterval<ShortType> sourceGridBlock = Views.offsetInterval(sourceINT16, gridBlock[0], gridBlock[1]);
+							N5Utils.saveBlock(sourceINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+						else
+						{
+							//final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
+							N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
 					}
 					else
 					{

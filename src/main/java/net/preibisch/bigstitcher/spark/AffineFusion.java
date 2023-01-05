@@ -27,6 +27,7 @@ import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.integer.ShortType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -101,7 +102,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
-
+	// TODO: make a variable just as -s is
 	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
 	private boolean uint16 = false;
 
@@ -127,6 +128,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 		}
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+
+		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
+		{
+			System.out.println( "BDV-compatible HDF5 only supports 16-bit output for now. Please use '--UINT16' flag for fusion." );
+			System.exit( 0 );
+		}
 
 		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
 
@@ -160,7 +167,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT8;
 		}
-		else if ( uint16)
+		else if ( uint16 && bdvString != null && StorageType.HDF5.equals( storageType ) )
+		{
+			System.out.println( "Fusing to INT16 (for BDV compliance, which is treated as UINT16), min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
+			dataType = DataType.INT16;
+		}
+		else if ( uint16 )
 		{
 			System.out.println( "Fusing to UINT16, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT16;
@@ -198,7 +210,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 			boundingBox = new BoundingBox( new FinalInterval(minBB, maxBB) );
 
-			System.out.println( "Adjusted bounding box (anistropy preserved: " + Util.printInterval( boundingBox ) );
+			System.out.println( "Adjusted bounding box (anisotropy preserved: " + Util.printInterval( boundingBox ) );
 		}
 
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
@@ -225,6 +237,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 			range = ( this.maxIntensity - this.minIntensity ) / 65535.0;
 		else
 			range = 0;
+
+		// TODO: improve (e.g. make ViewId serializable)
 		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
 		final boolean useAF = preserveAnisotropy;
 		final double af = anisotropyFactor;
@@ -272,7 +286,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		System.out.println( "numBlocks = " + grid.size() );
 
-		driverVolumeWriter.setAttribute( n5Dataset, "min", minBB);
+		driverVolumeWriter.setAttribute( n5Dataset, "min", minBB );
 
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
@@ -308,6 +322,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final long time = System.currentTimeMillis();
 		rdd.foreach(
 				gridBlock -> {
+					// custom serialization
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
 
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
@@ -387,14 +402,27 @@ public class AffineFusion implements Callable<Void>, Serializable
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedShortType());
 
-						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedShortType());
-						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
+						{
+							// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
+							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
+							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
+							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
+							final RandomAccessibleInterval< ShortType > sourceINT16 = 
+									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
+
+							final RandomAccessibleInterval<ShortType> sourceGridBlock = Views.offsetInterval(sourceINT16, gridBlock[0], gridBlock[1]);
+							N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+						else
+						{
+							final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
+							N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
 					}
 					else
 					{
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new FloatType());
 						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 				});
