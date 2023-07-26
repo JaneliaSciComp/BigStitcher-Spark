@@ -260,7 +260,7 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 
 		System.out.println( "numBlocks = " + grid.size() );
 
-		driverVolumeWriter.setAttribute( n5Dataset, "min", min);
+		driverVolumeWriter.setAttribute( n5Dataset, "offset", min);
 
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
