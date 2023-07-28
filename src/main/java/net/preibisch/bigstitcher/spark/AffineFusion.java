@@ -304,7 +304,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 			try
 			{
-				// TODO: the first time the XML does not exist, thus instantiate is not called
 				if ( !ExportTools.writeBDVMetaData(
 						driverVolumeWriter,
 						storageType,
@@ -330,7 +329,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 			}
 
 			System.out.println( "Done writing BDV metadata.");
-			//System.exit( 0 );
 		}
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
