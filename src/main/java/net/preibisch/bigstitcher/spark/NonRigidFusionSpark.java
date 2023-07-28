@@ -380,9 +380,8 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 									virtualGrid,
 									interpolation,
 									fusedBlock,
-									downsampling,
 									null,
-									service ).getA();
+									service );
 
 					service.shutdown();
 
