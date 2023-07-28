@@ -52,18 +52,21 @@ import picocli.CommandLine.Option;
 
 public class AffineFusion implements Callable<Void>, Serializable
 {
-	private static final long serialVersionUID = 2279327568867124470L;
+	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
+	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml")
+	private String xmlPath = null;
+
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5")
 	private String n5Path = null;
 
-	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "N5 dataset - it is  recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
+	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "Custom N5/ZARR/HDF5 dataset - it must end with '/s0' to be able to compute a multi-resolution pyramid, e.g. -d /ch488/s0")
 	private String n5Dataset = null;
 
-	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. -b 0,0 or -b 4,1")
+	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. --bdv 0,0 or --bdv 4,1")
 	private String bdvString = null;
 
-	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (if --bdv was selected), e.g. /home/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
+	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (only valid if --bdv was selected), e.g. -xo /home/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
 	private String xmlOutPath = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
@@ -72,9 +75,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
-
-	@Option(names = { "-x", "--xml" }, required = true, description = "path to the existing BigStitcher xml, e.g. /home/project.xml")
-	private String xmlPath = null;
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
@@ -97,6 +97,12 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	private String[] vi = null;
 
+
+	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
+	private boolean multiRes = false;
+
+	@Option(names = { "-ds", "--downsampling" }, split = ";", required = false, description = "Manually define steps to create of a multi-resolution pyramid (e.g. -ds 2,2,1; 2,2,1; 2,2,2; 2,2,2)")
+	private List<String> downsampling = null;
 
 	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
 	private boolean preserveAnisotropy = false;
@@ -125,8 +131,24 @@ public class AffineFusion implements Callable<Void>, Serializable
 	{
 		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
 		{
-			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) OR the BigDataViewer specification (e.g. --bdv 0,1)");
+			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) - OR - the BigDataViewer specification (e.g. --bdv 0,1)");
 			System.exit( 0 );
+		}
+
+		if ( this.multiRes && this.downsampling != null )
+		{
+			System.out.println( "If you want to create a multi-resolution pyramid, you must select either automatic (--multiRes) - OR - manual mode (--downsampling 2,2,1; 2,2,1; 2,2,2)");
+			System.exit( 0 );
+		}
+
+		if (( this.multiRes || this.downsampling != null ) && this.n5Dataset != null )
+		{
+			// non-bdv multi-res dataset
+			if ( !this.n5Dataset.endsWith("/s0") )
+			{
+				System.out.println( "In order to create a multi-resolution pyramid for a non-BDV dataset, the dataset must end with '/s0', right not it is '" + n5Dataset + "'.");
+				System.exit( 0 );
+			}
 		}
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
