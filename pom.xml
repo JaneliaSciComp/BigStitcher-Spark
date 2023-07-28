@@ -221,6 +221,10 @@
                     <groupId>ch.epfl.biop</groupId>
                     <artifactId>ijp-kheops</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>gov.nist.isg</groupId>
+                    <artifactId>pyramidio</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
         <dependency>
