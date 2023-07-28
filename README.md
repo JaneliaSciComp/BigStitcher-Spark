@@ -3,6 +3,14 @@ Running compute-intense parts of BigStitcher distributed. For now we support **f
 
 Sharing this early as it might be useful ...
 
+## Install
+
+* Prerequisites:  Java and maven must be installed.
+* Clone the repo and `cd` into `BigStitcher-Spark`
+* Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create an executable `affine-fusion` in the working directory.
+
+## Usage
+
 Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
 
 ```
