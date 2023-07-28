@@ -8,10 +8,10 @@ import java.util.List;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.preibisch.bigstitcher.spark.AffineFusion.StorageType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
+import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 
 public class Import {
 

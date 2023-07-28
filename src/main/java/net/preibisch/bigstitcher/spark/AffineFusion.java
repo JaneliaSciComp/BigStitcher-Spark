@@ -1,5 +1,6 @@
 package net.preibisch.bigstitcher.spark;
 
+import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -34,13 +35,16 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
-import net.preibisch.bigstitcher.spark.util.BDV;
+import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
+import net.preibisch.mvrecon.process.export.ExportTools;
+import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import picocli.CommandLine;
@@ -50,7 +54,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
-	public enum StorageType { N5, ZARR, HDF5 }
+	//public enum StorageType { N5, ZARR, HDF5 }
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
 	private String n5Path = null;
@@ -291,6 +295,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
 		{
+			/*
 			BDV.writeBDVMetaData(
 					driverVolumeWriter,
 					storageType,
@@ -305,6 +310,43 @@ public class AffineFusion implements Callable<Void>, Serializable
 					this.illuminationIds, 
 					this.channelIds,
 					this.tileIds );
+			*/
+
+			// TODO: support create downsampling pyramids, null is fine for now
+			final int[][] downsamplings = null;
+
+			// A Functional Interface that converts a ViewId to a ViewSetup, only called if the ViewSetup does not exist
+			final InstantiateViewSetup instantiate =
+					new BDVSparkInstantiateViewSetup( angleIds, illuminationIds, channelIds, tileIds );
+
+			final ViewId viewId = Import.getViewId( bdvString );
+
+			try
+			{
+				// TODO: the first time the XML does not exist, thus instantiate is not called
+				if ( !ExportTools.writeBDVMetaData(
+						driverVolumeWriter,
+						storageType,
+						dataType,
+						dimensions,
+						compression,
+						blockSize,
+						downsamplings,
+						viewId,
+						this.n5Path,
+						this.xmlOutPath,
+						instantiate ) )
+				{
+					System.out.println( "Failed to write metadata for '" + n5Dataset + "'." );
+					return null;
+				}
+			}
+			catch (SpimDataException | IOException e)
+			{
+				e.printStackTrace();
+				System.out.println( "Failed to write metadata for '" + n5Dataset + "': " + e );
+				return null;
+			}
 
 			System.out.println( "Done writing BDV metadata.");
 			//System.exit( 0 );
