@@ -46,6 +46,11 @@ import picocli.CommandLine.Option;
 
 public class ResaveN5 implements Callable<Void>, Serializable
 {
+	/*
+	-x '/Users/preibischs/Documents/Microscopy/Stitching/Truman/testspark/dataset.xml'
+	-xo '/Users/preibischs/Documents/Microscopy/Stitching/Truman/testspark/dataset-n5.xml'
+	-ds '1,1,1; 2,2,1; 4,4,1; 8,8,2'
+	*/
 
 	private static final long serialVersionUID = 1890656279324908516L;
 
@@ -58,8 +63,8 @@ public class ResaveN5 implements Callable<Void>, Serializable
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,64)")
 	private String blockSizeString = "128,128,64";
 
-	@Option(names = "--blockSizeScale", description = "how much the blocksize is scaled for processing, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32 (default: 2,2,1)")
-	private String blockSizeScaleString = "2,2,1";
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,32 that each spark thread writes 512,512,32 (default: 1,1,1)")
+	private String blockScaleString = "2,2,1";
 
 	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (must contain full res 1,1,1 that is always created), e.g. 1,1,1; 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
 	private String downsampling = null;
@@ -91,7 +96,7 @@ public class ResaveN5 implements Callable<Void>, Serializable
 		final Compression compression = new GzipCompression( 1 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
-		final int[] blockSizeScale = Import.csvStringToIntArray(blockSizeScaleString);
+		final int[] blockScale = Import.csvStringToIntArray(blockScaleString);
 
 		final N5Writer n5 = new N5FSWriter(n5Path);
 
@@ -113,9 +118,9 @@ public class ResaveN5 implements Callable<Void>, Serializable
 			final List<long[][]> grid = Grid.create(
 					vd.getViewSetup().getSize().dimensionsAsLongArray(),
 					new int[] {
-							blockSize[0] * blockSizeScale[ 0 ],
-							blockSize[1] * blockSizeScale[ 1 ],
-							blockSize[2] * blockSizeScale[ 2 ]
+							blockSize[0] * blockScale[ 0 ],
+							blockSize[1] * blockScale[ 1 ],
+							blockSize[2] * blockScale[ 2 ]
 					},
 					blockSize);
 
@@ -409,7 +414,6 @@ public class ResaveN5 implements Callable<Void>, Serializable
 
 		sc.close();
 
-		Thread.sleep( 100 );
 		System.out.println( "resaved successfully." );
 
 		// things look good, let's save the new XML
@@ -418,6 +422,8 @@ public class ResaveN5 implements Callable<Void>, Serializable
 		data.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5Path ), data.getSequenceDescription()));
 		new XmlIoSpimData2( null ).save( data, xmloutPath );
 
+		Thread.sleep( 100 );
+		System.out.println( "Resaved project, in total took: " + (System.currentTimeMillis() - time ) + " ms." );
 		System.out.println( "done." );
 
 		return null;
