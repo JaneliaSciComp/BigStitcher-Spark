@@ -54,8 +54,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 2279327568867124470L;
 
-	//public enum StorageType { N5, ZARR, HDF5 }
-
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
 	private String n5Path = null;
 
@@ -295,23 +293,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
 		{
-			/*
-			BDV.writeBDVMetaData(
-					driverVolumeWriter,
-					storageType,
-					dataType,
-					dimensions,
-					compression,
-					blockSize,
-					this.bdvString,
-					this.n5Path,
-					this.xmlOutPath,
-					this.angleIds,
-					this.illuminationIds, 
-					this.channelIds,
-					this.tileIds );
-			*/
-
 			// TODO: support create downsampling pyramids, null is fine for now
 			final int[][] downsamplings = null;
 

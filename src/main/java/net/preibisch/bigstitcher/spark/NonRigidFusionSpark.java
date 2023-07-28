@@ -267,23 +267,6 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
 		{
-			/*
-			BDV.writeBDVMetaData(
-					driverVolumeWriter,
-					storageType,
-					dataType,
-					dimensions,
-					compression,
-					blockSize,
-					this.bdvString,
-					this.n5Path,
-					this.xmlOutPath,
-					this.angleIds,
-					this.illuminationIds, 
-					this.channelIds,
-					this.tileIds );
-			*/
-
 			// TODO: support create downsampling pyramids, null is fine for now
 			final int[][] downsamplings = null;
 
