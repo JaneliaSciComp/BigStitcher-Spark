@@ -40,25 +40,40 @@ public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 			final Dimensions d,
 			final List<ViewSetup> existingSetups)
 	{
-		final Iterator<ViewSetup> i = existingSetups.iterator();
-		ViewSetup tmp = i.next();
+		Channel c0;
+		Angle a0;
+		Illumination i0;
+		Tile t0;
 
-		Channel c0 = tmp.getChannel();
-		Angle a0 = tmp.getAngle();
-		Illumination i0 = tmp.getIllumination();
-		Tile t0 = tmp.getTile();
-
-		while ( i.hasNext() )
+		if ( existingSetups == null || existingSetups.size() == 0 )
 		{
-			tmp = i.next();
-			if ( tmp.getChannel().getId() > c0.getId() )
-				c0 = tmp.getChannel();
-			if ( tmp.getAngle().getId() > a0.getId() )
-				a0 = tmp.getAngle();
-			if ( tmp.getIllumination().getId() > i0.getId() )
-				i0 = tmp.getIllumination();
-			if ( tmp.getTile().getId() > t0.getId() )
-				t0 = tmp.getTile();
+			c0 = new Channel( 0 );
+			a0 = new Angle( 0 );
+			i0 = new Illumination( 0 );
+			t0 = new Tile( 0 );
+		}
+		else
+		{
+			final Iterator<ViewSetup> i = existingSetups.iterator(); //existingSetups can be empty!
+			ViewSetup tmp = i.next();
+
+			c0 = tmp.getChannel();
+			a0 = tmp.getAngle();
+			i0 = tmp.getIllumination();
+			t0 = tmp.getTile();
+
+			while ( i.hasNext() )
+			{
+				tmp = i.next();
+				if ( tmp.getChannel().getId() > c0.getId() )
+					c0 = tmp.getChannel();
+				if ( tmp.getAngle().getId() > a0.getId() )
+					a0 = tmp.getAngle();
+				if ( tmp.getIllumination().getId() > i0.getId() )
+					i0 = tmp.getIllumination();
+				if ( tmp.getTile().getId() > t0.getId() )
+					t0 = tmp.getTile();
+			}
 		}
 
 		if ( angleIds != null )
