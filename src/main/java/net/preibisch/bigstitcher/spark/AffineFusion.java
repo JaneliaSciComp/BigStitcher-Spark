@@ -23,6 +23,7 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -36,6 +37,7 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
+import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -126,29 +128,16 @@ public class AffineFusion implements Callable<Void>, Serializable
 	// only supported for local spark HDF5 writes, needs to share a writer instance
 	private static N5HDF5Writer hdf5DriverVolumeWriter = null;
 
+	// TODO: support create downsampling pyramids, null is fine for now
+	private int[][] downsamplings;
+
 	@Override
 	public Void call() throws Exception
 	{
 		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
 		{
 			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) - OR - the BigDataViewer specification (e.g. --bdv 0,1)");
-			System.exit( 0 );
-		}
-
-		if ( this.multiRes && this.downsampling != null )
-		{
-			System.out.println( "If you want to create a multi-resolution pyramid, you must select either automatic (--multiRes) - OR - manual mode (--downsampling 2,2,1; 2,2,1; 2,2,2)");
-			System.exit( 0 );
-		}
-
-		if (( this.multiRes || this.downsampling != null ) && this.n5Dataset != null )
-		{
-			// non-bdv multi-res dataset
-			if ( !this.n5Dataset.endsWith("/s0") )
-			{
-				System.out.println( "In order to create a multi-resolution pyramid for a non-BDV dataset, the dataset must end with '/s0', right not it is '" + n5Dataset + "'.");
-				System.exit( 0 );
-			}
+			return null;
 		}
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
@@ -156,7 +145,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
 		{
 			System.out.println( "BDV-compatible HDF5 only supports 16-bit output for now. Please use '--UINT16' flag for fusion." );
-			System.exit( 0 );
+			return null;
 		}
 
 		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
@@ -237,6 +226,19 @@ public class AffineFusion implements Callable<Void>, Serializable
 			System.out.println( "Adjusted bounding box (anisotropy preserved: " + Util.printInterval( boundingBox ) );
 		}
 
+		//
+		// set up downsampling (if wanted)
+		//
+		if ( !Downsampling.testDownsamplingParameters( this.multiRes, this.downsampling, this.n5Dataset ) )
+			return null;
+
+		if ( multiRes )
+			downsamplings = ExportTools.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
+		else if ( this.downsampling != null )
+			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
+		else
+			downsamplings = null;
+
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
 		// display virtually
@@ -315,9 +317,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
 		{
-			// TODO: support create downsampling pyramids, null is fine for now
-			final int[][] downsamplings = null;
-
 			// A Functional Interface that converts a ViewId to a ViewSetup, only called if the ViewSetup does not exist
 			final InstantiateViewSetup instantiate =
 					new BDVSparkInstantiateViewSetup( angleIds, illuminationIds, channelIds, tileIds );
@@ -471,11 +470,17 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		sc.close();
 
+		if ( this.downsamplings != null )
+		{
+			// TODO: run common downsampling code (affine, non-rigid, downsampling-only)
+		}
+
 		// close HDF5 writer
 		if ( hdf5DriverVolumeWriter != null )
 			hdf5DriverVolumeWriter.close();
+		else
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset );
 
-		System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset );
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		return null;
