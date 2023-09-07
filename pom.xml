@@ -77,8 +77,6 @@
 
     <properties>
         <!-- <scijava.jvm.version>1.8</scijava.jvm.version> -->
-        <bigdataviewer-core.version>10.3.0</bigdataviewer-core.version>
-        <spim_data.version>2.2.7</spim_data.version>
         <license.licenseName>gpl_v2</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
     </properties>
@@ -215,7 +213,7 @@
         <dependency>
             <groupId>net.preibisch</groupId>
             <artifactId>multiview-reconstruction</artifactId>
-            <version>3.2.2</version>
+            <version>3.2.4-SNAPSHOT</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.epfl.biop</groupId>
