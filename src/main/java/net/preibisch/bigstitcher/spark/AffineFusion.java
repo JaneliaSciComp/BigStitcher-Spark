@@ -40,6 +40,7 @@ import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -124,9 +125,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
-
-	// only supported for local spark HDF5 writes, needs to share a writer instance
-	private static N5HDF5Writer hdf5DriverVolumeWriter = null;
 
 	// TODO: support create downsampling pyramids, null is fine for now
 	private int[][] downsamplings;
@@ -277,15 +275,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 		}
 		catch (Exception e ) {}
 
-		final N5Writer driverVolumeWriter;
-		if ( StorageType.N5.equals(storageType) )
-			driverVolumeWriter = new N5FSWriter(n5Path);
-		else if ( StorageType.ZARR.equals(storageType) )
-			driverVolumeWriter = new N5ZarrWriter(n5Path);
-		else if ( StorageType.HDF5.equals(storageType) )
-			driverVolumeWriter = hdf5DriverVolumeWriter = new N5HDF5Writer(n5Path);
-		else
-			throw new RuntimeException( "storageType " + storageType + " not supported." );
+		final N5Writer driverVolumeWriter = N5Util.createWriter( n5Path, storageType );
 
 		System.out.println( "Format being written: " + storageType );
 
@@ -414,16 +404,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 								new FinalInterval(minBB, maxBB)
 					);
 
-					final N5Writer executorVolumeWriter;
-
-					if ( StorageType.N5.equals(storageType) )
-						executorVolumeWriter = new N5FSWriter(n5Path);
-					else if ( StorageType.ZARR.equals(storageType) )
-						executorVolumeWriter = new N5ZarrWriter(n5Path);
-					else if ( StorageType.HDF5.equals(storageType) )
-						executorVolumeWriter = hdf5DriverVolumeWriter;
-					else
-						throw new RuntimeException( "storageType " + storageType + " not supported." );
+					final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
 
 					if ( uint8 )
 					{
@@ -466,18 +447,34 @@ public class AffineFusion implements Callable<Void>, Serializable
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
 						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
-				});
 
-		sc.close();
+					// not HDF5
+					if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
+						executorVolumeWriter.close();
+				});
 
 		if ( this.downsamplings != null )
 		{
 			// TODO: run common downsampling code (affine, non-rigid, downsampling-only)
+			Downsampling.createDownsampling(
+					n5Path,
+					n5Dataset,
+					driverVolumeWriter,
+					dimensions,
+					storageType,
+					blockSize,
+					dataType,
+					compression,
+					downsamplings,
+					bdvString != null,
+					sc );
 		}
 
+		sc.close();
+
 		// close HDF5 writer
-		if ( hdf5DriverVolumeWriter != null )
-			hdf5DriverVolumeWriter.close();
+		if ( N5Util.hdf5DriverVolumeWriter != null )
+			N5Util.hdf5DriverVolumeWriter.close();
 		else
 			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset );
 
