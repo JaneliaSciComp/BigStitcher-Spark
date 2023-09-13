@@ -198,6 +198,14 @@
                     <artifactId>jets3t</artifactId>
                     <groupId>net.java.dev.jets3t</groupId>
                 </exclusion>
+                <!--<exclusion>
+                        <groupId>com.esotericsoftware</groupId>
+                        <artifactId>kryo-shaded</artifactId>
+                </exclusion>-->
+                <exclusion>
+                        <groupId>javax.xml.stream</groupId>
+                        <artifactId>stax-api</artifactId>
+                </exclusion>
             </exclusions>
             <scope>provided</scope>
         </dependency>
@@ -223,6 +231,11 @@
                     <groupId>gov.nist.isg</groupId>
                     <artifactId>pyramidio</artifactId>
                 </exclusion>
+                <exclusion>
+                        <groupId>com.esotericsoftware</groupId>
+                        <artifactId>kryo</artifactId>
+                </exclusion>
+                
             </exclusions>
         </dependency>
         <dependency>
