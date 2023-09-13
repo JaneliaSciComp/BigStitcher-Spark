@@ -163,6 +163,10 @@
             <version>2.4.7</version>
             <exclusions>
                 <exclusion>
+                    <artifactId>netty-all</artifactId>
+                    <groupId>io.netty</groupId>
+                </exclusion>
+                <exclusion>
                     <artifactId>jcl-over-slf4j</artifactId>
                     <groupId>org.slf4j</groupId>
                 </exclusion>
@@ -235,8 +239,17 @@
                         <groupId>com.esotericsoftware</groupId>
                         <artifactId>kryo</artifactId>
                 </exclusion>
-                
             </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+            <version>4.1.17.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+            <version>3.9.9.Final</version>
         </dependency>
         <dependency>
             <groupId>info.picocli</groupId>
