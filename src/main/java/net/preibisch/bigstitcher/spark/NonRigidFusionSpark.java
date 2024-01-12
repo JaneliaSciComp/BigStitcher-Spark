@@ -339,6 +339,7 @@ public class NonRigidFusionSpark implements Callable<Void>, Serializable
 						// expand by 50 to be conservative for non-rigid overlaps
 						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
 						final Interval bounds = Intervals.expand( boundingBox, 50 );
+						// TODO: estimate the "50" from the distance of corresponding, transformed interest points
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
 							viewsToFuse.add( viewId );

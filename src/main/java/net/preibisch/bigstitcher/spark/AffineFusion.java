@@ -289,6 +289,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final List<long[][]> grid = Grid.create( dimensions, blockSize );
 
 		/*
+		// TODO: start doing this
+
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
 
 		final List<long[][]> grid = Grid.create(dimensions,
@@ -390,7 +392,13 @@ public class AffineFusion implements Callable<Void>, Serializable
 						final Interval bounds = Intervals.expand( boundingBoxLocal, 2 );
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
+						{
 							viewIdsLocal.add( viewId );
+
+							// TODO: which blocks exactly do we need and pre-fetch them using a simple getPixel call (or something like that) in the center of each block
+							// as long as the cache isn't cleared
+							// Tobi: keep the RA's to make sure that the cache can't be cleared - we want the outofmemory if that's the case
+						}
 					}
 
 					//SimpleMultiThreading.threadWait( 10000 );
