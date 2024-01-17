@@ -43,7 +43,7 @@ public class ViewUtil {
 					"failed to find viewRegistration for " + viewIdToString(viewId) + " in " + data);
 		}
 
-		reg.updateModel();
+		reg.updateModel(); // TODO: This shouldn't be necessary, right?
 
 		return reg;
 	}
