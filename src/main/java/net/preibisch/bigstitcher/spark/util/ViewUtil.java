@@ -15,13 +15,7 @@ public class ViewUtil {
 
 	public static boolean overlaps( final Interval interval1, final Interval interval2 )
 	{
-		final Interval intersection = Intervals.intersect( interval1, interval2 );
-
-		for ( int d = 0; d < intersection.numDimensions(); ++d )
-			if ( intersection.dimension( d ) < 0 )
-				return false;
-
-		return true;
+		return !Intervals.isEmpty( Intervals.intersect( interval1, interval2 ) );
 	}
 
 	/**
