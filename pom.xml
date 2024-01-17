@@ -158,6 +158,10 @@
                     <groupId>io.netty</groupId>
                 </exclusion>
                 <exclusion>
+                    <artifactId>netty</artifactId>
+                    <groupId>io.netty</groupId>
+                </exclusion>
+                <exclusion>
                     <artifactId>jcl-over-slf4j</artifactId>
                     <groupId>org.slf4j</groupId>
                 </exclusion>
@@ -235,7 +239,7 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.1.17.Final</version>
+            <version>4.1.68.Final</version>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
