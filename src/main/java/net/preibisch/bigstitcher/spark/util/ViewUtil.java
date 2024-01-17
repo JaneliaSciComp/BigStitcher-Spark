@@ -24,6 +24,11 @@ public class ViewUtil {
 		return true;
 	}
 
+	/**
+	 * Get the estimated bounding box of the specified view in world coordinates.
+	 * This transforms the image dimension for {@code viewId} with the {@code
+	 * ViewRegistration} for {@code viewId}, and takes the bounding box.
+	 */
 	public static Interval getTransformedBoundingBox( final SpimData data,
 													  final ViewId viewId )
 			throws IllegalArgumentException
