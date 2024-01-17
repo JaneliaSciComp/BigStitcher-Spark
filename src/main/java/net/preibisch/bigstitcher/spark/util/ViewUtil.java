@@ -58,7 +58,7 @@ public class ViewUtil {
 		final Dimensions dim = getDimensions( data, viewId );
 		final ViewRegistration reg = getViewRegistration( data, viewId );
 
-		return Intervals.largestContainedInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
+		return Intervals.smallestContainingInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
 	}
 
 	public static String viewIdToString(final ViewId viewId) {
