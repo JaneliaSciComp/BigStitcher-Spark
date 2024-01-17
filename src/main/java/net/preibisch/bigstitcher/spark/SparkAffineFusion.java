@@ -330,15 +330,16 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		final long time = System.currentTimeMillis();
 		rdd.foreach(
 				gridBlock -> {
+					final long[] gridBlockSize = gridBlock[ 1 ];
+					final long[] gridBlockOffset = gridBlock[ 0 ];
+
 					// custom serialization
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
 
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
 					final Interval fusedBlock =
 							Intervals.translate(
-									Intervals.translate(
-											new FinalInterval( gridBlock[1] ), // blocksize
-											gridBlock[0] ), // block offset
+									FinalInterval.createMinSize( gridBlockOffset, gridBlockSize ),
 									minBB ); // min of the randomaccessbileinterval
 
 					// recover views to process
@@ -395,7 +396,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedByteType());
 
-						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlock[0], gridBlock[1]);
+						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlockOffset, gridBlockSize );
 						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
 						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
@@ -412,21 +413,21 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
 							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
 							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
-							final RandomAccessibleInterval< ShortType > sourceINT16 = 
+							final RandomAccessibleInterval< ShortType > sourceINT16 =
 									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
 
-							final RandomAccessibleInterval<ShortType> sourceGridBlock = Views.offsetInterval(sourceINT16, gridBlock[0], gridBlock[1]);
+							final RandomAccessibleInterval<ShortType> sourceGridBlock = Views.offsetInterval(sourceINT16, gridBlockOffset, gridBlockSize );
 							N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 						}
 						else
 						{
-							final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
+							final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlockOffset, gridBlockSize );
 							N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 						}
 					}
 					else
 					{
-						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
+						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlockOffset, gridBlockSize );
 						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 
