@@ -7,7 +7,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import mpicbg.spim.data.registration.ViewRegistrations;
+import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -346,6 +350,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 					// recover views to process
 					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
+					final List< Callable< Object > > prefetch = new ArrayList<>();
 
 					if ( useAF )
 					{
@@ -374,11 +379,13 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
 						{
-							viewIdsLocal.add( viewId );
-
-							// TODO: which blocks exactly do we need and pre-fetch them using a simple getPixel call (or something like that) in the center of each block
-							// as long as the cache isn't cleared
-							// Tobi: keep the RA's to make sure that the cache can't be cleared - we want the outofmemory if that's the case
+							// determine which Cells exactly we need to compute the fused block
+							final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( dataLocal, viewId, fusedBlock );
+							if ( !blocks.isEmpty() )
+							{
+								prefetch.addAll( blocks );
+								viewIdsLocal.add( viewId );
+							}
 						}
 					}
 
@@ -387,6 +394,12 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					// nothing to save...
 					if ( viewIdsLocal.size() == 0 )
 						return;
+
+					// prefetch cells: each cell on a separate thread
+					final ExecutorService executor = Executors.newFixedThreadPool( prefetch.size() );
+					final List< Future< Object > > prefetched = executor.invokeAll( prefetch );
+					executor.shutdown();
+
 					final RandomAccessibleInterval<FloatType> source = FusionTools.fuseVirtual(
 								dataLocal,
 								viewIdsLocal,
@@ -436,6 +449,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlockOffset, gridBlockSize );
 						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
+
+					// let go of references to the prefetched cells
+					prefetched.clear();
 
 					// not HDF5
 					if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
