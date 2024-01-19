@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 
+import mpicbg.spim.data.registration.ViewRegistrations;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -346,22 +347,27 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					// recover views to process
 					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
 
-					for ( final ViewId viewId : viewIds2 )
+					if ( useAF )
 					{
+						final AffineTransform3D aniso = new AffineTransform3D();
+						aniso.set(
+								1.0, 0.0, 0.0, 0.0,
+								0.0, 1.0, 0.0, 0.0,
+								0.0, 0.0, 1.0 / af, 0.0 );
+						final ViewTransformAffine preserveAnisotropy = new ViewTransformAffine( "preserve anisotropy", aniso );
 
-						if ( useAF )
+						final ViewRegistrations registrations = dataLocal.getViewRegistrations();
+						for ( final ViewId viewId : viewIds2 )
 						{
 							// get updated registration for views to fuse AND all other views that may influence the fusion
-							final ViewRegistration vr = dataLocal.getViewRegistrations().getViewRegistration( viewId );
-							final AffineTransform3D aniso = new AffineTransform3D();
-							aniso.set(
-									1.0, 0.0, 0.0, 0.0,
-									0.0, 1.0, 0.0, 0.0,
-									0.0, 0.0, 1.0/af, 0.0 );
-							vr.preconcatenateTransform( new ViewTransformAffine( "preserve anisotropy", aniso));
+							final ViewRegistration vr = registrations.getViewRegistration( viewId );
+							vr.preconcatenateTransform( preserveAnisotropy );
 							vr.updateModel();
 						}
+					}
 
+					for ( final ViewId viewId : viewIds2 )
+					{
 						// expand to be conservative ...
 						final Interval boundingBoxLocal = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
 						final Interval bounds = Intervals.expand( boundingBoxLocal, 2 );
