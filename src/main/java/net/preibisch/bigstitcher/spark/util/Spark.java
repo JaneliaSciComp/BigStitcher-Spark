@@ -1,5 +1,6 @@
 package net.preibisch.bigstitcher.spark.util;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import mpicbg.spim.data.SpimDataException;
@@ -20,6 +21,14 @@ public class Spark {
 	public static ViewId deserializeViewIds( final int[][] serializedViewIds, final int i )
 	{
 		return new ViewId( serializedViewIds[i][0], serializedViewIds[i][1] );
+	}
+
+	public static List< ViewId > deserializeViewIds( final int[][] serializedViewIds )
+	{
+		final List< ViewId > viewIds = new ArrayList<>( serializedViewIds.length );
+		for ( int[] sid : serializedViewIds )
+			viewIds.add( new ViewId( sid[ 0 ], sid[ 1 ] ) );
+		return viewIds;
 	}
 
 	public static int[][] serializeViewIds( final List< ViewId > viewIds )

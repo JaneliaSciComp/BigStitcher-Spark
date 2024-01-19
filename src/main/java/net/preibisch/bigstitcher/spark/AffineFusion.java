@@ -361,6 +361,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 					// custom serialization
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+					final List< ViewId > viewIds2 = Spark.deserializeViewIds( serializedViewIds );
 
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
 					final Interval fusedBlock =
@@ -371,9 +372,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 					// recover views to process
 					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
 
-					for ( int i = 0; i < serializedViewIds.length; ++i )
+					for ( final ViewId viewId : viewIds2 )
 					{
-						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 
 						if ( useAF )
 						{
