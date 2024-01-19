@@ -20,16 +20,14 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 
 public class Spark {
 
-	public static ArrayList< ViewId > deserializeViewIds( final int[][] serializedViewIds )
+	public static List< ViewId > deserializeViewIds( final int[][] serializedViewIds )
 	{
-		final ArrayList< ViewId > viewIds = new ArrayList<>();
-
-		for ( int i = 0; i < serializedViewIds.length; ++i )
-			viewIds.add( deserializeViewId( serializedViewIds[i] ) );
-
+		final List< ViewId > viewIds = new ArrayList<>( serializedViewIds.length );
+		for ( int[] sid : serializedViewIds )
+			viewIds.add( deserializeViewId( sid ) );
 		return viewIds;
 	}
-
+	
 	public static Pair<ViewId, ViewId> derserializeViewIdPairsForRDD( final int[][] serializedPair )
 	{
 		return new ValuePair<ViewId, ViewId>(deserializeViewId( serializedPair[ 0 ] ), deserializeViewId( serializedPair[ 1 ] ));
