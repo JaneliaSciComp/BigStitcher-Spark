@@ -22,9 +22,13 @@ import net.imglib2.img.cell.CellGrid;
 import net.imglib2.iterator.IntervalIterator;
 import net.imglib2.iterator.LocalizingIntervalIterator;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.transform.integer.BoundingBox;
+import net.imglib2.transform.integer.MixedTransform;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.LinAlgHelpers;
 import net.imglib2.util.Util;
+import net.imglib2.view.IntervalView;
+import net.imglib2.view.MixedTransformView;
 
 public class ViewUtil
 {
@@ -105,7 +109,26 @@ public class ViewUtil
 		final AffineTransform3D imgToWorld = model.copy();
 		imgToWorld.concatenate( best.mipmapTransform );
 
-		if ( ! ( img instanceof AbstractCellImg ) )
+		RandomAccessible< ? > rai = best.img;
+
+		// strip one level of IntervalView, if present
+		if ( rai instanceof IntervalView )
+		{
+			rai = ( ( IntervalView< ? > ) rai ).getSource();
+		}
+
+		final MixedTransform transformToSource;
+		if ( rai instanceof MixedTransformView )
+		{
+			transformToSource = ( ( MixedTransformView< ? > ) rai ).getTransformToSource();
+			rai = ( ( MixedTransformView< ? > ) rai ).getSource();
+		}
+		else
+		{
+			transformToSource = null;
+		}
+
+		if ( ! ( rai instanceof AbstractCellImg ) )
 		{
 			throw new IllegalArgumentException( "TODO. Handling source types other than CellImg is not implemented yet" );
 		}
@@ -121,28 +144,55 @@ public class ViewUtil
 		//       re-used here to make the search more efficient. It should
 		//       provide more accurate results because it uses non-axis aligned
 		//       planes for intersection. See class FindRequiredBlocks.
+		//
+		// TODO: The following works for the hyperslice views currently produced by ZarrImageLoader
+		//       (from https://github.com/bigdataviewer/bigdataviewer-omezarr)
+		//       However, for the general case, the logic should be inverted:
+		//       Project the "fused" bounding box into source coordinates (see
+		//       above), because that is well-defined.
+		//       In contrast, the code below performs a projection onto the
+		//       "fused" hyper-slice, which can lead to non-required blocks
+		//       being loaded.
 
 		// iterate all cells (intervals) in grid
-		final CellGrid grid = ( ( AbstractCellImg< ?, ?, ?, ? > ) img ).getCellGrid();
-		final IntervalIterator gridIter = new LocalizingIntervalIterator( grid.getGridDimensions() );
+		final CellGrid grid = ( ( AbstractCellImg< ?, ?, ?, ? > ) rai ).getCellGrid();
+
 		final int n = grid.numDimensions();
 		final long[] gridPos = new long[ n ];
-		final long[] cellMin = new long[ n ];
-		final long[] cellMax = new long[ n ];
-		final Interval cellInterval = FinalInterval.wrap( cellMin, cellMax );
+		final BoundingBox cellBBox = new BoundingBox( n );
+		final long[] cellMin = cellBBox.corner1;
+		final long[] cellMax = cellBBox.corner2;
+
+		final BoundingBox projectedCellBBox;
+		final Interval projectedCellInterval;
+		final int m = img.numDimensions(); // should be always ==3
+		projectedCellBBox = new BoundingBox( m );
+		projectedCellInterval = FinalInterval.wrap( projectedCellBBox.corner1, projectedCellBBox.corner2 );
+
+		final IntervalIterator gridIter = new LocalizingIntervalIterator( grid.getGridDimensions() );
 		while( gridIter.hasNext() )
 		{
 			gridIter.fwd();
 			gridIter.localize( gridPos );
 			grid.getCellInterval( gridPos, cellMin, cellMax );
 
-			final Interval bounds =
-					Intervals.smallestContainingInterval(
-							imgToWorld.estimateBounds(
-									Intervals.expand( cellInterval, 1 ) ) );
+			if ( transformToSource == null )
+			{
+				expand( cellBBox, 1, projectedCellBBox );
+			}
+			else
+			{
+				transform( transformToSource, projectedCellBBox, cellBBox );
+				expand( projectedCellBBox, 1 );
+			}
+
+			final Interval bounds = Intervals.smallestContainingInterval(
+					imgToWorld.estimateBounds( projectedCellInterval ) );
 
 			if ( overlaps( bounds, fusedBlock ) )
-				prefetch.add( new PrefetchPixel( img, cellMin.clone() ) );
+			{
+				prefetch.add( new PrefetchPixel( rai, cellMin.clone() ) );
+			}
 		}
 
 //		prefetch.forEach( System.out::println );
@@ -284,6 +334,79 @@ public class ViewUtil
 				size[ d ] = ( float ) LinAlgHelpers.length( tmp );
 			}
 			return size;
+		}
+	}
+
+	/**
+	 * Grow {@code BoundingBox} by {@code border} pixels on every side.
+	 */
+	private static void expand( final BoundingBox bbox, final long border )
+	{
+		expand( bbox, border, bbox );
+	}
+
+	/**
+	 * Grow {@code BoundingBox} by {@code border} pixels on every side.
+	 */
+	private static void expand( final BoundingBox bbox, final long border, final BoundingBox expanded )
+	{
+		final int n = bbox.numDimensions();
+		for ( int d = 0; d < n; ++d )
+		{
+			expanded.corner1[ d ] = bbox.corner1[ d ] - border;
+			expanded.corner2[ d ] = bbox.corner2[ d ] + border;
+		}
+	}
+
+	/**
+	 * Reverse-apply {@code transform} to a target bounding box to obtain a
+	 * source bounding box.
+	 * <p>
+	 * Note that {@code transform} might not be invertible. For example. if
+	 * source is a hyper-slice of target, some dimensions of the target vector
+	 * are ignored.
+	 *
+	 * @param transform
+	 * 		the transform from target to source.
+	 * @param sourceBoundingBox
+	 * 		the source bounding box. This is the <em>output</em> and <em>is modified</em>.
+	 * @param targetBoundingBox
+	 * 		the target bounding box. This is the <em>input</em> and <em>is not modified</em>.
+	 */
+	private static void transform( final MixedTransform transform, final BoundingBox sourceBoundingBox, final BoundingBox targetBoundingBox )
+	{
+		assert sourceBoundingBox.numDimensions() == transform.numSourceDimensions();
+		assert targetBoundingBox.numDimensions() == transform.numTargetDimensions();
+		apply( transform, sourceBoundingBox.corner1, targetBoundingBox.corner1 );
+		apply( transform, sourceBoundingBox.corner2, targetBoundingBox.corner2 );
+		sourceBoundingBox.orderMinMax();
+	}
+
+	/**
+	 * Reverse-apply {@code transform} to a target vector to obtain a source vector.
+	 * <p>
+	 * Note that {@code transform} might not be invertible. For example. if
+	 * source is a hyper-slice of target, some dimensions of the target vector
+	 * are ignored.
+	 *
+	 * @param transform
+	 * 		transform from source to target.
+	 * @param source
+	 * 		set this to the source coordinates. <em>This is the output and is modified.</em>
+	 * @param target
+	 * 		target coordinates. <em>This is the input and is not modified.</em>
+	 */
+	private static void apply( MixedTransform transform, long[] source, long[] target )
+	{
+		assert source.length >= transform.numSourceDimensions();
+		assert target.length >= transform.numTargetDimensions();
+		for ( int d = 0; d < transform.numTargetDimensions(); ++d )
+		{
+			if ( !transform.getComponentZero( d ) )
+			{
+				long v = target[ d ] - transform.getTranslation( d );
+				source[ transform.getComponentMapping( d ) ] = transform.getComponentInversion( d ) ? -v : v;
+			}
 		}
 	}
 }
