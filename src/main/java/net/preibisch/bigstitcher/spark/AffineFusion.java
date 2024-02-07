@@ -15,6 +15,7 @@ import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.function.VoidFunction;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
@@ -352,138 +353,20 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
 		final long time = System.currentTimeMillis();
-		rdd.foreach(
-				gridBlock -> {
-
-					// The min coordinates of the block that this job renders (in pixels)
-					final long[] currentBlockOffset = gridBlock[ 0 ];
-
-					// The size of the block that this job renders (in pixels)
-					final long[] currentBlockSize = gridBlock[ 1 ];
-
-					// The min grid coordinate of the block that this job renders, in units of the output grid.
-					// Note, that the block that is rendered may cover multiple output grid cells.
-					final long[] outputGridOffset = gridBlock[ 2 ];
-
-					// custom serialization
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
-					final List< ViewId > viewIds2 = Spark.deserializeViewIds( serializedViewIds );
-
-					// be smarter, test which ViewIds are actually needed for the block we want to fuse
-					final Interval fusedBlock =
-							Intervals.translate(
-									FinalInterval.createMinSize( currentBlockOffset, currentBlockSize ),
-									minBB ); // min of the randomaccessbileinterval
-
-					// recover views to process
-					final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
-					final List< Callable< Object > > prefetch = new ArrayList<>();
-
-					if ( useAF )
-					{
-						final AffineTransform3D aniso = new AffineTransform3D();
-						aniso.set(
-								1.0, 0.0, 0.0, 0.0,
-								0.0, 1.0, 0.0, 0.0,
-								0.0, 0.0, 1.0 / af, 0.0 );
-						final ViewTransformAffine preserveAnisotropy = new ViewTransformAffine( "preserve anisotropy", aniso );
-
-						final ViewRegistrations registrations = dataLocal.getViewRegistrations();
-						for ( final ViewId viewId : viewIds2 )
-						{
-							// get updated registration for views to fuse AND all other views that may influence the fusion
-							final ViewRegistration vr = registrations.getViewRegistration( viewId );
-							vr.preconcatenateTransform( preserveAnisotropy );
-							vr.updateModel();
-						}
-					}
-
-					for ( final ViewId viewId : viewIds2 )
-					{
-						// expand to be conservative ...
-						final Interval boundingBoxLocal = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
-						final Interval bounds = Intervals.expand( boundingBoxLocal, 2 );
-
-						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
-						{
-							// determine which Cells exactly we need to compute the fused block
-							final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( dataLocal, viewId, fusedBlock );
-							if ( !blocks.isEmpty() )
-							{
-								prefetch.addAll( blocks );
-								viewIdsLocal.add( viewId );
-							}
-						}
-					}
-
-					//SimpleMultiThreading.threadWait( 10000 );
-
-					// nothing to save...
-					if ( viewIdsLocal.size() == 0 )
-						return;
-
-					// prefetch cells: each cell on a separate thread
-					final ExecutorService executor = Executors.newFixedThreadPool( prefetch.size() );
-					final List< Future< Object > > prefetched = executor.invokeAll( prefetch );
-					executor.shutdown();
-
-					final RandomAccessibleInterval<FloatType> source = FusionTools.fuseVirtual(
-								dataLocal,
-								viewIdsLocal,
-								new FinalInterval(minBB, maxBB)
-					);
-
-					final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
-
-					if ( uint8 )
-					{
-						final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
-								Converters.convert(
-										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-										new UnsignedByteType());
-
-						final RandomAccessibleInterval< UnsignedByteType > sourceGridBlock = Views.offsetInterval( sourceUINT8, currentBlockOffset, currentBlockSize );
-						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
-						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-					}
-					else if ( uint16 )
-					{
-						final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
-								Converters.convert(
-										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-										new UnsignedShortType());
-
-						if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
-						{
-							// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
-							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
-							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
-							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
-							final RandomAccessibleInterval< ShortType > sourceINT16 =
-									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
-
-							final RandomAccessibleInterval< ShortType > sourceGridBlock = Views.offsetInterval( sourceINT16, currentBlockOffset, currentBlockSize );
-							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-						}
-						else
-						{
-							final RandomAccessibleInterval< UnsignedShortType > sourceGridBlock = Views.offsetInterval( sourceUINT16, currentBlockOffset, currentBlockSize );
-							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-						}
-					}
-					else
-					{
-						final RandomAccessibleInterval< FloatType > sourceGridBlock = Views.offsetInterval( source, currentBlockOffset, currentBlockSize );
-						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-					}
-
-					// let go of references to the prefetched cells
-					prefetched.clear();
-
-					// not HDF5
-					if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
-						executorVolumeWriter.close();
-				});
+		rdd.foreach( new WriteSuperBlock(
+				xmlPath,
+				preserveAnisotropy,
+				anisotropyFactor,
+				boundingBox,
+				n5Path,
+				n5Dataset,
+				bdvString,
+				storageType,
+				serializedViewIds,
+				uint8,
+				uint16,
+				minIntensity,
+				range ) );
 
 		if ( this.downsamplings != null )
 		{
@@ -527,4 +410,228 @@ public class AffineFusion implements Callable<Void>, Serializable
 		System.exit(new CommandLine(new AffineFusion()).execute(args));
 	}
 
+
+
+
+
+
+
+	private static class WriteSuperBlock implements VoidFunction< long[][] >
+	{
+
+		private final String xmlPath;
+
+		private final boolean preserveAnisotropy;
+
+		private final double anisotropyFactor;
+
+		private final long[] minBB;
+
+		private final long[] maxBB;
+
+		private final String n5Path;
+
+		private final String n5Dataset;
+
+		private final String bdvString;
+
+		private final StorageType storageType;
+
+		private final int[][] serializedViewIds;
+
+		private final boolean uint8;
+
+		private final boolean uint16;
+
+		private final double minIntensity;
+
+		private final double range;
+
+
+		public WriteSuperBlock(
+				final String xmlPath,
+				final boolean preserveAnisotropy,
+				final double anisotropyFactor,
+				final BoundingBox boundingBox,
+				final String n5Path,
+				final String n5Dataset,
+				final String bdvString,
+				final StorageType storageType,
+				final int[][] serializedViewIds,
+				final boolean uint8,
+				final boolean uint16,
+				final double minIntensity,
+				final double range )
+		{
+			this.xmlPath = xmlPath;
+			this.preserveAnisotropy = preserveAnisotropy;
+			this.anisotropyFactor = anisotropyFactor;
+			this.minBB = boundingBox.minAsLongArray();
+			this.maxBB = boundingBox.maxAsLongArray();
+			this.n5Path = n5Path;
+			this.n5Dataset = n5Dataset;
+			this.bdvString = bdvString;
+			this.storageType = storageType;
+			this.serializedViewIds = serializedViewIds;
+			this.uint8 = uint8;
+			this.uint16 = uint16;
+			this.minIntensity = minIntensity;
+			this.range = range;
+		}
+
+		@Override
+		public void call( final long[][] gridBlock ) throws Exception
+		{
+			// The min coordinates of the block that this job renders (in pixels)
+			final long[] currentBlockOffset = gridBlock[ 0 ];
+
+			// The size of the block that this job renders (in pixels)
+			final long[] currentBlockSize = gridBlock[ 1 ];
+
+			// The min grid coordinate of the block that this job renders, in units of the output grid.
+			// Note, that the block that is rendered may cover multiple output grid cells.
+			final long[] outputGridOffset = gridBlock[ 2 ];
+
+
+
+
+
+			// --------------------------------------------------------
+			// initialization work that is happening in every job,
+			// independent of gridBlock parameters
+			// --------------------------------------------------------
+
+			// custom serialization
+			final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+			final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
+
+			// If requested, preserve the anisotropy of the data (output
+			// data has same anisotropy as input data) by prepending an
+			// affine to each ViewRegistration
+			if ( preserveAnisotropy )
+			{
+				final AffineTransform3D aniso = new AffineTransform3D();
+				aniso.set(
+						1.0, 0.0, 0.0, 0.0,
+						0.0, 1.0, 0.0, 0.0,
+						0.0, 0.0, 1.0 / anisotropyFactor, 0.0 );
+				final ViewTransformAffine preserveAnisotropy = new ViewTransformAffine( "preserve anisotropy", aniso );
+
+				final ViewRegistrations registrations = dataLocal.getViewRegistrations();
+				for ( final ViewId viewId : viewIds )
+				{
+					final ViewRegistration vr = registrations.getViewRegistration( viewId );
+					vr.preconcatenateTransform( preserveAnisotropy );
+					vr.updateModel();
+				}
+			}
+
+
+
+
+
+
+
+
+
+
+
+
+			// be smarter, test which ViewIds are actually needed for the block we want to fuse
+			final Interval fusedBlock =
+					Intervals.translate(
+							FinalInterval.createMinSize( currentBlockOffset, currentBlockSize ),
+							minBB ); // min of the randomaccessbileinterval
+
+			// recover views to process
+			final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
+			final List< Callable< Object > > prefetch = new ArrayList<>();
+			for ( final ViewId viewId : viewIds )
+			{
+				// expand to be conservative ...
+				final Interval boundingBoxLocal = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
+				final Interval bounds = Intervals.expand( boundingBoxLocal, 2 );
+
+				if ( ViewUtil.overlaps( fusedBlock, bounds ) )
+				{
+					// determine which Cells exactly we need to compute the fused block
+					final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( dataLocal, viewId, fusedBlock );
+					if ( !blocks.isEmpty() )
+					{
+						prefetch.addAll( blocks );
+						viewIdsLocal.add( viewId );
+					}
+				}
+			}
+
+			//SimpleMultiThreading.threadWait( 10000 );
+
+			// nothing to save...
+			if ( viewIdsLocal.isEmpty() )
+				return;
+
+			// prefetch cells: each cell on a separate thread
+			final ExecutorService executor = Executors.newFixedThreadPool( prefetch.size() );
+			final List< Future< Object > > prefetched = executor.invokeAll( prefetch );
+			executor.shutdown();
+
+			final RandomAccessibleInterval< FloatType > source = FusionTools.fuseVirtual(
+					dataLocal,
+					viewIdsLocal,
+					FinalInterval.wrap( minBB, maxBB )
+			);
+
+			final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
+
+			if ( uint8 )
+			{
+				final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
+						Converters.convert(
+								source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+								new UnsignedByteType());
+
+				final RandomAccessibleInterval< UnsignedByteType > sourceGridBlock = Views.offsetInterval( sourceUINT8, currentBlockOffset, currentBlockSize );
+				//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
+				N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
+			}
+			else if ( uint16 )
+			{
+				final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
+						Converters.convert(
+								source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+								new UnsignedShortType());
+
+				if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
+				{
+					// TODO (TP): Revise the following .. This is probably fixed now???
+					// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
+					// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
+					// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
+					// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
+					final RandomAccessibleInterval< ShortType > sourceINT16 =
+							Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
+
+					final RandomAccessibleInterval< ShortType > sourceGridBlock = Views.offsetInterval( sourceINT16, currentBlockOffset, currentBlockSize );
+					N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
+				}
+				else
+				{
+					final RandomAccessibleInterval< UnsignedShortType > sourceGridBlock = Views.offsetInterval( sourceUINT16, currentBlockOffset, currentBlockSize );
+					N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
+				}
+			}
+			else
+			{
+				final RandomAccessibleInterval< FloatType > sourceGridBlock = Views.offsetInterval( source, currentBlockOffset, currentBlockSize );
+				N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
+			}
+
+			// let go of references to the prefetched cells
+			prefetched.clear();
+
+			// not HDF5
+			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
+				executorVolumeWriter.close();
+		}
+	}
 }
