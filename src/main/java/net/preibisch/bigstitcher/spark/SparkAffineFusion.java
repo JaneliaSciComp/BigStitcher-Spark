@@ -265,13 +265,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				dataType,
 				compression );
 
-		final List<long[][]> grid = Grid.create( dimensions, blockSize );
-
-		/*
-		// TODO: start doing this
+//		final List<long[][]> grid = Grid.create( dimensions, blockSize );
 
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-
 		final List<long[][]> grid = Grid.create(dimensions,
 				new int[] {
 						blockSize[0] * 4,
@@ -279,7 +275,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 						blockSize[2] * 4
 				},
 				blockSize);
-		*/
+
 
 		System.out.println( "numBlocks = " + grid.size() );
 
