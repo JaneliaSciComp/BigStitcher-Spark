@@ -103,7 +103,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	private String[] vi = null;
 
-
 	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
 	private boolean multiRes = false;
 
@@ -289,13 +288,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 				dataType,
 				compression );
 
-		final List<long[][]> grid = Grid.create( dimensions, blockSize );
-
-		/*
-		// TODO: start doing this
+//		final List<long[][]> grid = Grid.create( dimensions, blockSize );
 
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-
 		final List<long[][]> grid = Grid.create(dimensions,
 				new int[] {
 						blockSize[0] * 4,
@@ -303,7 +298,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 						blockSize[2] * 4
 				},
 				blockSize);
-		*/
+
 
 		System.out.println( "numBlocks = " + grid.size() );
 
