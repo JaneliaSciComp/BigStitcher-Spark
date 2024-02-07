@@ -359,8 +359,16 @@ public class AffineFusion implements Callable<Void>, Serializable
 		final long time = System.currentTimeMillis();
 		rdd.foreach(
 				gridBlock -> {
-					final long[] gridBlockSize = gridBlock[ 1 ];
-					final long[] gridBlockOffset = gridBlock[ 0 ];
+
+					// The min coordinates of the block that this job renders (in pixels)
+					final long[] currentBlockOffset = gridBlock[ 0 ];
+
+					// The size of the block that this job renders (in pixels)
+					final long[] currentBlockSize = gridBlock[ 1 ];
+
+					// The min grid coordinate of the block that this job renders, in units of the output grid.
+					// Note, that the block that is rendered may cover multiple output grid cells.
+					final long[] outputGridOffset = gridBlock[ 2 ];
 
 					// custom serialization
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
@@ -369,7 +377,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
 					final Interval fusedBlock =
 							Intervals.translate(
-									FinalInterval.createMinSize( gridBlockOffset, gridBlockSize ),
+									FinalInterval.createMinSize( currentBlockOffset, currentBlockSize ),
 									minBB ); // min of the randomaccessbileinterval
 
 					// recover views to process
@@ -439,9 +447,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedByteType());
 
-						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlockOffset, gridBlockSize );
+						final RandomAccessibleInterval< UnsignedByteType > sourceGridBlock = Views.offsetInterval( sourceUINT8, currentBlockOffset, currentBlockSize );
 						//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
-						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
 					}
 					else if ( uint16 )
 					{
@@ -459,19 +467,19 @@ public class AffineFusion implements Callable<Void>, Serializable
 							final RandomAccessibleInterval< ShortType > sourceINT16 =
 									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
 
-							final RandomAccessibleInterval<ShortType> sourceGridBlock = Views.offsetInterval(sourceINT16, gridBlockOffset, gridBlockSize );
-							N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+							final RandomAccessibleInterval< ShortType > sourceGridBlock = Views.offsetInterval( sourceINT16, currentBlockOffset, currentBlockSize );
+							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
 						}
 						else
 						{
-							final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlockOffset, gridBlockSize );
-							N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+							final RandomAccessibleInterval< UnsignedShortType > sourceGridBlock = Views.offsetInterval( sourceUINT16, currentBlockOffset, currentBlockSize );
+							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
 						}
 					}
 					else
 					{
-						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlockOffset, gridBlockSize );
-						N5Utils.saveBlock(sourceGridBlock, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						final RandomAccessibleInterval< FloatType > sourceGridBlock = Views.offsetInterval( source, currentBlockOffset, currentBlockSize );
+						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
 					}
 
 					// let go of references to the prefetched cells
