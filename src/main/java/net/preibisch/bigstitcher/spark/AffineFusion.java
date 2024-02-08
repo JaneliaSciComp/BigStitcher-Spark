@@ -276,8 +276,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		// TODO: improve (e.g. make ViewId serializable)
 		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
-		final boolean useAF = preserveAnisotropy;
-		final double af = anisotropyFactor;
 
 		try
 		{
@@ -427,7 +425,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 	static class WriteSuperBlock implements VoidFunction< long[][] >
 	{
-
 		private final String xmlPath;
 
 		private final boolean preserveAnisotropy;
@@ -435,8 +432,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 		private final double anisotropyFactor;
 
 		private final long[] minBB;
-
-		private final long[] maxBB;
 
 		private final String n5Path;
 
@@ -462,7 +457,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 				final String xmlPath,
 				final boolean preserveAnisotropy,
 				final double anisotropyFactor,
-				final BoundingBox boundingBox,
+				final BoundingBox boundingBox, // TODO --> minBB --> rename to "offset" or something?
 				final String n5Path,
 				final String n5Dataset,
 				final String bdvString,
@@ -478,7 +473,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 			this.preserveAnisotropy = preserveAnisotropy;
 			this.anisotropyFactor = anisotropyFactor;
 			this.minBB = boundingBox.minAsLongArray();
-			this.maxBB = boundingBox.maxAsLongArray();
 			this.n5Path = n5Path;
 			this.n5Dataset = n5Dataset;
 			this.bdvString = bdvString;
