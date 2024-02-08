@@ -191,7 +191,7 @@ public class ViewUtil
 
 			if ( overlaps( bounds, fusedBlock ) )
 			{
-				prefetch.add( new PrefetchPixel( rai, cellMin.clone() ) );
+				prefetch.add( new PrefetchPixel<>( rai, cellMin.clone() ) );
 			}
 		}
 
@@ -369,9 +369,9 @@ public class ViewUtil
 	 * @param transform
 	 * 		the transform from target to source.
 	 * @param sourceBoundingBox
-	 * 		the source bounding box. This is the <em>output</em> and <em>is modified</em>.
+	 * 		the source bounding box. <em>This is the output and is modified.</em>
 	 * @param targetBoundingBox
-	 * 		the target bounding box. This is the <em>input</em> and <em>is not modified</em>.
+	 * 		the target bounding box. <em>This is the input and is not modified.</em>
 	 */
 	private static void transform( final MixedTransform transform, final BoundingBox sourceBoundingBox, final BoundingBox targetBoundingBox )
 	{
