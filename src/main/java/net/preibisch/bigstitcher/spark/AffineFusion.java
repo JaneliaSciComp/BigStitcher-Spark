@@ -22,13 +22,13 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.cell.CellGrid;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.integer.ShortType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
-import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.AffineFusion.WriteSuperBlock.OverlappingBlocks.Prefetched;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
@@ -301,9 +301,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
 		final List<long[][]> grid = Grid.create(dimensions,
 				new int[] {
-						blockSize[0] * 4,
-						blockSize[1] * 4,
-						blockSize[2] * 4
+						blockSize[0] * 2,
+						blockSize[1] * 2,
+						blockSize[2] * 2
 				},
 				blockSize);
 
@@ -538,6 +538,11 @@ public class AffineFusion implements Callable<Void>, Serializable
 				return overlappingViews;
 			}
 
+			/**
+			 * Result of {@link OverlappingBlocks#prefetch}. Holds strong
+			 * references to prefetched data, until it is {@link #close()
+			 * closed}.
+			 */
 			public static class Prefetched implements AutoCloseable
 			{
 				private final List< Future< Object > > prefetched;
@@ -592,11 +597,49 @@ public class AffineFusion implements Callable<Void>, Serializable
 			return new OverlappingBlocks( overlapping, prefetch );
 		}
 
+
+		private < T extends NativeType< T > > RandomAccessibleInterval< T > convertToOutputType( RandomAccessibleInterval< FloatType > rai )
+		{
+			if ( uint8 )
+			{
+				return ( RandomAccessibleInterval< T > ) Converters.convert(
+						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
+						new UnsignedByteType() );
+			}
+			else if ( uint16 )
+			{
+				if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
+				{
+					// TODO (TP): Revise the following .. This is probably fixed now???
+					// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
+					// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
+					// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
+					// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
+					return ( RandomAccessibleInterval< T > ) Converters.convert(
+							rai, ( i, o ) -> o.set( UnsignedShortType.getCodedSignedShort( ( int ) Util.round( ( i.get() - minIntensity ) / range ) ) ),
+							new ShortType() );
+				}
+				else
+				{
+					return ( RandomAccessibleInterval< T > ) Converters.convert(
+							rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
+							new UnsignedShortType() );
+				}
+			}
+			else
+			{
+				return ( RandomAccessibleInterval< T > ) rai;
+			}
+		}
+
 		@Override
 		public void call( final long[][] gridBlock ) throws Exception
 		{
+			final int n = blockSize.length;
+
 			// The min coordinates of the block that this job renders (in pixels)
-			final long[] superBlockOffset = gridBlock[ 0 ];
+			final long[] superBlockOffset = new long[ n ];
+			Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + minBB[ d ] );
 
 			// The size of the block that this job renders (in pixels)
 			final long[] superBlockSize = gridBlock[ 1 ];
@@ -639,21 +682,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 			}
 
 
-			final int n = blockSize.length;
-
 			final long[] gridPos = new long[ n ];
 			final long[] fusedBlockMin = new long[ n ];
 			final long[] fusedBlockMax = new long[ n ];
 			final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
 
-			// --------------------------------------------------------
 			// pre-filter views that overlap the superBlock
-			// --------------------------------------------------------
-			// TODO: minBB could be folded into ViewRegistrations, like anisotropy?
-			//       OR minBB could be added to superBlockOffset?
-
-			Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] + minBB[ d ] );
-			Arrays.setAll( fusedBlockMax, d -> fusedBlockMin[ d ] + superBlockSize[ d ] );
+			Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
+			Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 			final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
 			final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
@@ -669,8 +705,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 				for ( int d = 0; d < n; ++d )
 				{
 					gridPos[ d ] += outputGridOffset[ d ];
-					fusedBlockMin[ d ] += superBlockOffset[ d ] + minBB[ d ];
-					fusedBlockMax[ d ] += superBlockOffset[ d ] + minBB[ d ];
+					fusedBlockMin[ d ] += superBlockOffset[ d ];
+					fusedBlockMax[ d ] += superBlockOffset[ d ];
 				}
 				// gridPos is now the grid coordinate in the N5 output
 
@@ -688,44 +724,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 							overlappingBlocks.overlappingViews(),
 							fusedBlock );
 
-					final RandomAccessibleInterval sourceGridBlock;
-					if ( uint8 )
-					{
-						final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
-								Converters.convert(
-										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-										new UnsignedByteType());
-						sourceGridBlock = sourceUINT8;
-					}
-					else if ( uint16 )
-					{
-						final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
-								Converters.convert(
-										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-										new UnsignedShortType());
-
-						if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
-						{
-							// TODO (TP): Revise the following .. This is probably fixed now???
-							// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
-							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
-							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
-							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
-							final RandomAccessibleInterval< ShortType > sourceINT16 =
-									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
-
-							sourceGridBlock = sourceINT16;
-						}
-						else
-						{
-							sourceGridBlock = sourceUINT16;
-						}
-					}
-					else
-					{
-						sourceGridBlock = source;
-					}
-					N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+					// TODO (TP) make generics work here:
+					final RandomAccessibleInterval convertedSource = convertToOutputType( source );
+					N5Utils.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
 				}
 			}
 			prefetchExecutor.shutdown();
