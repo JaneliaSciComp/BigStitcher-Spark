@@ -458,9 +458,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		private final int[] blockSize;
 
-		// TODO: do we ever use blockSize?
-		private final long[] blockSize_l;
-
 		public WriteSuperBlock(
 				final String xmlPath,
 				final boolean preserveAnisotropy,
@@ -492,7 +489,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 			this.minIntensity = minIntensity;
 			this.range = range;
 			this.blockSize = blockSize;
-			this.blockSize_l = Util.int2long( blockSize );
 		}
 
 
@@ -698,15 +694,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 							overlappingBlocks.overlappingViews(),
 							fusedBlock );
 
+					final RandomAccessibleInterval sourceGridBlock;
 					if ( uint8 )
 					{
 						final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
 								Converters.convert(
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedByteType());
-
-						final RandomAccessibleInterval< UnsignedByteType > sourceGridBlock = sourceUINT8;
-						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+						sourceGridBlock = sourceUINT8;
 					}
 					else if ( uint16 )
 					{
@@ -725,20 +720,18 @@ public class AffineFusion implements Callable<Void>, Serializable
 							final RandomAccessibleInterval< ShortType > sourceINT16 =
 									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
 
-							final RandomAccessibleInterval< ShortType > sourceGridBlock = sourceINT16;
-							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+							sourceGridBlock = sourceINT16;
 						}
 						else
 						{
-							final RandomAccessibleInterval< UnsignedShortType > sourceGridBlock = sourceUINT16;
-							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+							sourceGridBlock = sourceUINT16;
 						}
 					}
 					else
 					{
-						final RandomAccessibleInterval< FloatType > sourceGridBlock = source;
-						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+						sourceGridBlock = source;
 					}
+					N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
 				}
 			}
 			prefetchExecutor.shutdown();
