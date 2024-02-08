@@ -6,12 +6,45 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
-
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import mpicbg.spim.data.SpimData;
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
+import mpicbg.spim.data.registration.ViewTransformAffine;
+import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.FinalDimensions;
+import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.converter.Converters;
+import net.imglib2.img.cell.CellGrid;
+import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.integer.ShortType;
+import net.imglib2.type.numeric.integer.UnsignedByteType;
+import net.imglib2.type.numeric.integer.UnsignedShortType;
+import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
+import net.imglib2.util.Util;
+import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.AffineFusion.WriteSuperBlock.OverlappingBlocks.Prefetched;
+import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
+import net.preibisch.bigstitcher.spark.util.Downsampling;
+import net.preibisch.bigstitcher.spark.util.Grid;
+import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
+import net.preibisch.mvrecon.process.export.ExportTools;
+import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -22,38 +55,6 @@ import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-
-import mpicbg.spim.data.SpimDataException;
-import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.registration.ViewTransformAffine;
-import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.FinalDimensions;
-import net.imglib2.FinalInterval;
-import net.imglib2.Interval;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.Converters;
-import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.numeric.integer.ShortType;
-import net.imglib2.type.numeric.integer.UnsignedByteType;
-import net.imglib2.type.numeric.integer.UnsignedShortType;
-import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Intervals;
-import net.imglib2.util.Util;
-import net.imglib2.view.Views;
-import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
-import net.preibisch.bigstitcher.spark.util.Downsampling;
-import net.preibisch.bigstitcher.spark.util.Grid;
-import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.bigstitcher.spark.util.N5Util;
-import net.preibisch.bigstitcher.spark.util.Spark;
-import net.preibisch.bigstitcher.spark.util.ViewUtil;
-import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
-import net.preibisch.mvrecon.process.export.ExportTools;
-import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
-import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -131,6 +132,14 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 	// TODO: support create downsampling pyramids, null is fine for now
 	private int[][] downsamplings;
+
+
+	/**
+	 * Assumes that
+	 * at most 8 views are required per output block, and
+	 * at most 8 input blocks per output block are required from one input view per output block.
+	 */
+	static final int N_PREFETCH_THREADS = 72;
 
 	@Override
 	public Void call() throws Exception
@@ -300,7 +309,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 				},
 				blockSize);
 
-
 		System.out.println( "numBlocks = " + grid.size() );
 
 		driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
@@ -366,7 +374,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 				uint8,
 				uint16,
 				minIntensity,
-				range ) );
+				range,
+				blockSize ) );
 
 		if ( this.downsamplings != null )
 		{
@@ -416,7 +425,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 
 
-	private static class WriteSuperBlock implements VoidFunction< long[][] >
+	static class WriteSuperBlock implements VoidFunction< long[][] >
 	{
 
 		private final String xmlPath;
@@ -447,6 +456,10 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 		private final double range;
 
+		private final int[] blockSize;
+
+		// TODO: do we ever use blockSize?
+		private final long[] blockSize_l;
 
 		public WriteSuperBlock(
 				final String xmlPath,
@@ -461,7 +474,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 				final boolean uint8,
 				final boolean uint16,
 				final double minIntensity,
-				final double range )
+				final double range,
+				final int[] blockSize )
 		{
 			this.xmlPath = xmlPath;
 			this.preserveAnisotropy = preserveAnisotropy;
@@ -477,21 +491,129 @@ public class AffineFusion implements Callable<Void>, Serializable
 			this.uint16 = uint16;
 			this.minIntensity = minIntensity;
 			this.range = range;
+			this.blockSize = blockSize;
+			this.blockSize_l = Util.int2long( blockSize );
+		}
+
+
+		/**
+		 * Find all views among the given {@code viewIds} that overlap the given {@code interval}.
+		 * The image interval of each view is transformed into world coordinates
+		 * and checked for overlap with {@code interval}, with a conservative
+		 * extension of 2 pixels in each direction.
+		 *
+		 * @param spimData contains bounds and registrations for all views
+		 * @param viewIds which views to check
+		 * @param interval interval in world coordinates
+		 * @return views that overlap {@code interval}
+		 */
+		private static List<ViewId> findOverlappingViews(
+				final SpimData spimData,
+				final List<ViewId> viewIds,
+				final Interval interval )
+		{
+			final List< ViewId > overlapping = new ArrayList<>();
+
+			// expand to be conservative ...
+			final Interval expandedInterval = Intervals.expand( interval, 2 );
+
+			for ( final ViewId viewId : viewIds )
+			{
+				final Interval bounds = ViewUtil.getTransformedBoundingBox( spimData, viewId );
+				if ( ViewUtil.overlaps( expandedInterval, bounds ) )
+					overlapping.add( viewId );
+			}
+
+			return overlapping;
+		}
+
+
+
+		static class OverlappingBlocks
+		{
+			private final List< ViewId > overlappingViews;
+
+			private final List< Callable< Object > > prefetchBlocks;
+
+			public OverlappingBlocks(
+					final List< ViewId > overlappingViews,
+					final List< Callable< Object > > prefetchBlocks )
+			{
+				this.overlappingViews = overlappingViews;
+				this.prefetchBlocks = prefetchBlocks;
+			}
+
+			public List< ViewId > overlappingViews()
+			{
+				return overlappingViews;
+			}
+
+			public static class Prefetched implements AutoCloseable
+			{
+				private final List< Future< Object > > prefetched;
+
+				public Prefetched( final List< Future< Object > > prefetched )
+				{
+					this.prefetched = prefetched;
+				}
+
+				@Override
+				public void close() throws Exception
+				{
+					// let go of references to the prefetched cells
+					prefetched.clear();
+				}
+			}
+
+			// TODO: javadoc
+			public Prefetched prefetch( final ExecutorService executor ) throws InterruptedException
+			{
+				return new Prefetched( executor.invokeAll( prefetchBlocks ) );
+			}
+		}
+
+		// TODO: javadoc
+		private static OverlappingBlocks findOverlappingBlocks(
+				final SpimData spimData,
+				final List<ViewId> viewIds,
+				Interval interval )
+		{
+			final List< ViewId > overlapping = new ArrayList<>();
+			final List< Callable< Object > > prefetch = new ArrayList<>();
+
+			// expand to be conservative ...
+			final Interval expandedInterval = Intervals.expand( interval, 2 );
+
+			for ( final ViewId viewId : viewIds )
+			{
+				final Interval bounds = ViewUtil.getTransformedBoundingBox( spimData, viewId );
+				if ( ViewUtil.overlaps( expandedInterval, bounds ) )
+				{
+					// determine which Cells exactly we need to compute the fused block
+					final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( spimData, viewId, interval );
+					if ( !blocks.isEmpty() )
+					{
+						prefetch.addAll( blocks );
+						overlapping.add( viewId );
+					}
+				}
+			}
+
+			return new OverlappingBlocks( overlapping, prefetch );
 		}
 
 		@Override
 		public void call( final long[][] gridBlock ) throws Exception
 		{
 			// The min coordinates of the block that this job renders (in pixels)
-			final long[] currentBlockOffset = gridBlock[ 0 ];
+			final long[] superBlockOffset = gridBlock[ 0 ];
 
 			// The size of the block that this job renders (in pixels)
-			final long[] currentBlockSize = gridBlock[ 1 ];
+			final long[] superBlockSize = gridBlock[ 1 ];
 
 			// The min grid coordinate of the block that this job renders, in units of the output grid.
 			// Note, that the block that is rendered may cover multiple output grid cells.
 			final long[] outputGridOffset = gridBlock[ 2 ];
-
 
 
 
@@ -505,9 +627,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
 			final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
-			// If requested, preserve the anisotropy of the data (output
-			// data has same anisotropy as input data) by prepending an
-			// affine to each ViewRegistration
+			// If requested, preserve the anisotropy of the data (such that
+			// output data has the same anisotropy as input data) by prepending
+			// an affine to each ViewRegistration
 			if ( preserveAnisotropy )
 			{
 				final AffineTransform3D aniso = new AffineTransform3D();
@@ -527,111 +649,104 @@ public class AffineFusion implements Callable<Void>, Serializable
 			}
 
 
+			final int n = blockSize.length;
 
+			final long[] gridPos = new long[ n ];
+			final long[] fusedBlockMin = new long[ n ];
+			final long[] fusedBlockMax = new long[ n ];
+			final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
 
+			// --------------------------------------------------------
+			// pre-filter views that overlap the superBlock
+			// --------------------------------------------------------
+			// TODO: minBB could be folded into ViewRegistrations, like anisotropy?
+			//       OR minBB could be added to superBlockOffset?
 
+			Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] + minBB[ d ] );
+			Arrays.setAll( fusedBlockMax, d -> fusedBlockMin[ d ] + superBlockSize[ d ] );
+			final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
+			final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
+			final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( N_PREFETCH_THREADS );
 
-
-
-
-
-
-			// be smarter, test which ViewIds are actually needed for the block we want to fuse
-			final Interval fusedBlock =
-					Intervals.translate(
-							FinalInterval.createMinSize( currentBlockOffset, currentBlockSize ),
-							minBB ); // min of the randomaccessbileinterval
-
-			// recover views to process
-			final ArrayList< ViewId > viewIdsLocal = new ArrayList<>();
-			final List< Callable< Object > > prefetch = new ArrayList<>();
-			for ( final ViewId viewId : viewIds )
+			final CellGrid blockGrid = new CellGrid( superBlockSize, blockSize );
+			final int numCells = ( int ) Intervals.numElements( blockGrid.getGridDimensions() );
+			for ( int gridIndex = 0; gridIndex < numCells; ++gridIndex )
 			{
-				// expand to be conservative ...
-				final Interval boundingBoxLocal = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
-				final Interval bounds = Intervals.expand( boundingBoxLocal, 2 );
+				blockGrid.getCellGridPositionFlat( gridIndex, gridPos );
+				blockGrid.getCellInterval( gridPos, fusedBlockMin, fusedBlockMax );
 
-				if ( ViewUtil.overlaps( fusedBlock, bounds ) )
+				for ( int d = 0; d < n; ++d )
 				{
-					// determine which Cells exactly we need to compute the fused block
-					final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( dataLocal, viewId, fusedBlock );
-					if ( !blocks.isEmpty() )
+					gridPos[ d ] += outputGridOffset[ d ];
+					fusedBlockMin[ d ] += superBlockOffset[ d ] + minBB[ d ];
+					fusedBlockMax[ d ] += superBlockOffset[ d ] + minBB[ d ];
+				}
+				// gridPos is now the grid coordinate in the N5 output
+
+				// determine which Cells and Views we need to compute the fused block
+				final OverlappingBlocks overlappingBlocks = findOverlappingBlocks( dataLocal, overlappingViews, fusedBlock );
+
+				if ( overlappingBlocks.overlappingViews().isEmpty() )
+					continue;
+
+				try ( Prefetched prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
+				{
+					// TODO (TP) Can we go lower-level here? This does redundant view filtering internally:
+					final RandomAccessibleInterval< FloatType > source = FusionTools.fuseVirtual(
+							dataLocal,
+							overlappingBlocks.overlappingViews(),
+							fusedBlock );
+
+					if ( uint8 )
 					{
-						prefetch.addAll( blocks );
-						viewIdsLocal.add( viewId );
+						final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
+								Converters.convert(
+										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+										new UnsignedByteType());
+
+						final RandomAccessibleInterval< UnsignedByteType > sourceGridBlock = sourceUINT8;
+						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+					}
+					else if ( uint16 )
+					{
+						final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
+								Converters.convert(
+										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+										new UnsignedShortType());
+
+						if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
+						{
+							// TODO (TP): Revise the following .. This is probably fixed now???
+							// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
+							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
+							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
+							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
+							final RandomAccessibleInterval< ShortType > sourceINT16 =
+									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
+
+							final RandomAccessibleInterval< ShortType > sourceGridBlock = sourceINT16;
+							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+						}
+						else
+						{
+							final RandomAccessibleInterval< UnsignedShortType > sourceGridBlock = sourceUINT16;
+							N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
+						}
+					}
+					else
+					{
+						final RandomAccessibleInterval< FloatType > sourceGridBlock = source;
+						N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, gridPos );
 					}
 				}
 			}
-
-			//SimpleMultiThreading.threadWait( 10000 );
-
-			// nothing to save...
-			if ( viewIdsLocal.isEmpty() )
-				return;
-
-			// prefetch cells: each cell on a separate thread
-			final ExecutorService executor = Executors.newFixedThreadPool( prefetch.size() );
-			final List< Future< Object > > prefetched = executor.invokeAll( prefetch );
-			executor.shutdown();
-
-			final RandomAccessibleInterval< FloatType > source = FusionTools.fuseVirtual(
-					dataLocal,
-					viewIdsLocal,
-					FinalInterval.wrap( minBB, maxBB )
-			);
-
-			final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
-
-			if ( uint8 )
-			{
-				final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
-						Converters.convert(
-								source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-								new UnsignedByteType());
-
-				final RandomAccessibleInterval< UnsignedByteType > sourceGridBlock = Views.offsetInterval( sourceUINT8, currentBlockOffset, currentBlockSize );
-				//N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Writer, n5Dataset, gridBlock[2], new UnsignedByteType());
-				N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-			}
-			else if ( uint16 )
-			{
-				final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
-						Converters.convert(
-								source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-								new UnsignedShortType());
-
-				if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
-				{
-					// TODO (TP): Revise the following .. This is probably fixed now???
-					// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
-					// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
-					// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
-					// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
-					final RandomAccessibleInterval< ShortType > sourceINT16 =
-							Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
-
-					final RandomAccessibleInterval< ShortType > sourceGridBlock = Views.offsetInterval( sourceINT16, currentBlockOffset, currentBlockSize );
-					N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-				}
-				else
-				{
-					final RandomAccessibleInterval< UnsignedShortType > sourceGridBlock = Views.offsetInterval( sourceUINT16, currentBlockOffset, currentBlockSize );
-					N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-				}
-			}
-			else
-			{
-				final RandomAccessibleInterval< FloatType > sourceGridBlock = Views.offsetInterval( source, currentBlockOffset, currentBlockSize );
-				N5Utils.saveBlock( sourceGridBlock, executorVolumeWriter, n5Dataset, outputGridOffset );
-			}
-
-			// let go of references to the prefetched cells
-			prefetched.clear();
+			prefetchExecutor.shutdown();
 
 			// not HDF5
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
+
 		}
 	}
 }
