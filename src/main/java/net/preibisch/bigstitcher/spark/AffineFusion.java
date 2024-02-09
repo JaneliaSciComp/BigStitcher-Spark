@@ -632,9 +632,38 @@ public class AffineFusion implements Callable<Void>, Serializable
 			}
 		}
 
+		static class Log
+		{
+			private final long startTimeMillis;
+
+			private final String prefix;
+
+			Log( final long[][] gridBlock )
+			{
+				startTimeMillis = System.currentTimeMillis();
+
+				final long[] outputGridOffset = gridBlock[ 2 ];
+				prefix = Arrays.toString( outputGridOffset );
+			}
+
+			void println()
+			{
+				println( "" );
+			}
+
+			void println( final String msg )
+			{
+				final long t = System.currentTimeMillis() - startTimeMillis;
+				System.out.println( prefix + " (t=" + t + ") " + msg );
+			}
+		}
+
 		@Override
 		public void call( final long[][] gridBlock ) throws Exception
 		{
+			Log out = new Log( gridBlock );
+			out.println( "starting" );
+
 			final int n = blockSize.length;
 
 			// The min coordinates of the block that this job renders (in pixels)
@@ -649,20 +678,20 @@ public class AffineFusion implements Callable<Void>, Serializable
 			final long[] outputGridOffset = gridBlock[ 2 ];
 
 
-
-
 			// --------------------------------------------------------
 			// initialization work that is happening in every job,
 			// independent of gridBlock parameters
 			// --------------------------------------------------------
 
 			// custom serialization
+			out.println( "loading SpimData" );
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
 			final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
 			// If requested, preserve the anisotropy of the data (such that
 			// output data has the same anisotropy as input data) by prepending
 			// an affine to each ViewRegistration
+			out.println( "preprocessing SpimData" );
 			if ( preserveAnisotropy )
 			{
 				final AffineTransform3D aniso = new AffineTransform3D();
@@ -682,6 +711,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 			}
 
 
+
 			final long[] gridPos = new long[ n ];
 			final long[] fusedBlockMin = new long[ n ];
 			final long[] fusedBlockMax = new long[ n ];
@@ -690,6 +720,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 			// pre-filter views that overlap the superBlock
 			Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
 			Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
+			out.println( "findOverlappingViews" );
 			final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
 			final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
@@ -699,6 +730,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 			final int numCells = ( int ) Intervals.numElements( blockGrid.getGridDimensions() );
 			for ( int gridIndex = 0; gridIndex < numCells; ++gridIndex )
 			{
+				out.println( "starting sub-block (block " + gridIndex + ")" );
 				blockGrid.getCellGridPositionFlat( gridIndex, gridPos );
 				blockGrid.getCellInterval( gridPos, fusedBlockMin, fusedBlockMax );
 
@@ -710,14 +742,18 @@ public class AffineFusion implements Callable<Void>, Serializable
 				}
 				// gridPos is now the grid coordinate in the N5 output
 
+				out.println( "find overlapping cells to prefetch (block " + gridIndex + ")" );
 				// determine which Cells and Views we need to compute the fused block
 				final OverlappingBlocks overlappingBlocks = findOverlappingBlocks( dataLocal, overlappingViews, fusedBlock );
+				out.println( "found " + overlappingBlocks.overlappingViews.size() + " cells to prefetch (block " + gridIndex + ")" );
 
 				if ( overlappingBlocks.overlappingViews().isEmpty() )
 					continue;
 
+				out.println( "start prefetching (block " + gridIndex + ")" );
 				try ( Prefetched prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
 				{
+					out.println( "prefetching done (block " + gridIndex + ")" );
 					// TODO (TP) Can we go lower-level here? This does redundant view filtering internally:
 					final RandomAccessibleInterval< FloatType > source = FusionTools.fuseVirtual(
 							dataLocal,
@@ -726,7 +762,9 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 					// TODO (TP) make generics work here:
 					final RandomAccessibleInterval convertedSource = convertToOutputType( source );
+					out.println( "start writing (block " + gridIndex + ")" );
 					N5Utils.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
+					out.println( "writing done (block " + gridIndex + ")" );
 				}
 			}
 			prefetchExecutor.shutdown();
@@ -735,6 +773,7 @@ public class AffineFusion implements Callable<Void>, Serializable
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
 
+			out.println( "done" );
 		}
 	}
 }
