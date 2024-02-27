@@ -48,13 +48,7 @@ public class Import {
 			final boolean uint8,
 			final boolean uint16,
 			final Double minIntensity,
-			final Double maxIntensity,
-			final String[] vi,
-			final String angleIds, 
-			final String channelIds,
-			final String illuminationIds,
-			final String tileIds,
-			final String timepointIds )
+			final Double maxIntensity )
 			throws IllegalArgumentException
 	{
 		if ( uint8 && uint16 ) {
@@ -64,7 +58,17 @@ public class Import {
 		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) ) {
 			throw new IllegalArgumentException( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
 		}
+	}
 
+	public static void validateInputParameters(
+			final String[] vi,
+			final String angleIds, 
+			final String channelIds,
+			final String illuminationIds,
+			final String tileIds,
+			final String timepointIds )
+			throws IllegalArgumentException
+	{
 		if ( vi != null &&
 			 ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null ) ) {
 			throw new IllegalArgumentException( "You can only specify ViewIds (-vi) OR angles, channels, illuminations, tiles, timepoints." );

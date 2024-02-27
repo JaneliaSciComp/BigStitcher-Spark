@@ -15,9 +15,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -41,6 +39,7 @@ import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.SelectableViews;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -53,7 +52,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class AffineFusion implements Callable<Void>, Serializable
+public class AffineFusion implements SelectableViews, Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -6103761116219617153L;
 
@@ -81,25 +80,6 @@ public class AffineFusion implements Callable<Void>, Serializable
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
-	
-	@Option(names = { "--angleId" }, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
-	private String angleIds = null;
-
-	@Option(names = { "--tileId" }, description = "list the tile ids that should be fused into a single image, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
-	private String tileIds = null;
-
-	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be fused into a single image, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
-	private String illuminationIds = null;
-
-	@Option(names = { "--channelId" }, description = "list the channel ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --channelId '0,1,2' (default: all channels)")
-	private String channelIds = null;
-
-	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --timepointId '0,1,2' (default: all time points)")
-	private String timepointIds = null;
-
-	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
-	private String[] vi = null;
-
 
 	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
 	private boolean multiRes = false;
@@ -138,7 +118,8 @@ public class AffineFusion implements Callable<Void>, Serializable
 			return null;
 		}
 
-		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
+		Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
 		{
