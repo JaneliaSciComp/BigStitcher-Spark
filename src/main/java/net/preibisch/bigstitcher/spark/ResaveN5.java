@@ -33,6 +33,7 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.cmdlineinterfaces.Basic;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -44,7 +45,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class ResaveN5 implements Callable<Void>, Serializable
+public class ResaveN5 implements Basic, Callable<Void>, Serializable
 {
 	/*
 	-x '/Users/preibischs/Documents/Microscopy/Stitching/Truman/testspark/dataset.xml'
@@ -53,9 +54,6 @@ public class ResaveN5 implements Callable<Void>, Serializable
 	*/
 
 	private static final long serialVersionUID = 1890656279324908516L;
-
-	@Option(names = { "-x", "--xml" }, required = true, description = "path to the BigStitcher xml, e.g. /home/project.xml")
-	private String xmlPath = null;
 
 	@Option(names = { "-xo", "--xmlout" }, required = true, description = "path to the output BigStitcher xml, e.g. /home/project-n5.xml")
 	private String xmloutPath = null;

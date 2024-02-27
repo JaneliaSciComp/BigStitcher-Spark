@@ -1,4 +1,4 @@
-package net.preibisch.bigstitcher.spark.util;
+package net.preibisch.bigstitcher.spark.cmdlineinterfaces;
 
 import picocli.CommandLine.Option;
 

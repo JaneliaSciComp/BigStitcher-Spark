@@ -34,12 +34,13 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.cmdlineinterfaces.Basic;
+import net.preibisch.bigstitcher.spark.cmdlineinterfaces.SelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
-import net.preibisch.bigstitcher.spark.util.SelectableViews;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -52,12 +53,9 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class AffineFusion implements SelectableViews, Callable<Void>, Serializable
+public class AffineFusion implements Basic, SelectableViews, Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -6103761116219617153L;
-
-	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml")
-	private String xmlPath = null;
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5")
 	private String n5Path = null;

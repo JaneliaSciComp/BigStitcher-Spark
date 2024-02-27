@@ -33,10 +33,11 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
+import net.preibisch.bigstitcher.spark.cmdlineinterfaces.Basic;
+import net.preibisch.bigstitcher.spark.cmdlineinterfaces.SelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.bigstitcher.spark.util.SelectableViews;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -48,7 +49,7 @@ import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class NonRigidFusionSpark implements SelectableViews, Callable<Void>, Serializable
+public class NonRigidFusionSpark implements Basic, SelectableViews, Callable<Void>, Serializable
 {
 	/**
 	 * 
@@ -73,9 +74,6 @@ public class NonRigidFusionSpark implements SelectableViews, Callable<Void>, Ser
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
-
-	@Option(names = { "-x", "--xml" }, required = true, description = "path to the BigStitcher xml, e.g. /home/project.xml")
-	private String xmlPath = null;
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
