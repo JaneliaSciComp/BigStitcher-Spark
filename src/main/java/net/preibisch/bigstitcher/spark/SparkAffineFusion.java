@@ -80,6 +80,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
+	@Option(names = "--blocksPerJob", description = "super-block multiplier, each spark job processes one super-block, for example \"2,2,2\" means 8 blocks per job (default: 1,1,1)")
+	private String blocksPerJobString = "1,1,1";
+
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
 
@@ -147,8 +150,11 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
-
-		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox )  + " with blocksize " + Util.printCoordinates( blockSize ) );
+		final int[] blocksPerJob = Import.csvStringToIntArray(blocksPerJobString);
+		System.out.println( "Fusing: " + boundingBox.getTitle() +
+				": " + Util.printInterval( boundingBox ) +
+				" with blocksize " + Util.printCoordinates( blockSize ) +
+				" and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
 
 		final DataType dataType;
 
@@ -265,19 +271,14 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				dataType,
 				compression );
 
-//		final List<long[][]> grid = Grid.create( dimensions, blockSize );
-
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
+		final int[] superBlockSize = new int[ 3 ];
+		Arrays.setAll( superBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
 		final List<long[][]> grid = Grid.create(dimensions,
-				new int[] {
-						blockSize[0] * 4,
-						blockSize[1] * 4,
-						blockSize[2] * 4
-				},
+				superBlockSize,
 				blockSize);
 
-
-		System.out.println( "numBlocks = " + grid.size() );
+		System.out.println( "numJobs = " + grid.size() );
 
 		driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
 
