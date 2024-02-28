@@ -34,8 +34,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
-import net.preibisch.bigstitcher.spark.cmdlineinterfaces.Basic;
-import net.preibisch.bigstitcher.spark.cmdlineinterfaces.SelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -53,9 +51,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class AffineFusion implements Basic, SelectableViews, Callable<Void>, Serializable
+public class AffineFusion implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -6103761116219617153L;
+
+	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml")
+	String xmlPath = null;
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5")
 	private String n5Path = null;
@@ -103,6 +104,24 @@ public class AffineFusion implements Basic, SelectableViews, Callable<Void>, Ser
 
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
+
+	@Option(names = { "--angleId" }, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
+	String angleIds = null;
+
+	@Option(names = { "--tileId" }, description = "list the tile ids that should be fused into a single image, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
+	String tileIds = null;
+
+	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be fused into a single image, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
+	String illuminationIds = null;
+
+	@Option(names = { "--channelId" }, description = "list the channel ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --channelId '0,1,2' (default: all channels)")
+	String channelIds = null;
+
+	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --timepointId '0,1,2' (default: all time points)")
+	String timepointIds = null;
+
+	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
+	String[] vi = null;
 
 	// TODO: support create downsampling pyramids, null is fine for now
 	private int[][] downsamplings;
