@@ -14,17 +14,24 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.Dimensions;
+import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
+import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -104,18 +111,18 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		// select views to process
-		final ArrayList< ViewId > viewIds =
+		ArrayList< ViewId > viewIdsGlobal =
 				Import.createViewIds(
 						dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
-		if ( viewIds.size() == 0 )
+		if ( viewIdsGlobal.size() == 0 )
 		{
 			throw new IllegalArgumentException( "No views to fuse." );
 		}
 		else
 		{
 			System.out.println( "For the following ViewIds interest point detections will be performed: ");
-			for ( final ViewId v : viewIds )
+			for ( final ViewId v : viewIdsGlobal )
 				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
 			System.out.println();
 		}
@@ -129,7 +136,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		System.out.println( "downsampleXY: " + dsxy );
 		System.out.println( "downsampleZ: " + dsz );
 
-		final ArrayList<int[]> serializedViewIds = Spark.serializeViewIdsForRDD( viewIds );
+		final ArrayList<int[]> serializedViewIds = Spark.serializeViewIdsForRDD( viewIdsGlobal );
 
 		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
 
@@ -147,7 +154,10 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		final boolean findMin = (this.type == IP.MIN || this.type == IP.BOTH);
 		final boolean findMax = (this.type == IP.MAX || this.type == IP.BOTH);
 
-		final boolean onlyOverlappingRegions = false;
+		// we need this in case we want to detect in overlapping areas only
+		final int[][] allSerializedViewIds = Spark.serializeViewIds( viewIdsGlobal );
+
+		final boolean onlyOverlappingRegions = true;
 
 		final JavaPairRDD< ArrayList< InterestPoint >, int[] > rddResults = rdd.mapToPair( serializedView ->
 		{
@@ -201,7 +211,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 			if ( onlyOverlappingRegions )
 			{
-				// TODO: we need virtual downsampling so it only loads what it needs
+				// runs virtual downsampling so it only loads what it needs
 				final Pair<RandomAccessibleInterval, AffineTransform3D> input =
 						openAndDownsample(
 								dog.imgloader,
@@ -209,11 +219,70 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
 								true );
 
-				ips = null;
+				ips = new ArrayList<>();
+
+				// for each overlapping area do (we merge the points later)
+				for ( final ViewId otherViewId : Spark.deserializeViewIds( allSerializedViewIds ) )
+				{
+					if ( otherViewId.equals( viewId ) )
+						continue;
+
+					//
+					// does it overlap?
+					//
+					final Dimensions dim = ViewUtil.getDimensions( data, viewId );
+					final Dimensions dimOtherViewId = ViewUtil.getDimensions( data, otherViewId );
+
+					final ViewRegistration reg = ViewUtil.getViewRegistration( data, viewId );
+					final ViewRegistration regOtherViewId = ViewUtil.getViewRegistration( data, otherViewId );
+
+					System.out.println( reg.getModel() );
+					System.out.println( regOtherViewId.getModel() );
+
+					// map the other view into the coordinate space of the view
+					AffineTransform3D t = regOtherViewId.getModel().copy();
+					t = t.preConcatenate( reg.getModel().inverse() );
+
+					System.out.println( t );
+
+					final Interval boundingBox = new FinalInterval( dim );
+					final Interval boundingBoxOther = Intervals.largestContainedInterval( t.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
+
+					System.out.println( "boundingBox=" + Util.printInterval( boundingBox ) );
+					System.out.println( "boundingBoxOther=" + Util.printInterval( boundingBoxOther ) );
+
+					// TODO: missing: downsampling
+					if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
+					{
+						final Interval intersection = Intervals.intersect( boundingBox, boundingBoxOther );
+
+						System.out.println( "intersection=" + Util.printInterval( intersection ) );
+
+						//
+						// run DoG only in that area
+						//
+						ips.addAll( DoGImgLib2.computeDoG(
+								Views.interval( input.getA(), intersection ),
+								null, // mask
+								dog.sigma,
+								dog.threshold,
+								dog.localization,
+								dog.findMin,
+								dog.findMax,
+								dog.minIntensity,
+								dog.maxIntensity,
+								DoGImgLib2.blockSize,
+								service,
+								dog.cuda,
+								dog.deviceCUDA,
+								dog.accurateCUDA,
+								dog.percentGPUMem ) );
+					}
+
+				}
 			}
 			else
 			{
-				// TODO: downsampling is not virtual!
 				@SuppressWarnings({"rawtypes" })
 				final Pair<RandomAccessibleInterval, AffineTransform3D> input =
 						openAndDownsample(
