@@ -24,9 +24,7 @@ public class ViewUtil {
 		return true;
 	}
 
-	public static Interval getTransformedBoundingBox( final SpimData data,
-													  final ViewId viewId )
-			throws IllegalArgumentException
+	public static Dimensions getDimensions(final SpimData data, final ViewId viewId ) throws IllegalArgumentException
 	{
 		final ImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
 		final SetupImgLoader<?> setupImgLoader = imgLoader.getSetupImgLoader(viewId.getViewSetupId());
@@ -34,8 +32,11 @@ public class ViewUtil {
 			throw new IllegalArgumentException(
 					"failed to find setupImgLoader for " + viewIdToString(viewId) + " in " + data);
 		}
-		final Dimensions dim = setupImgLoader.getImageSize(viewId.getTimePointId() );
+		return setupImgLoader.getImageSize(viewId.getTimePointId() );
+	}
 
+	public static ViewRegistration getViewRegistration(final SpimData data, final ViewId viewId ) throws IllegalArgumentException
+	{
 		final ViewRegistration reg = data.getViewRegistrations().getViewRegistration( viewId );
 		if (reg == null) {
 			throw new IllegalArgumentException(
@@ -43,6 +44,14 @@ public class ViewUtil {
 		}
 
 		reg.updateModel();
+
+		return reg;
+	}
+
+	public static Interval getTransformedBoundingBox( final SpimData data, final ViewId viewId ) throws IllegalArgumentException
+	{
+		final Dimensions dim = getDimensions( data, viewId );
+		final ViewRegistration reg = getViewRegistration( data, viewId );
 
 		return Intervals.largestContainedInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
 	}
