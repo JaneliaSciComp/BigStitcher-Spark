@@ -122,8 +122,6 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		System.out.println( "downsampleXY: " + dsxy );
 		System.out.println( "downsampleZ: " + dsz );
 
-		System.exit( 0 );
-
 		final ArrayList<int[]> serializedViewIds = Spark.serializeViewIdsForRDD( viewIds );
 
 		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
@@ -135,8 +133,8 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 		final int downsampleXY = this.dsxy;
 		final int downsampleZ = this.dsz;
-		final double minIntensity = this.minIntensity;
-		final double maxIntensity = this.maxIntensity;
+		final double minIntensity = this.minIntensity == null ? Double.NaN : this.minIntensity;
+		final double maxIntensity = this.maxIntensity == null ? Double.NaN : this.maxIntensity;
 		final double sigma = this.sigma;
 		final double threshold = this.threshold;
 		final boolean findMin = (this.type == IP.MIN || this.type == IP.BOTH);
