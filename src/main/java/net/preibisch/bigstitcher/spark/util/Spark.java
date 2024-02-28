@@ -45,10 +45,10 @@ public class Spark {
 	{
 		final ArrayList<int[]> serializedViewIds = new ArrayList<>();
 
-		final int[] serializedViewId = new int[ 2 ];
-
 		for ( int i = 0; i < viewIds.size(); ++i )
 		{
+			final int[] serializedViewId = new int[ 2 ];
+
 			serializedViewId[ 0 ] = viewIds.get( i ).getTimePointId();
 			serializedViewId[ 1 ] = viewIds.get( i ).getViewSetupId();
 
