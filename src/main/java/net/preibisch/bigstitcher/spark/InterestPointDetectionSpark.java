@@ -146,6 +146,8 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			final ViewId viewId = Spark.deserializeViewId( serializedView );
 			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
 
+			System.out.println( "Processing " + Group.pvid(viewId) + " ... " );
+
 			if ( !vd.isPresent() )
 			{
 				System.out.println( Group.pvid(viewId) + " is not present. skipping." );
@@ -215,6 +217,8 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			service.shutdown();
 
 			DownsampleTools.correctForDownsampling( ips, input.getB() );
+
+			System.out.println( "Finished " + Group.pvid(viewId) + "." );
 
 			return new Tuple2<>( ips, serializedView );
 		});
