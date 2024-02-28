@@ -1,5 +1,6 @@
 package net.preibisch.bigstitcher.spark.util;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import mpicbg.spim.data.SpimDataException;
@@ -19,7 +20,12 @@ public class Spark {
 
 	public static ViewId deserializeViewIds( final int[][] serializedViewIds, final int i )
 	{
-		return new ViewId( serializedViewIds[i][0], serializedViewIds[i][1] );
+		return deserializeViewId( serializedViewIds[i] );
+	}
+
+	public static ViewId deserializeViewId( final int[] serializedViewIds )
+	{
+		return new ViewId( serializedViewIds[0], serializedViewIds[1] );
 	}
 
 	public static int[][] serializeViewIds( final List< ViewId > viewIds )
@@ -30,6 +36,23 @@ public class Spark {
 		{
 			serializedViewIds[ i ][ 0 ] = viewIds.get( i ).getTimePointId();
 			serializedViewIds[ i ][ 1 ] = viewIds.get( i ).getViewSetupId();
+		}
+
+		return serializedViewIds;
+	}
+
+	public static ArrayList<int[]> serializeViewIdsForRDD( final List< ViewId > viewIds )
+	{
+		final ArrayList<int[]> serializedViewIds = new ArrayList<>();
+
+		final int[] serializedViewId = new int[ 2 ];
+
+		for ( int i = 0; i < viewIds.size(); ++i )
+		{
+			serializedViewId[ 0 ] = viewIds.get( i ).getTimePointId();
+			serializedViewId[ 1 ] = viewIds.get( i ).getViewSetupId();
+
+			serializedViewIds.add( serializedViewId );
 		}
 
 		return serializedViewIds;
