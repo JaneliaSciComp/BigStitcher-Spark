@@ -42,7 +42,6 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestP
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
@@ -222,8 +221,10 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 			if ( onlyOverlappingRegions )
 			{
+				//
 				// runs virtual downsampling so it only loads what it needs
-				// TODO: test virtual downsampling
+				// ideally only run with pre-computed downsample steps for efficiency
+				//
 				final Pair<RandomAccessibleInterval, AffineTransform3D> input =
 						openAndDownsample(
 								dog.imgloader,
@@ -481,7 +482,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			// the additional downsampling (performed below)
 			final AffineTransform3D additonalDS = new AffineTransform3D();
 			additonalDS.set( dsx, 0.0, 0.0, 0.0, 0.0, dsy, 0.0, 0.0, 0.0, 0.0, dsz, 0.0 );
-	
+
 			// we need to concatenate since when correcting for the downsampling we first multiply by whatever
 			// the manual downsampling did, and just then by the scaling+offset of the HDF5
 			//
@@ -496,7 +497,6 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		{
 			if ( virtualOnly )
 			{
-				System.out.println( "virtual downsampling");
 				for ( ;dsx > 1; dsx /= 2 )
 					input = LazyDownsample2x.init( Views.extendBorder( input ), input, new FloatType(), DoGImgLib2.blockSize, 0 );
 
