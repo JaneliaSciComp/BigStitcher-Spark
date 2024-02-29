@@ -503,7 +503,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			final AffineTransform3D mipMapTransform,
 			long[] downsampleFactors,
 			final boolean transformOnly, // only for ImgLib1 legacy code
-			final boolean virtualOnly )
+			final boolean virtualDownsampling )
 	{
 		long dsx = downsampleFactors[0];
 		long dsy = downsampleFactors[1];
@@ -576,7 +576,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 		if ( !transformOnly )
 		{
-			if ( virtualOnly )
+			if ( virtualDownsampling )
 			{
 				for ( ;dsx > 1; dsx /= 2 )
 					input = LazyDownsample2x.init( Views.extendBorder( input ), input, new FloatType(), DoGImgLib2.blockSize, 0 );
