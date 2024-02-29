@@ -42,6 +42,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
@@ -65,16 +66,13 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class InterestPointDetectionSpark implements Callable<Void>, Serializable
+public class InterestPointDetectionSpark extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -7654397945854689628L;
 
 	public static double combineDistance = 0.5; // when to merge interestpoints that were found in overlapping ROIS (overlappingOnly)
 
 	public enum IP { MIN, MAX, BOTH };
-
-	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml")
-	String xmlPath = null;
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label for the interest points (e.g. beads)")
 	private String label = null;
@@ -106,25 +104,6 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 	@Option(names = { "-dsz", "--downsampleZ" }, description = "downsampling in Z to use for segmentation, e.g. 2 (default: 1)")
 	private Integer dsz = 1;
-
-	@Option(names = { "--angleId" }, description = "list the angle ids that should be fused into a single image, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
-	String angleIds = null;
-
-	@Option(names = { "--tileId" }, description = "list the tile ids that should be fused into a single image, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
-	String tileIds = null;
-
-	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be fused into a single image, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
-	String illuminationIds = null;
-
-	@Option(names = { "--channelId" }, description = "list the channel ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --channelId '0,1,2' (default: all channels)")
-	String channelIds = null;
-
-	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be fused into a single image, you can find them in the XML (usually just ONE!), e.g. --timepointId '0,1,2' (default: all time points)")
-	String timepointIds = null;
-
-	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
-	String[] vi = null;
-
 
 	@Override
 	public Void call() throws Exception
