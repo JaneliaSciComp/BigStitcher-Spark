@@ -284,7 +284,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 								dog.accurateCUDA,
 								dog.percentGPUMem );
 
-						// TODO: missing: combine points since overlapping areas might exist
+						// combine points since overlapping areas might exist
 						if ( ips.size() == 0 )
 						{
 							ips.addAll( localPoints );
