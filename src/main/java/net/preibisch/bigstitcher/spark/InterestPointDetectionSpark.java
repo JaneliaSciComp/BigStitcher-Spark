@@ -1,5 +1,6 @@
 package net.preibisch.bigstitcher.spark;
 
+import java.io.File;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,6 +13,10 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -23,8 +28,14 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.RealRandomAccess;
+import net.imglib2.RealRandomAccessible;
+import net.imglib2.converter.Converters;
+import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
+import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
@@ -34,6 +45,7 @@ import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -78,6 +90,9 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view (default: false)")
 	private boolean overlappingOnly = false;
+
+	@Option(names = { "--storeIntensities" }, description = "creates an additional N5 dataset with the intensities of each detection, linearly interpolated (default: false)")
+	private boolean storeIntensities = false;
 
 	@Option(names = { "-i0", "--minIntensity" }, description = "min intensity for segmentation, e.g. 0.0 (default: load from image)")
 	private Double minIntensity = null;
@@ -218,6 +233,8 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
 			final ArrayList< InterestPoint > ips;
+			final Pair<RandomAccessibleInterval, AffineTransform3D> input;
+			final AffineTransform3D mipmapTransform;
 
 			if ( onlyOverlappingRegions )
 			{
@@ -225,15 +242,13 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 				// runs virtual downsampling so it only loads what it needs
 				// ideally only run with pre-computed downsample steps for efficiency
 				//
-				final Pair<RandomAccessibleInterval, AffineTransform3D> input =
-						openAndDownsample(
-								dog.imgloader,
-								vd,
-								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
-								true );
+				input = openAndDownsample(
+							dog.imgloader,
+							vd,
+							new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
+							true );
 
-				final AffineTransform3D mipmapTransform = input.getB();
-
+				mipmapTransform = input.getB();
 				ips = new ArrayList<>();
 
 				// for each overlapping area do (we merge the points later)
@@ -310,19 +325,17 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 						}
 					}
 				}
-
-				DownsampleTools.correctForDownsampling( ips, input.getB() );
 			}
 			else
 			{
-				@SuppressWarnings({"rawtypes" })
-				final Pair<RandomAccessibleInterval, AffineTransform3D> input =
-						openAndDownsample(
-								dog.imgloader,
-								vd,
-								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
-								false );
-	
+				input = openAndDownsample(
+							dog.imgloader,
+							vd,
+							new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
+							false );
+
+				mipmapTransform = input.getB();
+
 				ips = DoGImgLib2.computeDoG(
 							input.getA(),
 							null, // mask
@@ -339,20 +352,88 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 							dog.deviceCUDA,
 							dog.accurateCUDA,
 							dog.percentGPUMem );
-	
-				DownsampleTools.correctForDownsampling( ips, input.getB() );
 			}
 
 			service.shutdown();
 
+			// correcting for downsampling
+			System.out.println( "Correcting interest points '" + label + "', " + Group.pvid(viewId) + " for downsampling ... " );
+
+			DownsampleTools.correctForDownsampling( ips, mipmapTransform );
+
+			// save interest point N5
 			System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
 
 			final InterestPoints ipl = InterestPoints.newInstance( data.getBasePath(), viewId, label );
+
 			ipl.setInterestPoints( ips );
 			ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
 
 			ipl.saveInterestPoints( true );
 			ipl.saveCorrespondingInterestPoints( true );
+
+			// store image intensities for interest points
+			if ( storeIntensities )
+			{
+				System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
+
+				final InterestPointsN5 i = (InterestPointsN5)ipl;
+
+				final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
+				final String datasetIntensities = i.ipDataset() + "/intensities";
+
+				if ( ips.size() == 0 )
+				{
+					n5Writer.createDataset(
+							datasetIntensities,
+							new long[] {0},
+							new int[] {1},
+							DataType.FLOAT32,
+							new GzipCompression());
+				}
+				else
+				{
+					// for image interpolation
+					final RealRandomAccessible<FloatType> rra = Views.interpolate(
+							Views.extendBorder(
+									Converters.convertRAI(
+											(RandomAccessibleInterval<RealType>)(Object)input.getA(),
+											(a,b) -> b.set( a.getRealFloat() ),
+											new FloatType() ) ),
+							new NLinearInterpolatorFactory<>() );
+
+					final RealRandomAccess< FloatType> r = rra.realRandomAccess();
+
+					// to undo the mipmap transform correction
+					final AffineTransform3D invMM = mipmapTransform.inverse();
+					final double[] tmp = new double[ ips.get( 0 ).getL().length ];
+
+					// 1 x N array (which is a 2D array)
+					final FunctionRandomAccessible< FloatType > intensities =
+							new FunctionRandomAccessible<>(
+									2,
+									(location, value) ->
+									{
+										final int index = location.getIntPosition( 1 );
+										final InterestPoint ip = ips.get( index );
+
+										invMM.apply( ip.getL(), tmp );
+										r.setPosition( tmp );
+
+										value.set( r.get().get() );
+									},
+									FloatType::new );
+
+					final RandomAccessibleInterval< FloatType > intensityData =
+							Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, ips.size() - 1 } );
+
+					N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
+				}
+
+				IOFunctions.println( "Saved: " + new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() + ":/" + datasetIntensities );
+
+				n5Writer.close();
+			}
 
 			System.out.println( "Finished " + Group.pvid(viewId) + "." );
 
