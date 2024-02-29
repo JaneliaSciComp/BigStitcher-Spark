@@ -23,7 +23,6 @@ import net.imglib2.converter.Converters;
 import net.imglib2.img.cell.CellGrid;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
-import net.imglib2.type.numeric.integer.ShortType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -140,12 +139,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
 
-		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
-		{
-			System.out.println( "BDV-compatible HDF5 only supports 16-bit output for now. Please use '--UINT16' flag for fusion." );
-			return null;
-		}
-
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
@@ -171,11 +164,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		{
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT8;
-		}
-		else if ( uint16 && bdvString != null && StorageType.HDF5.equals( storageType ) )
-		{
-			System.out.println( "Fusing to INT16 (for BDV compliance, which is treated as UINT16), min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
-			dataType = DataType.INT16;
 		}
 		else if ( uint16 )
 		{
@@ -485,40 +473,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			return overlapping;
 		}
 
-		private < T extends NativeType< T > > RandomAccessibleInterval< T > convertToOutputType( RandomAccessibleInterval< FloatType > rai )
-		{
-			if ( uint8 )
-			{
-				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
-						new UnsignedByteType() );
-			}
-			else if ( uint16 )
-			{
-				if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
-				{
-					// TODO (TP): Revise the following .. This is probably fixed now???
-					// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
-					// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
-					// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
-					// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
-					return ( RandomAccessibleInterval< T > ) Converters.convert(
-							rai, ( i, o ) -> o.set( UnsignedShortType.getCodedSignedShort( ( int ) Util.round( ( i.get() - minIntensity ) / range ) ) ),
-							new ShortType() );
-				}
-				else
-				{
-					return ( RandomAccessibleInterval< T > ) Converters.convert(
-							rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
-							new UnsignedShortType() );
-				}
-			}
-			else
-			{
-				return ( RandomAccessibleInterval< T > ) rai;
-			}
-		}
-
 		@Override
 		public void call( final long[][] gridBlock ) throws Exception
 		{
@@ -611,9 +565,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 							overlappingBlocks.overlappingViews(),
 							fusedBlock );
 
-					// TODO (TP) make generics work here:
-					final RandomAccessibleInterval convertedSource = convertToOutputType( source );
-					N5Utils.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
+					saveBlock( source, executorVolumeWriter, gridPos );
 				}
 			}
 			prefetchExecutor.shutdown();
@@ -622,6 +574,37 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
 
+		}
+
+		private < T extends NativeType< T > > void saveBlock(
+				final RandomAccessibleInterval< FloatType > source,
+				final N5Writer executorVolumeWriter,
+				final long[] gridPos ) throws IOException
+		{
+			final RandomAccessibleInterval< T > convertedSource = convertToOutputType( source );
+			N5Utils.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
+		}
+
+		@SuppressWarnings( "unchecked" )
+		private < T extends NativeType< T > > RandomAccessibleInterval< T > convertToOutputType(
+				final RandomAccessibleInterval< FloatType > rai )
+		{
+			if ( uint8 )
+			{
+				return ( RandomAccessibleInterval< T > ) Converters.convert(
+						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
+						new UnsignedByteType() );
+			}
+			else if ( uint16 )
+			{
+				return ( RandomAccessibleInterval< T > ) Converters.convert(
+						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
+						new UnsignedShortType() );
+			}
+			else
+			{
+				return ( RandomAccessibleInterval< T > ) rai;
+			}
 		}
 	}
 
