@@ -21,7 +21,9 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
+import net.imglib2.KDTree;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
@@ -51,15 +53,15 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -7654397945854689628L;
 
+	public static double combineDistance = 0.5; // when to merge interestpoints that were found in overlapping ROIS (overlappingOnly)
+
 	public enum IP { MIN, MAX, BOTH };
 
 	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml")
 	String xmlPath = null;
 
-
 	@Option(names = { "-l", "--label" }, required = true, description = "label for the interest points (e.g. beads)")
 	private String label = null;
-
 
 	@Option(names = { "-s", "--sigma" }, required = true, description = "sigma for segmentation, e.g. 1.8")
 	private Double sigma = null;
@@ -70,6 +72,8 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 	@Option(names = { "--type" }, description = "the type of interestpoints to find, MIN, MAX or BOTH (default: MAX)")
 	private IP type = IP.MAX;
 
+	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view (default: false)")
+	private boolean overlappingOnly = false;
 
 	@Option(names = { "-i0", "--minIntensity" }, description = "min intensity for segmentation, e.g. 0.0 (default: load from image)")
 	private Double minIntensity = null;
@@ -135,6 +139,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		System.out.println( "maxIntensity: " + maxIntensity );
 		System.out.println( "downsampleXY: " + dsxy );
 		System.out.println( "downsampleZ: " + dsz );
+		System.out.println( "overlappingOnly: " + overlappingOnly );
 
 		final ArrayList<int[]> serializedViewIds = Spark.serializeViewIdsForRDD( viewIdsGlobal );
 
@@ -153,11 +158,11 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		final double threshold = this.threshold;
 		final boolean findMin = (this.type == IP.MIN || this.type == IP.BOTH);
 		final boolean findMax = (this.type == IP.MAX || this.type == IP.BOTH);
+		final boolean onlyOverlappingRegions = overlappingOnly;
+		final double combineDistance = InterestPointDetectionSpark.combineDistance;
 
 		// we need this in case we want to detect in overlapping areas only
 		final int[][] allSerializedViewIds = Spark.serializeViewIds( viewIdsGlobal );
-
-		final boolean onlyOverlappingRegions = true;
 
 		final JavaPairRDD< ArrayList< InterestPoint >, int[] > rddResults = rdd.mapToPair( serializedView ->
 		{
@@ -212,12 +217,15 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			if ( onlyOverlappingRegions )
 			{
 				// runs virtual downsampling so it only loads what it needs
+				// TODO: test virtual downsampling
 				final Pair<RandomAccessibleInterval, AffineTransform3D> input =
 						openAndDownsample(
 								dog.imgloader,
 								vd,
 								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
 								true );
+
+				final AffineTransform3D mipmapTransform = input.getB();
 
 				ips = new ArrayList<>();
 
@@ -236,32 +244,30 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 					final ViewRegistration reg = ViewUtil.getViewRegistration( data, viewId );
 					final ViewRegistration regOtherViewId = ViewUtil.getViewRegistration( data, otherViewId );
 
-					System.out.println( reg.getModel() );
-					System.out.println( regOtherViewId.getModel() );
+					// load other mipmap transform
+					final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
+					openAndDownsample(dog.imgloader, vd, mipmapTransformOtherViewId, new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ }, true, true );
 
-					// map the other view into the coordinate space of the view
-					AffineTransform3D t = regOtherViewId.getModel().copy();
-					t = t.preConcatenate( reg.getModel().inverse() );
+					// map the other view into the local coordinate space of the view we find interest points in
+					// apply inverse of the mipmap transform of each
+					final AffineTransform3D t1 = mipmapTransform.inverse();
+					final AffineTransform3D t2 = regOtherViewId.getModel().preConcatenate( reg.getModel().inverse() ).preConcatenate( mipmapTransformOtherViewId.inverse() );
 
-					System.out.println( t );
+					final Interval boundingBox = Intervals.largestContainedInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
+					final Interval boundingBoxOther = Intervals.largestContainedInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
 
-					final Interval boundingBox = new FinalInterval( dim );
-					final Interval boundingBoxOther = Intervals.largestContainedInterval( t.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
-
-					System.out.println( "boundingBox=" + Util.printInterval( boundingBox ) );
-					System.out.println( "boundingBoxOther=" + Util.printInterval( boundingBoxOther ) );
-
-					// TODO: missing: downsampling
 					if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
 					{
-						final Interval intersection = Intervals.intersect( boundingBox, boundingBoxOther );
+						final Interval intersectionBoxes = Intervals.intersect( boundingBox, boundingBoxOther );
+						final Interval intersection = Intervals.intersect( input.getA(), intersectionBoxes ); // make sure it fits (e.g. rounding errors)
 
-						System.out.println( "intersection=" + Util.printInterval( intersection ) );
+						System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
+						System.out.println( "intersection=" + Util.printInterval( intersectionBoxes ) );
 
 						//
 						// run DoG only in that area
 						//
-						ips.addAll( DoGImgLib2.computeDoG(
+						final ArrayList< InterestPoint > localPoints = DoGImgLib2.computeDoG(
 								Views.interval( input.getA(), intersection ),
 								null, // mask
 								dog.sigma,
@@ -276,10 +282,29 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 								dog.cuda,
 								dog.deviceCUDA,
 								dog.accurateCUDA,
-								dog.percentGPUMem ) );
-					}
+								dog.percentGPUMem );
 
+						// TODO: missing: combine points since overlapping areas might exist
+						if ( ips.size() == 0 )
+						{
+							ips.addAll( localPoints );
+						}
+						else
+						{
+							final KDTree< InterestPoint > tree = new KDTree<>(ips, ips);
+							final NearestNeighborSearchOnKDTree< InterestPoint > search = new NearestNeighborSearchOnKDTree<>( tree );
+
+							for ( final InterestPoint ip : localPoints )
+							{
+								search.search( ip );
+								if ( search.getDistance() > combineDistance )
+									ips.add( ip );
+							}
+						}
+					}
 				}
+
+				DownsampleTools.correctForDownsampling( ips, input.getB() );
 			}
 			else
 			{
@@ -289,7 +314,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 								dog.imgloader,
 								vd,
 								new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
-								true );
+								false );
 	
 				ips = DoGImgLib2.computeDoG(
 							input.getA(),
