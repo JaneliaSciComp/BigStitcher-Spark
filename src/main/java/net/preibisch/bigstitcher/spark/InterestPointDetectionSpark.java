@@ -481,21 +481,21 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		return null;
 	}
 
-	// TODO: this should be pushed up to the multiview-reconstruction code
+	// TODO: this has been pushed up to the multiview-reconstruction code, use new version
 	public static Pair<RandomAccessibleInterval, AffineTransform3D> openAndDownsample(
 			final BasicImgLoader imgLoader,
 			final ViewId vd,
 			final long[] downsampleFactors,
-			final boolean virtualOnly )
+			final boolean virtualDownsampling )
 	{
 		final AffineTransform3D mipMapTransform = new AffineTransform3D();
 
-		final RandomAccessibleInterval img = openAndDownsample(imgLoader, vd, mipMapTransform, downsampleFactors, false, virtualOnly );
+		final RandomAccessibleInterval img = openAndDownsample(imgLoader, vd, mipMapTransform, downsampleFactors, false, virtualDownsampling );
 
 		return new ValuePair<RandomAccessibleInterval, AffineTransform3D>( img, mipMapTransform );
 	}
 
-	// TODO: this should be pushed up to the multiview-reconstruction code
+	// TODO: this has been pushed up to the multiview-reconstruction code, use new version
 	protected static final int[] ds = { 1, 2, 4, 8, 16, 32, 64, 128 };
 	private static RandomAccessibleInterval openAndDownsample(
 			final BasicImgLoader imgLoader,
