@@ -37,7 +37,12 @@ import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
@@ -150,6 +155,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 		final JavaRDD<int[]> rdd = sc.parallelize( serializedViewIds );
 
+		final String label = this.label;
 		final int downsampleXY = this.dsxy;
 		final int downsampleZ = this.dsz;
 		final double minIntensity = this.minIntensity == null ? Double.NaN : this.minIntensity;
@@ -164,7 +170,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 		// we need this in case we want to detect in overlapping areas only
 		final int[][] allSerializedViewIds = Spark.serializeViewIds( viewIdsGlobal );
 
-		final JavaPairRDD< ArrayList< InterestPoint >, int[] > rddResults = rdd.mapToPair( serializedView ->
+		final JavaPairRDD< Integer, int[] > rddResults = rdd.mapToPair( serializedView ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
 			final ViewId viewId = Spark.deserializeViewId( serializedView );
@@ -175,7 +181,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 			if ( !vd.isPresent() )
 			{
 				System.out.println( Group.pvid(viewId) + " is not present. skipping." );
-				return null;
+				return new Tuple2<>( -1, serializedView );
 			}
 
 			final DoGParameters dog = new DoGParameters();
@@ -336,43 +342,57 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 				DownsampleTools.correctForDownsampling( ips, input.getB() );
 			}
 
-
 			service.shutdown();
+
+			System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
+
+			final InterestPointsN5 ipl = (InterestPointsN5)InterestPoints.newInstance( data.getBasePath(), viewId, label );
+			ipl.setInterestPoints( ips );
+			ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
+
+			ipl.saveInterestPoints( true );
+			ipl.saveCorrespondingInterestPoints( true );
 
 			System.out.println( "Finished " + Group.pvid(viewId) + "." );
 
-			return new Tuple2<>( ips, serializedView );
+			return new Tuple2<>( ips.size(), serializedView );
 		});
 
 		rddResults.cache();
 		rddResults.count();
 
-		final List<Tuple2<ArrayList<InterestPoint>, int[]>> results = rddResults.collect();
+		final List<Tuple2<Integer, int[]>> results = rddResults.collect();
 
-		System.out.println( "Computed all interest points. Merging and saving." );
+		System.out.println( "Computed all interest points, statistics:" );
 
 		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
 
-		for ( final Tuple2< ArrayList<InterestPoint>, int[] > tuple : results )
+		for ( final Tuple2<Integer, int[] > tuple : results )
 		{
 			final ViewId viewId = Spark.deserializeViewId( tuple._2() );
-			final ArrayList<InterestPoint> ips = tuple._1();
+			final int numDetection = tuple._1();
 
-			interestPoints.put( viewId, ips );
-
-			System.out.println( Group.pvid( viewId ) + ": " + ips.size() );
+			if ( numDetection >= 0 )
+			{
+				interestPoints.put( viewId, new ArrayList<>() ); // just for saving the XML - it does not save the actual list
+				System.out.println( Group.pvid( viewId ) + ": " + numDetection );
+			}
+			else
+			{
+				System.out.println( Group.pvid( viewId ) + ": missing view, skipping " );
+			}
 		}
 
-		final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " min=" + findMin + " max=" + findMax +
+		final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 				" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
 		InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
 
 		sc.close();
 
-		System.out.println( "Saving XML and interest points ..." );
+		System.out.println( "Saving XML (metadata only) ..." );
 
-		SpimData2.saveXML( dataGlobal, xmlPath, null );
+		new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
 
 		System.out.println( "Done ..." );
 
