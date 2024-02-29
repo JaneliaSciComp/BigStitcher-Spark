@@ -347,7 +347,7 @@ public class InterestPointDetectionSpark implements Callable<Void>, Serializable
 
 			System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
 
-			final InterestPointsN5 ipl = (InterestPointsN5)InterestPoints.newInstance( data.getBasePath(), viewId, label );
+			final InterestPoints ipl = InterestPoints.newInstance( data.getBasePath(), viewId, label );
 			ipl.setInterestPoints( ips );
 			ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
 
