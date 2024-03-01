@@ -91,6 +91,7 @@ public class Import {
 			System.out.println( "Parsing selected ViewIds ... ");
 			ArrayList<ViewId> parsedViews = Import.getViewIds( vi );
 			viewIds = Import.getViewIds( data, parsedViews );
+			System.out.println( "Warning: only " + viewIds.size() + " of " + parsedViews.size() + " that you specified exist and are present.");
 		}
 		else if ( angleIds != null || tileIds != null || illuminationIds != null || timepointIds != null || channelIds != null )
 		{
