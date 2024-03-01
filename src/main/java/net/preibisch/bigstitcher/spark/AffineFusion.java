@@ -116,7 +116,6 @@ public class AffineFusion extends AbstractSelectableViews implements Callable<Vo
 		}
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
-		Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
 		{
@@ -124,26 +123,17 @@ public class AffineFusion extends AbstractSelectableViews implements Callable<Vo
 			return null;
 		}
 
-		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
+		final SpimData2 dataGlobal = this.loadSpimData2();
 
-		// select views to process
-		final ArrayList< ViewId > viewIds =
-				Import.createViewIds(
-						data, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		if ( dataGlobal == null )
+			return null;
 
-		if ( viewIds.size() == 0 )
-		{
-			throw new IllegalArgumentException( "No views to fuse." );
-		}
-		else
-		{
-			System.out.println( "Following ViewIds will be fused: ");
-			for ( final ViewId v : viewIds )
-				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-			System.out.println();
-		}
+		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
 
-		BoundingBox boundingBox = Import.getBoundingBox( data, viewIds, boundingBoxName );
+		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
+			return null;
+
+		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 
@@ -184,7 +174,7 @@ public class AffineFusion extends AbstractSelectableViews implements Callable<Vo
 
 			if ( Double.isNaN( anisotropyFactor ) )
 			{
-				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( data, viewIds );
+				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( dataGlobal, viewIdsGlobal );
 
 				System.out.println( "Anisotropy factor [computed from data]: " + anisotropyFactor );
 			}
@@ -241,7 +231,7 @@ public class AffineFusion extends AbstractSelectableViews implements Callable<Vo
 			range = 0;
 
 		// TODO: improve (e.g. make ViewId serializable)
-		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
+		final int[][] serializedViewIds = Spark.serializeViewIds(viewIdsGlobal);
 		final boolean useAF = preserveAnisotropy;
 		final double af = anisotropyFactor;
 

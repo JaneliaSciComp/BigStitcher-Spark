@@ -106,7 +106,6 @@ public class NonRigidFusionSpark extends AbstractSelectableViews implements Call
 		}
 
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
-		Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
 
 		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
 		{
@@ -114,24 +113,15 @@ public class NonRigidFusionSpark extends AbstractSelectableViews implements Call
 			System.exit( 0 );
 		}
 
-		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
+		final SpimData2 dataGlobal = this.loadSpimData2();
 
-		// select views to process
-		final ArrayList< ViewId > viewIds =
-				Import.createViewIds(
-						data, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		if ( dataGlobal == null )
+			return null;
 
-		if ( viewIds.size() == 0 )
-		{
-			throw new IllegalArgumentException( "No views to fuse." );
-		}
-		else
-		{
-			System.out.println( "Following ViewIds will be fused: ");
-			for ( final ViewId v : viewIds )
-				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-			System.out.println();
-		}
+		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
+
+		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
+			return null;
 
 		if ( interestPoints == null || interestPoints.size() == 0 )
 		{
@@ -141,7 +131,7 @@ public class NonRigidFusionSpark extends AbstractSelectableViews implements Call
 		for ( final String ip : interestPoints )
 			System.out.println( "nonrigid using interestpoint label: " + ip );
 
-		final BoundingBox bb = Import.getBoundingBox( data, viewIds, boundingBoxName );
+		final BoundingBox bb = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 
@@ -197,7 +187,7 @@ public class NonRigidFusionSpark extends AbstractSelectableViews implements Call
 			range = ( this.maxIntensity - this.minIntensity ) / 65535.0;
 		else
 			range = 0;
-		final int[][] serializedViewIds = Spark.serializeViewIds(viewIds);
+		final int[][] serializedViewIds = Spark.serializeViewIds(viewIdsGlobal);
 
 		try
 		{

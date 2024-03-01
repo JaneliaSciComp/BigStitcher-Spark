@@ -108,26 +108,15 @@ public class InterestPointDetectionSpark extends AbstractSelectableViews impleme
 	@Override
 	public Void call() throws Exception
 	{
-		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2("", xmlPath);
+		final SpimData2 dataGlobal = this.loadSpimData2();
 
-		Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		if ( dataGlobal == null )
+			return null;
 
-		// select views to process
-		ArrayList< ViewId > viewIdsGlobal =
-				Import.createViewIds(
-						dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
 
-		if ( viewIdsGlobal.size() == 0 )
-		{
-			throw new IllegalArgumentException( "No views to fuse." );
-		}
-		else
-		{
-			System.out.println( "For the following ViewIds interest point detections will be performed: ");
-			for ( final ViewId v : viewIdsGlobal )
-				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-			System.out.println();
-		}
+		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
+			return null;
 
 		System.out.println( "label: " + label );
 		System.out.println( "sigma: " + sigma );

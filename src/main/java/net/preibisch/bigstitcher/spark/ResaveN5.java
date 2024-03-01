@@ -73,24 +73,27 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 	@Override
 	public Void call() throws Exception
 	{
-		final SpimData2 data = Spark.getSparkJobSpimData2("", xmlPath);
+		final SpimData2 dataGlobal = this.loadSpimData2();
+
+		if ( dataGlobal == null )
+			return null;
 
 		// process all views
-		final ArrayList< ViewId > viewIds = Import.getViewIds( data );
+		final ArrayList< ViewId > viewIdsGlobal = Import.getViewIds( dataGlobal );
 
-		if ( viewIds.size() == 0 )
+		if ( viewIdsGlobal.size() == 0 )
 		{
 			throw new IllegalArgumentException( "No views to resave." );
 		}
 		else
 		{
 			System.out.println( "Following ViewIds will be resaved: ");
-			for ( final ViewId v : viewIds )
+			for ( final ViewId v : viewIdsGlobal )
 				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
 			System.out.println();
 		}
 
-		final String n5Path = this.n5Path == null ? data.getBasePath() + "/dataset.n5" : this.n5Path;
+		final String n5Path = this.n5Path == null ? dataGlobal.getBasePath() + "/dataset.n5" : this.n5Path;
 		final Compression compression = new GzipCompression( 1 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
@@ -109,9 +112,9 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 		// all ViewSetups for estimating downsampling
 		final List< ViewSetup > viewSetups = new ArrayList<>();
 
-		for ( final ViewId viewId : viewIds )
+		for ( final ViewId viewId : viewIdsGlobal )
 		{
-			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
+			final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
 
 			final List<long[][]> grid = Grid.create(
 					vd.getViewSetup().getSize().dimensionsAsLongArray(),
@@ -167,7 +170,7 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 		// create one dataset per ViewSetupId
 		for ( final Entry<Integer, long[]> viewSetup: viewSetupIdToDimensions.entrySet() )
 		{
-			final Object type = data.getSequenceDescription().getImgLoader().getSetupImgLoader( viewSetup.getKey() ).getImageType();
+			final Object type = dataGlobal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewSetup.getKey() ).getImageType();
 			final DataType dataType;
 
 			if ( UnsignedShortType.class.isInstance( type ) )
@@ -196,7 +199,7 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 		}
 
 		// create all image (s0) datasets
-		for ( final ViewId viewId : viewIds )
+		for ( final ViewId viewId : viewIdsGlobal )
 		{
 			System.out.println( "Creating dataset for " + Group.pvid( viewId ) );
 			
@@ -295,7 +298,7 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 			final ArrayList<long[][]> allGridsDS = new ArrayList<>();
 
 			// adjust dimensions
-			for ( final ViewId viewId : viewIds )
+			for ( final ViewId viewId : viewIdsGlobal )
 			{
 				final long[] previousDim = n5.getAttribute( "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (level-1), "dimensions", long[].class );
 				final long[] dim = new long[ previousDim.length ];
@@ -417,8 +420,8 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 		// things look good, let's save the new XML
 		System.out.println( "Saving new xml to: " + xmloutPath );
 
-		data.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5Path ), data.getSequenceDescription()));
-		new XmlIoSpimData2( null ).save( data, xmloutPath );
+		dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5Path ), dataGlobal.getSequenceDescription()));
+		new XmlIoSpimData2( null ).save( dataGlobal, xmloutPath );
 
 		Thread.sleep( 100 );
 		System.out.println( "Resaved project, in total took: " + (System.currentTimeMillis() - time ) + " ms." );
