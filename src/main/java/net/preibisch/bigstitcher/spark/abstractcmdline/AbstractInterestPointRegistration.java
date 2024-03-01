@@ -1,5 +1,18 @@
 package net.preibisch.bigstitcher.spark.abstractcmdline;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+
+import mpicbg.models.AffineModel3D;
+import mpicbg.models.IdentityModel;
+import mpicbg.models.InterpolatedAffineModel3D;
+import mpicbg.models.Model;
+import mpicbg.models.RigidModel3D;
+import mpicbg.models.TranslationModel3D;
+import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine.Option;
 
 public abstract class AbstractInterestPointRegistration extends AbstractSelectableViews
@@ -58,40 +71,92 @@ public abstract class AbstractInterestPointRegistration extends AbstractSelectab
 	protected String mapbackView = null;
 
 	@Option(names = { "--mapbackModel" }, description = "which transformation model to use for mapback if it is activated; TRANSLATION or RIGID (default: RIGID)")
-	private MapbackModel mapbackModel = MapbackModel.RIGID;
+	private MapbackModel mapbackModelEntry = MapbackModel.RIGID;
 
-	/*
-	@Override
-	public Void call() throws Exception
+	public ArrayList< ViewId > fixedViewIds;
+	public ViewId mapBackViewId;
+	public Model<?> mapBackModel, model;
+
+	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
 	{
-		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2("", xmlPath);
+		// parse model
+		final Model< ? > tm, rm;
 
-		Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		if ( transformationModel == TransformationModel.TRANSLATION )
+			tm = new TranslationModel3D();
+		else if ( transformationModel == TransformationModel.RIGID )
+			tm = new RigidModel3D();
+		else
+			tm = new AffineModel3D();
 
-		// select views to process
-		ArrayList< ViewId > viewIdsGlobal =
-				Import.createViewIds(
-						dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
+		// parse regularizer
+		if ( regularizationModel == RegularizationModel.NONE )
+			rm = null;
+		else if ( regularizationModel == RegularizationModel.IDENTITY )
+			rm = new IdentityModel();
+		else if ( regularizationModel == RegularizationModel.TRANSLATION )
+			rm = new TranslationModel3D();
+		else if ( regularizationModel == RegularizationModel.RIGID )
+			rm = new RigidModel3D();
+		else
+			rm = new AffineModel3D();
 
-		if ( viewIdsGlobal.size() == 0 )
+		if ( rm == null )
 		{
-			throw new IllegalArgumentException( "No views to fuse." );
+			model = tm;
+			System.out.println( "Final model = " + model.getClass().getSimpleName() );
 		}
 		else
 		{
-			System.out.println( "For the following ViewIds interest point-based registratiojn will be performed: ");
-			for ( final ViewId v : viewIdsGlobal )
-				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-			System.out.println();
+			model = new InterpolatedAffineModel3D( tm, rm, lambda );
+			System.out.println( "Final model = " + model.getClass().getSimpleName() + ", " + tm.getClass().getSimpleName() + " regularized with " + rm.getClass().getSimpleName() + " (lambda=" + lambda + ")" );
 		}
 
-		return null;
+		// fixed views and mapping back to original view
+		if ( noFixedViews )
+		{
+			if ( mapbackView != null )
+			{
+				// load mapback view
+				mapBackViewId = Import.getViewIds(dataGlobal, new ArrayList<>( Arrays.asList( Import.getViewId( mapbackView ) ) ) ).get( 0 );
+
+				// load mapback model
+				mapBackModel = (mapbackModelEntry == MapbackModel.TRANSLATION) ? new TranslationModel3D() : new RigidModel3D();
+
+				System.out.println( "Mapback viewid = " + Group.pvid( mapBackViewId ) + " type=" + mapBackModel.getClass().getSimpleName() );
+			}
+			else
+			{
+				System.out.println( "No views are fixed and no mapping back is selected, i.e. the Views will more or less float in space (might be fine if desired)." );
+			}
+		}
+		else
+		{
+			// set/load fixed views
+			if ( fixedViews == null )
+			{
+				System.out.println( "Setting first ViewId as fixed ... ");
+
+				fixedViewIds = new ArrayList<>( Arrays.asList( viewIdsGlobal.get( 0 ) ) );
+			}
+			else
+			{
+				System.out.println( "Parsing fixed ViewIds ... ");
+
+				final ArrayList<ViewId> parsedViews = Import.getViewIds( vi ); // all views
+				this.fixedViewIds = Import.getViewIds( dataGlobal, parsedViews );
+				System.out.println( "Warning: only " + fixedViewIds.size() + " of " + parsedViews.size() + " that you specified as fixed views exist and are present.");
+
+				if ( this.fixedViewIds == null || this.fixedViewIds.size() == 0 )
+					throw new IllegalArgumentException( "Fixed views couldn't be parsed. Please provide a valid fixed view." );
+
+				System.out.println("The following ViewIds are fixed: ");
+				fixedViewIds.forEach( vid -> System.out.print( Group.pvid( mapBackViewId ) + ", ") );
+				System.out.println();
+			}
+		}
+
+		return true;
 	}
 
-	public static void main(final String... args)
-	{
-		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new AbstractInterestPointRegistration()).execute(args));
-	}
-	*/
 }
