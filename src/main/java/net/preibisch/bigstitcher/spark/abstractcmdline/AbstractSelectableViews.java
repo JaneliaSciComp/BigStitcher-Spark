@@ -2,6 +2,7 @@ package net.preibisch.bigstitcher.spark.abstractcmdline;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.concurrent.Callable;
 
 import mpicbg.spim.data.sequence.ViewId;
@@ -47,6 +48,7 @@ public abstract class AbstractSelectableViews extends AbstractBasic implements C
 		else
 		{
 			System.out.println( "The following ViewIds will be processed: ");
+			Collections.sort( viewIdsGlobal );
 			for ( final ViewId v : viewIdsGlobal )
 				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
 			System.out.println();

@@ -137,6 +137,7 @@ public class InterestPointDetectionSpark extends AbstractSelectableViews impleme
 
 		final JavaRDD<int[]> rdd = sc.parallelize( serializedViewIds );
 
+		final String xmlPath = this.xmlPath;
 		final String label = this.label;
 		final int downsampleXY = this.dsxy;
 		final int downsampleZ = this.dsz;

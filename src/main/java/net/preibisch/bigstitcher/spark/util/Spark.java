@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import bdv.ViewerImgLoader;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 
@@ -26,6 +28,11 @@ public class Spark {
 			viewIds.add( deserializeViewId( serializedViewIds[i] ) );
 
 		return viewIds;
+	}
+
+	public static Pair<ViewId, ViewId> derserializeViewIdPairsForRDD( final int[][] serializedPair )
+	{
+		return new ValuePair<ViewId, ViewId>(deserializeViewId( serializedPair[ 0 ] ), deserializeViewId( serializedPair[ 1 ] ));
 	}
 
 	public static ViewId deserializeViewIds( final int[][] serializedViewIds, final int i )
@@ -51,21 +58,36 @@ public class Spark {
 		return serializedViewIds;
 	}
 
+	public static ArrayList<int[][]> serializeViewIdPairsForRDD( final List< Pair<ViewId, ViewId> > pairs )
+	{
+		final ArrayList<int[][]> ser = new ArrayList<>();
+
+		for ( final Pair<ViewId, ViewId> pair : pairs )
+		{
+			final int[][] pairInt = new int[2][];
+
+			pairInt[0] = serializeViewId( pair.getA() );
+			pairInt[1] = serializeViewId( pair.getB() );
+
+			ser.add( pairInt );
+		}
+
+		return ser;
+	}
+
 	public static ArrayList<int[]> serializeViewIdsForRDD( final List< ViewId > viewIds )
 	{
 		final ArrayList<int[]> serializedViewIds = new ArrayList<>();
 
 		for ( int i = 0; i < viewIds.size(); ++i )
-		{
-			final int[] serializedViewId = new int[ 2 ];
-
-			serializedViewId[ 0 ] = viewIds.get( i ).getTimePointId();
-			serializedViewId[ 1 ] = viewIds.get( i ).getViewSetupId();
-
-			serializedViewIds.add( serializedViewId );
-		}
+			serializedViewIds.add( serializeViewId( viewIds.get( i ) ) );
 
 		return serializedViewIds;
+	}
+
+	public static int[] serializeViewId( final ViewId viewId )
+	{
+		return new int[] { viewId.getTimePointId(), viewId.getViewSetupId() };
 	}
 
 	public static String getSparkExecutorId() {
