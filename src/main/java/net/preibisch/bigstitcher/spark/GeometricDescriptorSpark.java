@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
@@ -117,6 +118,14 @@ public class GeometricDescriptorSpark extends AbstractInterestPointRegistration
 
 		if ( this.referenceTP == null )
 			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();
+		else
+		{
+			final HashSet< Integer > timepointToProcess = 
+					new HashSet<>( SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal ).stream().mapToInt( tp -> tp.getId() ).boxed().collect(Collectors.toList()) );
+
+			if ( !timepointToProcess.contains( referenceTP ) )
+				throw new IllegalArgumentException( "Specified reference timepoint is not part of the ViewIds that are processed." );
+		}
 
 		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
 			System.out.println( "Reference timepoint = " + this.referenceTP );
@@ -261,10 +270,13 @@ public class GeometricDescriptorSpark extends AbstractInterestPointRegistration
 			MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelMapGlobal.get( vA ), labelMapGlobal.get( vB ), listA, listB );
 		}
 
-		System.out.println( "Saving corresponding interest points ...");
-
-		for ( final ViewId v : viewIdsGlobal )
-			dataGlobal.getViewInterestPoints().getViewInterestPoints().get( v ).getInterestPointList( labelMapGlobal.get( v ) ).saveCorrespondingInterestPoints( true );
+		if (!dryRun)
+		{
+			System.out.println( "Saving corresponding interest points ...");
+	
+			for ( final ViewId v : viewIdsGlobal )
+				dataGlobal.getViewInterestPoints().getViewInterestPoints().get( v ).getInterestPointList( labelMapGlobal.get( v ) ).saveCorrespondingInterestPoints( true );
+		}
 
 		sc.close();
 

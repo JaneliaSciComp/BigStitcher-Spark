@@ -331,77 +331,80 @@ public class InterestPointDetectionSpark extends AbstractSelectableViews impleme
 			DownsampleTools.correctForDownsampling( ips, mipmapTransform );
 
 			// save interest point N5
-			System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
-
-			final InterestPoints ipl = InterestPoints.newInstance( data.getBasePath(), viewId, label );
-
-			ipl.setInterestPoints( ips );
-			ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
-
-			ipl.saveInterestPoints( true );
-			ipl.saveCorrespondingInterestPoints( true );
-
-			// store image intensities for interest points
-			if ( storeIntensities )
+			if (!dryRun)
 			{
-				System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
-
-				final InterestPointsN5 i = (InterestPointsN5)ipl;
-
-				final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
-				final String datasetIntensities = i.ipDataset() + "/intensities";
-
-				if ( ips.size() == 0 )
+				System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
+	
+				final InterestPoints ipl = InterestPoints.newInstance( data.getBasePath(), viewId, label );
+	
+				ipl.setInterestPoints( ips );
+				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
+	
+				ipl.saveInterestPoints( true );
+				ipl.saveCorrespondingInterestPoints( true );
+	
+				// store image intensities for interest points
+				if ( storeIntensities )
 				{
-					n5Writer.createDataset(
-							datasetIntensities,
-							new long[] {0},
-							new int[] {1},
-							DataType.FLOAT32,
-							new GzipCompression());
+					System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
+	
+					final InterestPointsN5 i = (InterestPointsN5)ipl;
+	
+					final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
+					final String datasetIntensities = i.ipDataset() + "/intensities";
+	
+					if ( ips.size() == 0 )
+					{
+						n5Writer.createDataset(
+								datasetIntensities,
+								new long[] {0},
+								new int[] {1},
+								DataType.FLOAT32,
+								new GzipCompression());
+					}
+					else
+					{
+						// for image interpolation
+						final RealRandomAccessible<FloatType> rra = Views.interpolate(
+								Views.extendBorder(
+										Converters.convertRAI(
+												(RandomAccessibleInterval<RealType>)(Object)input.getA(),
+												(a,b) -> b.set( a.getRealFloat() ),
+												new FloatType() ) ),
+								new NLinearInterpolatorFactory<>() );
+	
+						final RealRandomAccess< FloatType> r = rra.realRandomAccess();
+	
+						// to undo the mipmap transform correction
+						final AffineTransform3D invMM = mipmapTransform.inverse();
+						final double[] tmp = new double[ ips.get( 0 ).getL().length ];
+	
+						// 1 x N array (which is a 2D array)
+						final FunctionRandomAccessible< FloatType > intensities =
+								new FunctionRandomAccessible<>(
+										2,
+										(location, value) ->
+										{
+											final int index = location.getIntPosition( 1 );
+											final InterestPoint ip = ips.get( index );
+	
+											invMM.apply( ip.getL(), tmp );
+											r.setPosition( tmp );
+	
+											value.set( r.get().get() );
+										},
+										FloatType::new );
+	
+						final RandomAccessibleInterval< FloatType > intensityData =
+								Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, ips.size() - 1 } );
+	
+						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
+					}
+	
+					IOFunctions.println( "Saved: " + new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() + ":/" + datasetIntensities );
+	
+					n5Writer.close();
 				}
-				else
-				{
-					// for image interpolation
-					final RealRandomAccessible<FloatType> rra = Views.interpolate(
-							Views.extendBorder(
-									Converters.convertRAI(
-											(RandomAccessibleInterval<RealType>)(Object)input.getA(),
-											(a,b) -> b.set( a.getRealFloat() ),
-											new FloatType() ) ),
-							new NLinearInterpolatorFactory<>() );
-
-					final RealRandomAccess< FloatType> r = rra.realRandomAccess();
-
-					// to undo the mipmap transform correction
-					final AffineTransform3D invMM = mipmapTransform.inverse();
-					final double[] tmp = new double[ ips.get( 0 ).getL().length ];
-
-					// 1 x N array (which is a 2D array)
-					final FunctionRandomAccessible< FloatType > intensities =
-							new FunctionRandomAccessible<>(
-									2,
-									(location, value) ->
-									{
-										final int index = location.getIntPosition( 1 );
-										final InterestPoint ip = ips.get( index );
-
-										invMM.apply( ip.getL(), tmp );
-										r.setPosition( tmp );
-
-										value.set( r.get().get() );
-									},
-									FloatType::new );
-
-					final RandomAccessibleInterval< FloatType > intensityData =
-							Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, ips.size() - 1 } );
-
-					N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
-				}
-
-				IOFunctions.println( "Saved: " + new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() + ":/" + datasetIntensities );
-
-				n5Writer.close();
 			}
 
 			System.out.println( "Finished " + Group.pvid(viewId) + "." );
@@ -441,9 +444,12 @@ public class InterestPointDetectionSpark extends AbstractSelectableViews impleme
 
 		sc.close();
 
-		System.out.println( "Saving XML (metadata only) ..." );
-
-		new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+		if (!dryRun)
+		{
+			System.out.println( "Saving XML (metadata only) ..." );
+	
+			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+		}
 
 		System.out.println( "Done ..." );
 

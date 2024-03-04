@@ -99,6 +99,12 @@ public class NonRigidFusionSpark extends AbstractSelectableViews implements Call
 	@Override
 	public Void call() throws Exception
 	{
+		if (dryRun)
+		{
+			System.out.println( "dry-run not supported for non-rigid fusion.");
+			System.exit( 0 );
+		}
+
 		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
 		{
 			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) OR the BigDataViewer specification (e.g. --bdv 0,1)");

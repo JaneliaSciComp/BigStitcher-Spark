@@ -103,12 +103,18 @@ public class AffineFusion extends AbstractSelectableViews implements Callable<Vo
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
 
-	// TODO: support create downsampling pyramids, null is fine for now
+	// TODO: support create custom downsampling pyramids, null is fine for now (used by multiRes later)
 	private int[][] downsamplings;
 
 	@Override
 	public Void call() throws Exception
 	{
+		if (dryRun)
+		{
+			System.out.println( "dry-run not supported for affine fusion.");
+			System.exit( 0 );
+		}
+
 		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
 		{
 			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) - OR - the BigDataViewer specification (e.g. --bdv 0,1)");

@@ -51,6 +51,12 @@ public class Downsample extends AbstractBasic implements Callable<Void>, Seriali
 	@Override
 	public Void call() throws Exception
 	{
+		if (dryRun)
+		{
+			System.out.println( "dry-run not supported for downsampling.");
+			System.exit( 0 );
+		}
+
 		if ( n5DatasetsOut == null || downsampling == null || n5DatasetsOut.size() != downsampling.size() )
 		{
 			System.out.println( "Please specify as many n5DatasetOut as you specify downsampling steps.");
