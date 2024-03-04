@@ -115,13 +115,11 @@ public class GeometricDescriptorSpark extends AbstractInterestPointRegistration
 		if ( this.numNeighbors != 3 && registrationMethod != Method.PRECISE_TRANSLATION )
 			throw new IllegalArgumentException( "Only PRECISE_TRANSLATION method supports numNeighbors != 3." );
 
-		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
-		{
-			if ( this.referenceTP == null )
-				this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();
+		if ( this.referenceTP == null )
+			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();
 
+		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
 			System.out.println( "Reference timepoint = " + this.referenceTP );
-		}
 
 		// identify groups/subsets
 		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, groupTimePoints );
