@@ -2,10 +2,12 @@ package net.preibisch.bigstitcher.spark;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.stream.Collectors;
 
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
@@ -14,28 +16,37 @@ import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
-import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractGlobalOpt;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters.GlobalOptType;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
+import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptIterative;
+import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptTwoRound;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
+import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.SimpleIterativeConvergenceStrategy;
+import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.MaxErrorLinkRemoval;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
+import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 import picocli.CommandLine;
+import picocli.CommandLine.Option;
 
 public class Solver extends AbstractGlobalOpt
 {
@@ -47,8 +58,30 @@ public class Solver extends AbstractGlobalOpt
 	final boolean groupChannels = false;
 	final boolean groupTimePoints = false;
 
-	final double maxError = 5.0;
+	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
+	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;
 
+	@Option(names = { "--referenceTP" }, description = "the reference timepoint if timepointAlign == REFERENCE (default: first timepoint)")
+	protected Integer referenceTP = null;
+
+	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
+	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
+
+	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers, how many times worse than the average error a link needs to be (default: 3.5)")
+	protected double relativeThreshold;
+
+	@Option(names = { "--absoluteThreshold" }, description = "absoluted error threshold for iterative solver to drop a link in pixels (default: 7.0)")
+	protected double absoluteThreshold;
+
+	@Option(names = { "--maxError" }, description = "max error for the solve (default: 5.0)")
+	protected Double maxError = 5.0;
+
+	@Option(names = { "--maxIterations" }, description = "max number of iterations for solve (default: 10,000)")
+	protected Integer maxIterations = 10000;
+
+	@Option(names = { "--maxPlateauwidth" }, description = "max plateau witdth for solve (default: 200)")
+	protected Integer maxPlateauwidth = 200;
+	
 	@Override
 	public Void call() throws Exception
 	{
@@ -65,9 +98,36 @@ public class Solver extends AbstractGlobalOpt
 		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
 			return null;
 
-		// TODO: assemble fixed views
-		// TODO: we need subsets for that 
-		Set< ViewId > fixedViewIds = new HashSet<>();
+		if ( this.referenceTP == null )
+			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();	
+		else
+		{
+			final HashSet< Integer > timepointToProcess = 
+					new HashSet<>( SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal ).stream().mapToInt( tp -> tp.getId() ).boxed().collect(Collectors.toList()) );
+
+			if ( !timepointToProcess.contains( referenceTP ) )
+				throw new IllegalArgumentException( "Specified reference timepoint is not part of the ViewIds that are processed." );
+		}
+
+		// assemble fixed views
+		final HashSet< ViewId > fixedViewIds;
+		
+		if ( this.disableFixedViews )
+		{
+			fixedViewIds = new HashSet<>();
+		}
+		else
+		{
+			if ( this.fixedViewIds == null || this.fixedViewIds.size() == 0 )
+				fixedViewIds = assembleFixed( viewIdsGlobal, dataGlobal.getSequenceDescription(), registrationTP, referenceTP ); // only TIMEPOINTS_INDIVIDUALLY and TO_REFERENCE_TIMEPOINT matter
+			else
+				fixedViewIds = new HashSet<>( this.fixedViewIds );
+		}
+
+		System.out.println("The following ViewIds are used as fixed views: ");
+		fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
+		System.out.println();
+
 		//Set< ViewId > fixedViewIds = assembleFixed( setup.getSubsets(), this.fixedViewIds, dataGlobal.getSequenceDescription());
 		/*
 		// setup mapback and fixed views
@@ -146,13 +206,13 @@ public class Solver extends AbstractGlobalOpt
 		final ArrayList< Group< ViewId > > groups = new ArrayList<>();
 		final PointMatchCreator pmc = new InterestPointMatchCreator( pairs );
 
-		//models = (HashMap< ViewId, Tile< ? extends AbstractModel< ? > > >)(Object)GlobalOpt.compute( pairwiseMatching.getMatchingModel().getModel(), pmc, cs, fixedViews, groups );
+		final GlobalOptimizationParameters globalOptParameters = new GlobalOptimizationParameters(relativeThreshold, absoluteThreshold, globalOptType, false );
+		final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs = new ArrayList<>();
+		final HashMap<ViewId, Tile > models;
 
-		HashMap<ViewId, Tile > models;
-
-		//if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
+		if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 		{
-			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError );
+			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError, maxIterations, maxPlateauwidth );
 
 			models = GlobalOpt.computeTiles(
 							(Model)this.model,
@@ -161,14 +221,48 @@ public class Solver extends AbstractGlobalOpt
 							fixedViewIds,
 							groups );
 		}
+		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
+		{
+			models = GlobalOptIterative.computeTiles(
+							(Model)this.model,
+							pmc,
+							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
+							new MaxErrorLinkRemoval(),
+							removedInconsistentPairs,
+							fixedViewIds,
+							groups );
+		}
+		else //if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE || globalOptParameters.method == GlobalOptType.TWO_ROUND_ITERATIVE )
+		{
+			if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE )
+				globalOptParameters.relativeThreshold = globalOptParameters.absoluteThreshold  = Double.MAX_VALUE;
 
-		// TODO: update models in ViewRegistration
+			models = GlobalOptTwoRound.computeTiles(
+					(Model & Affine3D)this.model,
+					pmc,
+					new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
+					new MaxErrorLinkRemoval(),
+					removedInconsistentPairs,
+					new MetaDataWeakLinkFactory(
+							dataGlobal.getViewRegistrations().getViewRegistrations(),
+							new SimpleBoundingBoxOverlap<>(
+									dataGlobal.getSequenceDescription().getViewSetups(),
+									dataGlobal.getViewRegistrations().getViewRegistrations() ) ),
+					new ConvergenceStrategy( Double.MAX_VALUE ),
+					fixedViewIds,
+					groups );
+		}
+
+		// update models in ViewRegistration
 		if ( models == null || models.keySet().size() == 0 )
 		{
 			System.out.println( "No transformations could be found, stopping." );
 			return null;
 		}
 
+		SimpleMultiThreading.threadWait( 100 );
+
+		System.out.println( "\nFinal models: ");
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
 			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
@@ -202,10 +296,56 @@ public class Solver extends AbstractGlobalOpt
 		gp.grouping = InterestpointGroupingType.DO_NOT_GROUP;
 		*/
 
-		new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+		if (!dryRun)
+			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
 
 		System.out.println( "Done.");
 		return null;
+	}
+
+	public static HashSet< ViewId > assembleFixed(
+			final ArrayList< ViewId > allViewIds,
+			final SequenceDescription sd,
+			final RegistrationType registrationTP,
+			final int referenceTP )
+	{
+		final HashSet< ViewId > fixed = new HashSet<>();
+
+		Collections.sort( allViewIds );
+
+		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
+		{
+			for ( final ViewId viewId : allViewIds )
+			{
+				if ( viewId.getTimePointId() == referenceTP )
+				{
+					fixed.add( viewId );
+					break;
+				}
+			}
+		}
+		else if ( registrationTP == RegistrationType.TIMEPOINTS_INDIVIDUALLY )
+		{
+			// it is sorted by timpoint
+			fixed.add( allViewIds.get( 0 ) );
+			int currentTp = allViewIds.get( 0 ).getTimePointId();
+
+			for ( final ViewId viewId : allViewIds )
+			{
+				// next tp
+				if ( viewId.getTimePointId() != currentTp )
+				{
+					fixed.add( viewId );
+					currentTp = viewId.getTimePointId();
+				}
+			}
+		}
+		else
+		{
+			fixed.add( allViewIds.get( 0 ) ); // always the first view is fixed
+		}
+
+		return fixed;
 	}
 
 	public static HashSet< ViewId > assembleFixed(
