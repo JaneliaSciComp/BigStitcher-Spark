@@ -7,7 +7,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import mpicbg.models.AbstractModel;
+import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
+import mpicbg.models.RigidModel3D;
+import mpicbg.models.Tile;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.TimePoint;
@@ -17,10 +21,13 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractGlobalOpt;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.ConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
@@ -100,7 +107,7 @@ public class Solver extends AbstractGlobalOpt
 				AffineTransform3D mA = vRegA.getModel();
 				AffineTransform3D mB = vRegB.getModel();
 
-				PairwiseResult< ? > pair = new PairwiseResult<>( false );
+				PairwiseResult< ? > pairResult = new PairwiseResult<>( false );
 				List inliers = new ArrayList<>();
 
 				List<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
@@ -130,8 +137,8 @@ public class Solver extends AbstractGlobalOpt
 				if ( inliers.size() > 0 )
 				{
 					System.out.println( Group.pvid( vA ) + " <-> " + Group.pvid( vB ) + ": " + inliers.size() + " correspondences added." );
-					pair.setInliers( inliers, 0.0 );
-					pairs.add( new ValuePair<>( new ValuePair<>( vA, vB), pair)) ;
+					pairResult.setInliers( inliers, 0.0 );
+					pairs.add( new ValuePair<>( new ValuePair<>( vA, vB), pairResult)) ;
 				}
 			}
 
@@ -141,11 +148,13 @@ public class Solver extends AbstractGlobalOpt
 
 		//models = (HashMap< ViewId, Tile< ? extends AbstractModel< ? > > >)(Object)GlobalOpt.compute( pairwiseMatching.getMatchingModel().getModel(), pmc, cs, fixedViews, groups );
 
+		HashMap<ViewId, Tile > models;
+
 		//if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 		{
 			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError );
 
-			Object models = GlobalOpt.computeTiles(
+			models = GlobalOpt.computeTiles(
 							(Model)this.model,
 							pmc,
 							cs,
@@ -153,8 +162,32 @@ public class Solver extends AbstractGlobalOpt
 							groups );
 		}
 
+		// TODO: update models in ViewRegistration
+		if ( models == null || models.keySet().size() == 0 )
+		{
+			System.out.println( "No transformations could be found, stopping." );
+			return null;
+		}
+
+		for ( final ViewId viewId : viewIdsGlobal )
+		{
+			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
+			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
+
+			TransformationTools.storeTransformation( vr, viewId, tile, null /*mapback*/, model.getClass().getSimpleName() );
+
+			// TODO: We assume it is Affine3D here
+			String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D<?>)tile.getModel() );
+
+			if ( tile.getModel() instanceof RigidModel3D )
+				System.out.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D)tile.getModel() ) );
+			else
+				System.out.println( output + ", " + TransformationTools.getScaling( (Affine3D<?>)tile.getModel() ) );
+		}
+
+		
 		// get all timepoints
-		final List< TimePoint > timepointToProcess = SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal );
+		//final List< TimePoint > timepointToProcess = SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal );
 
 		/*
 		// identify groups/subsets
@@ -168,7 +201,9 @@ public class Solver extends AbstractGlobalOpt
 		final GroupParameters gp = new GroupParameters();
 		gp.grouping = InterestpointGroupingType.DO_NOT_GROUP;
 		*/
-		
+
+		new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+
 		System.out.println( "Done.");
 		return null;
 	}
