@@ -11,9 +11,13 @@ import java.util.stream.Collectors;
 
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
+import mpicbg.models.AffineModel3D;
+import mpicbg.models.IdentityModel;
+import mpicbg.models.InterpolatedAffineModel3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
+import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -22,7 +26,8 @@ import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractGlobalOpt;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInterestPointRegistration;
+import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters.GlobalOptType;
@@ -48,7 +53,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class Solver extends AbstractGlobalOpt
+public class Solver extends AbstractInterestPointRegistration
 {
 	private static final long serialVersionUID = 5220898723968914742L;
 
@@ -57,6 +62,13 @@ public class Solver extends AbstractGlobalOpt
 	final boolean groupIllums = false;
 	final boolean groupChannels = false;
 	final boolean groupTimePoints = false;
+
+	//public enum MapbackModel { TRANSLATION, RIGID };
+
+	public ArrayList< ViewId > fixedViewIds;
+	//public ArrayList< ViewId > mapBackViewIds;
+	//public Model<?> mapBackModel;
+	public Model<?> model;
 
 	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
 	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;
@@ -81,7 +93,22 @@ public class Solver extends AbstractGlobalOpt
 
 	@Option(names = { "--maxPlateauwidth" }, description = "max plateau witdth for solve (default: 200)")
 	protected Integer maxPlateauwidth = 200;
-	
+
+	@Option(names = { "--disableFixedViews" }, description = "disable fixing of views (see --fixedViews)")
+	protected boolean disableFixedViews = false;
+
+	@Option(names = { "-fv", "--fixedViews" }, description = "define a list of (or a single) fixed view ids (time point, view setup), e.g. -fv '0,0' -fv '0,1' (default: first view id)")
+	protected String[] fixedViews = null;
+
+	//@Option(names = { "--enableMapbackViews" }, description = "enable mapping back of views (see --mapbackViews and --mapbackModel), requires --disableFixedViews.")
+	//protected boolean enableMapbackViews = false;
+
+	//@Option(names = { "--mapbackViews" }, description = "define a view id (time point, view setup) onto which the registration result is mapped back onto, it needs to be one per independent registration subset (e.g. timepoint) (only works if no views are fixed), e.g. --mapbackView '0,0' (default: first view id)")
+	//protected String[] mapbackViews = null;
+
+	//@Option(names = { "--mapbackModel" }, description = "which transformation model to use for mapback if it is activated; TRANSLATION or RIGID (default: RIGID)")
+	//protected MapbackModel mapbackModelEntry = MapbackModel.RIGID;
+
 	@Override
 	public Void call() throws Exception
 	{
@@ -405,6 +432,120 @@ public class Solver extends AbstractGlobalOpt
 		System.out.println();
 
 		return map;
+	}
+
+	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
+	{
+		//if ( !disableFixedViews && enableMapbackViews )
+		//	throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
+
+		// parse model
+		final Model< ? > tm, rm;
+
+		if ( transformationModel == TransformationModel.TRANSLATION )
+			tm = new TranslationModel3D();
+		else if ( transformationModel == TransformationModel.RIGID )
+			tm = new RigidModel3D();
+		else
+			tm = new AffineModel3D();
+
+		// parse regularizer
+		if ( regularizationModel == RegularizationModel.NONE )
+			rm = null;
+		else if ( regularizationModel == RegularizationModel.IDENTITY )
+			rm = new IdentityModel();
+		else if ( regularizationModel == RegularizationModel.TRANSLATION )
+			rm = new TranslationModel3D();
+		else if ( regularizationModel == RegularizationModel.RIGID )
+			rm = new RigidModel3D();
+		else
+			rm = new AffineModel3D();
+
+		if ( rm == null )
+		{
+			model = tm;
+			System.out.println( "Final model = " + model.getClass().getSimpleName() );
+		}
+		else
+		{
+			model = new InterpolatedAffineModel3D( tm, rm, lambda );
+			System.out.println( "Final model = " + model.getClass().getSimpleName() + ", " + tm.getClass().getSimpleName() + " regularized with " + rm.getClass().getSimpleName() + " (lambda=" + lambda + ")" );
+		}
+
+		// fixed views and mapping back to original view
+		if ( disableFixedViews )
+		{
+			/*
+			if ( enableMapbackViews )
+			{
+				if ( mapbackViews == null || mapbackViews.length == 0 )
+				{
+					System.out.println( "First ViewId(s) will be used as mapback view for each respective registration subset (e.g. timepoint) ... ");
+
+					this.mapBackViewIds = null;
+				}
+				else
+				{
+					// load mapback view
+					System.out.println( "Parsing mapback ViewIds ... ");
+	
+					final ArrayList<ViewId> parsedViews = Import.getViewIds( mapbackViews ); // all views
+					this.mapBackViewIds = Import.getViewIds( dataGlobal, parsedViews );
+					System.out.println( "Warning: only " + mapBackViewIds.size() + " of " + parsedViews.size() + " that you specified for mapback views exist and are present.");
+	
+					if ( this.mapBackViewIds == null || this.mapBackViewIds.size() == 0 )
+						throw new IllegalArgumentException( "Mapback views couldn't be parsed. Please provide valid mapsback views." );
+	
+					System.out.println("The following ViewIds are used for mapback: ");
+					fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
+					System.out.println();
+				}
+
+				// load mapback model
+				this.mapBackModel = (mapbackModelEntry == MapbackModel.TRANSLATION) ? new TranslationModel3D() : new RigidModel3D();
+
+				System.out.println( "Mapback model=" + mapBackModel.getClass().getSimpleName() );
+			}
+			else
+			{
+				System.out.println( "No views are fixed and no mapping back is selected, i.e. the Views will more or less float in space (might be fine if desired)." );
+
+				this.mapBackViewIds = null;
+			}
+			*/
+			this.fixedViewIds = null;
+		}
+		else
+		{
+			// set/load fixed views
+			if ( fixedViews == null || fixedViews.length == 0 )
+			{
+				System.out.println( "First ViewId(s) will be used as fixed for each respective registration subset (e.g. timepoint) ... ");
+
+				this.fixedViewIds = null;
+			}
+			else
+			{
+				System.out.println( "Parsing fixed ViewIds ... ");
+
+				final ArrayList<ViewId> parsedViews = Import.getViewIds( fixedViews ); // all views
+				this.fixedViewIds = Import.getViewIds( dataGlobal, parsedViews );
+
+				if ( parsedViews.size() != fixedViewIds.size() )
+					System.out.println( "Warning: only " + fixedViewIds.size() + " of " + parsedViews.size() + " that you specified as fixed views exist and are present.");
+
+				if ( this.fixedViewIds == null || this.fixedViewIds.size() == 0 )
+					throw new IllegalArgumentException( "Fixed views couldn't be parsed. Please provide a valid fixed view." );
+
+				System.out.println("The following ViewIds are fixed: ");
+				fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
+				System.out.println();
+			}
+
+			//sthis.mapBackViewIds = null;
+		}
+
+		return true;
 	}
 
 	public static void main(final String... args)

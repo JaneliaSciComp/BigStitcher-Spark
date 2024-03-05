@@ -6,8 +6,6 @@ import mpicbg.models.InterpolatedAffineModel3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.TranslationModel3D;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import picocli.CommandLine.Option;
 
@@ -20,12 +18,6 @@ public abstract class AbstractInterestPointRegistration extends AbstractSelectab
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label of the interest points used for registration (e.g. beads)")
 	protected String label = null;
-
-	@Option(names = { "-ipo", "--interestpointOverlap" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY  or ALL points (default: ALL)")
-	protected InterestPointOverlapType interestpointOverlap = InterestPointOverlapType.ALL;
-
-	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
-	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
 
 	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
 	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;
