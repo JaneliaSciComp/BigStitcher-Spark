@@ -52,7 +52,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class AffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
+public class SparkAffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -6103761116219617153L;
 
@@ -474,7 +474,7 @@ public class AffineFusion extends AbstractSelectableViews implements Callable<Vo
 
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new AffineFusion()).execute(args));
+		System.exit(new CommandLine(new SparkAffineFusion()).execute(args));
 	}
 
 }

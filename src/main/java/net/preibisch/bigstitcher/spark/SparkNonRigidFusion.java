@@ -48,7 +48,7 @@ import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class NonRigidFusionSpark extends AbstractSelectableViews implements Callable<Void>, Serializable
+public class SparkNonRigidFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	/**
 	 * 
@@ -458,6 +458,6 @@ public class NonRigidFusionSpark extends AbstractSelectableViews implements Call
 
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new NonRigidFusionSpark()).execute(args));
+		System.exit(new CommandLine(new SparkNonRigidFusion()).execute(args));
 	}
 }

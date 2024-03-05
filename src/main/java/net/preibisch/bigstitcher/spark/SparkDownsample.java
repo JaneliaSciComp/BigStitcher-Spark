@@ -29,7 +29,7 @@ import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class Downsample extends AbstractBasic implements Callable<Void>, Serializable
+public class SparkDownsample extends AbstractBasic implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 5040141824053748124L;
 
@@ -163,7 +163,7 @@ public class Downsample extends AbstractBasic implements Callable<Void>, Seriali
 
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new Downsample()).execute(args));
+		System.exit(new CommandLine(new SparkDownsample()).execute(args));
 	}
 
 }

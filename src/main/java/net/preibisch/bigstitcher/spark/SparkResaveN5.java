@@ -45,7 +45,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializable
+public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Serializable
 {
 	/*
 	-x '/Users/preibischs/Documents/Microscopy/Stitching/Truman/testspark/dataset.xml'
@@ -440,7 +440,7 @@ public class ResaveN5 extends AbstractBasic implements Callable<Void>, Serializa
 
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new ResaveN5()).execute(args));
+		System.exit(new CommandLine(new SparkResaveN5()).execute(args));
 	}
 
 }

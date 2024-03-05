@@ -57,7 +57,7 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class GeometricDescriptorSpark extends AbstractInterestPointRegistration
+public class SparkGeometricDescriptorRegistration extends AbstractInterestPointRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
@@ -81,7 +81,7 @@ public class GeometricDescriptorSpark extends AbstractInterestPointRegistration
 	@Option(names = { "-n", "--numNeighbors" }, description = "the number of neighoring points used to build the local descriptor, only supported by PRECISE_TRANSLATION (default: 3)")
 	protected Integer numNeighbors = 3;
 
-	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewId's and label before adding new ones (default: false)")
+	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewIds and label before adding new ones (default: false)")
 	private boolean clearCorrespondences = false;
 
 
@@ -327,7 +327,7 @@ public class GeometricDescriptorSpark extends AbstractInterestPointRegistration
 	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new GeometricDescriptorSpark()).execute(args));
+		System.exit(new CommandLine(new SparkGeometricDescriptorRegistration()).execute(args));
 	}
 
 }

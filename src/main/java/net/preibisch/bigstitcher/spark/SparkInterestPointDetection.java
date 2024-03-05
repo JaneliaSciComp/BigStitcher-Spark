@@ -66,7 +66,7 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class InterestPointDetectionSpark extends AbstractSelectableViews implements Callable<Void>, Serializable
+public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -7654397945854689628L;
 
@@ -148,7 +148,7 @@ public class InterestPointDetectionSpark extends AbstractSelectableViews impleme
 		final boolean findMin = (this.type == IP.MIN || this.type == IP.BOTH);
 		final boolean findMax = (this.type == IP.MAX || this.type == IP.BOTH);
 		final boolean onlyOverlappingRegions = overlappingOnly;
-		final double combineDistance = InterestPointDetectionSpark.combineDistance;
+		final double combineDistance = SparkInterestPointDetection.combineDistance;
 
 		// we need this in case we want to detect in overlapping areas only
 		final int[][] allSerializedViewIds = Spark.serializeViewIds( viewIdsGlobal );
@@ -591,6 +591,6 @@ public class InterestPointDetectionSpark extends AbstractSelectableViews impleme
 	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new InterestPointDetectionSpark()).execute(args));
+		System.exit(new CommandLine(new SparkInterestPointDetection()).execute(args));
 	}
 }
