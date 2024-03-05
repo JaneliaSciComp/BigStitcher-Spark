@@ -11,13 +11,9 @@ import java.util.stream.Collectors;
 
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
-import mpicbg.models.AffineModel3D;
-import mpicbg.models.IdentityModel;
-import mpicbg.models.InterpolatedAffineModel3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
-import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -68,12 +64,6 @@ public class Solver extends AbstractInterestPointRegistration
 	public ArrayList< ViewId > fixedViewIds;
 	//public ArrayList< ViewId > mapBackViewIds;
 	//public Model<?> mapBackModel;
-
-	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
-	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;
-
-	@Option(names = { "--referenceTP" }, description = "the reference timepoint if timepointAlign == REFERENCE (default: first timepoint)")
-	protected Integer referenceTP = null;
 
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
