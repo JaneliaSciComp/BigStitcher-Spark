@@ -29,6 +29,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ad
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.GroupParameters.InterestpointGroupingType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -84,8 +85,8 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewIds and label before adding new ones (default: false)")
 	private boolean clearCorrespondences = false;
 
-	@Option(names = { "-ipo", "--interestpointOverlap" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY  or ALL points (default: ALL)")
-	protected InterestPointOverlapType interestpointOverlap = InterestPointOverlapType.ALL;
+	@Option(names = { "-ipfr", "--interestpointsForReg" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY or ALL points (default: ALL)")
+	protected InterestPointOverlapType interestpointsForReg = InterestPointOverlapType.ALL;
 
 	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
 	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
@@ -146,6 +147,9 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 		//final int numJobs = (setup.getPairs().size()/pairsPerSparkJob) + (setup.getPairs().size()%pairsPerSparkJob > 0 ? 1 : 0);
 		System.out.println( "In total " + setup.getPairs().size() + " pairs of views need to be aligned.");// with " + pairsPerSparkJob + " pair(s) per Spark job, meaning " + numJobs + " jobs." );
 
+		// TODO: if we group, we will have less pairs, since certain views are combined into one big view
+		//final InterestpointGroupingType groupingType = InterestpointGroupingType.DO_NOT_GROUP; -- this is always ADD_ALL - either group or not (was only necessary in the GUI, because one could group for interest points and/or global opt
+
 		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
@@ -165,9 +169,7 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 
 		final String xmlPath = this.xmlPath;
 		final String label = this.label;
-		final InterestPointOverlapType interestPointOverlapType = this.interestpointOverlap;
-		//final InterestpointGroupingType groupingType = InterestpointGroupingType.DO_NOT_GROUP;
-
+		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxEpsilon;
 		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
@@ -203,7 +205,7 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 						labelMap );
 
 			// only keep those interestpoints that currently overlap with a view to register against
-			if ( interestPointOverlapType == InterestPointOverlapType.OVERLAPPING_ONLY )
+			if ( interestpointsForReg == InterestPointOverlapType.OVERLAPPING_ONLY )
 			{
 				final Set< Group< ViewId > > groups = new HashSet<>();
 
