@@ -158,7 +158,10 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 		viewIdsGlobal.forEach( viewId -> labelMapGlobal.put( viewId, label ));
 
 		if ( clearCorrespondences )
+		{
+			System.out.println( "Clearing correspondences ... ");
 			MatcherPairwiseTools.clearCorrespondences( viewIdsGlobal, dataGlobal.getViewInterestPoints().getViewInterestPoints(), labelMapGlobal );
+		}
 
 		final String xmlPath = this.xmlPath;
 		final String label = this.label;
@@ -261,7 +264,10 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 		final List<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>> results = rddResults.collect();
 
 		// add the corresponding detections and output result
-		System.out.println( "Adding corresponding interest points (be sure to use --clearCorrespondences if you run multiple times) ...");
+		if ( clearCorrespondences )
+			System.out.println( "Adding corresponding interest points ...");
+		else
+			System.out.println( "Adding corresponding interest points (be sure to use --clearCorrespondences if you run multiple times, you are not using it right now) ...");
 
 		for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]> tuple : results )
 		{
