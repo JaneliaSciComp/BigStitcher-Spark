@@ -51,9 +51,9 @@ public class ClearInterestPoints extends AbstractBasic
 		final String file = new File( dataGlobal.getBasePath().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath();
 
 		if ( correspondencesOnly)
-			System.out.println( "\tThe following correspondences will be removed in ('" + file + "'):");
+			System.out.println( "The following correspondences will be removed in ('" + file + "'):");
 		else
-			System.out.println( "\tThe following interest points and correspondences will be removed in ('" + file + "'):");
+			System.out.println( "The following interest points and correspondences will be removed in ('" + file + "'):");
 
 		// display all data
 		for ( final Entry<ViewId, ViewInterestPointLists> ip : ips.entrySet() )
