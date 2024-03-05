@@ -68,7 +68,6 @@ public class Solver extends AbstractInterestPointRegistration
 	public ArrayList< ViewId > fixedViewIds;
 	//public ArrayList< ViewId > mapBackViewIds;
 	//public Model<?> mapBackModel;
-	public Model<?> model;
 
 	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
 	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;
@@ -236,13 +235,14 @@ public class Solver extends AbstractInterestPointRegistration
 		final GlobalOptimizationParameters globalOptParameters = new GlobalOptimizationParameters(relativeThreshold, absoluteThreshold, globalOptType, false );
 		final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs = new ArrayList<>();
 		final HashMap<ViewId, Tile > models;
+		final Model<?> model = createModelInstance();
 
 		if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 		{
 			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError, maxIterations, maxPlateauwidth );
 
 			models = GlobalOpt.computeTiles(
-							(Model)this.model,
+							(Model)model,
 							pmc,
 							cs,
 							fixedViewIds,
@@ -251,7 +251,7 @@ public class Solver extends AbstractInterestPointRegistration
 		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 		{
 			models = GlobalOptIterative.computeTiles(
-							(Model)this.model,
+							(Model)model,
 							pmc,
 							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
 							new MaxErrorLinkRemoval(),
@@ -265,7 +265,7 @@ public class Solver extends AbstractInterestPointRegistration
 				globalOptParameters.relativeThreshold = globalOptParameters.absoluteThreshold  = Double.MAX_VALUE;
 
 			models = GlobalOptTwoRound.computeTiles(
-					(Model & Affine3D)this.model,
+					(Model & Affine3D)model,
 					pmc,
 					new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
 					new MaxErrorLinkRemoval(),
@@ -438,39 +438,6 @@ public class Solver extends AbstractInterestPointRegistration
 	{
 		//if ( !disableFixedViews && enableMapbackViews )
 		//	throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
-
-		// parse model
-		final Model< ? > tm, rm;
-
-		if ( transformationModel == TransformationModel.TRANSLATION )
-			tm = new TranslationModel3D();
-		else if ( transformationModel == TransformationModel.RIGID )
-			tm = new RigidModel3D();
-		else
-			tm = new AffineModel3D();
-
-		// parse regularizer
-		if ( regularizationModel == RegularizationModel.NONE )
-			rm = null;
-		else if ( regularizationModel == RegularizationModel.IDENTITY )
-			rm = new IdentityModel();
-		else if ( regularizationModel == RegularizationModel.TRANSLATION )
-			rm = new TranslationModel3D();
-		else if ( regularizationModel == RegularizationModel.RIGID )
-			rm = new RigidModel3D();
-		else
-			rm = new AffineModel3D();
-
-		if ( rm == null )
-		{
-			model = tm;
-			System.out.println( "Final model = " + model.getClass().getSimpleName() );
-		}
-		else
-		{
-			model = new InterpolatedAffineModel3D( tm, rm, lambda );
-			System.out.println( "Final model = " + model.getClass().getSimpleName() + ", " + tm.getClass().getSimpleName() + " regularized with " + rm.getClass().getSimpleName() + " (lambda=" + lambda + ")" );
-		}
 
 		// fixed views and mapping back to original view
 		if ( disableFixedViews )
