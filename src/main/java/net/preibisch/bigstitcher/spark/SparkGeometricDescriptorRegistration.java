@@ -209,6 +209,8 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 			{
 				final Set< Group< ViewId > > groups = new HashSet<>();
 
+				// this code is to make sure that we are not removing interestpoints for overlapping views that are part of the same group
+				// because they will be combined into one big View and they most likely overlap
 				//if ( groupingType == InterestpointGroupingType.ADD_ALL )
 				//	for ( final Subset< ViewId > subset : subsets )
 				//		groups.addAll( subset.getGroups() );
