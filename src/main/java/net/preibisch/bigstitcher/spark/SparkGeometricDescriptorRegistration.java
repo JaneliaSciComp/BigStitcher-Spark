@@ -2,6 +2,7 @@ package net.preibisch.bigstitcher.spark;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -12,7 +13,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
@@ -20,6 +20,7 @@ import mpicbg.models.Model;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInterestPointRegistration;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
@@ -29,7 +30,6 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ad
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.GroupParameters.InterestpointGroupingType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -42,7 +42,10 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.IndividualTimepoints;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.ReferenceTimepoint;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.AllAgainstAllOverlap;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
@@ -63,12 +66,6 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 	private static final long serialVersionUID = 6114598951078086239L;
 
 	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION };
-
-	// TODO: support grouping tiles, channels
-	final boolean groupTiles = false;
-	final boolean groupIllums = false;
-	final boolean groupChannels = false;
-	final boolean groupTimePoints = false;
 
 	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION or PRECISE_TRANSLATION")
 	protected Method registrationMethod = null;
@@ -92,6 +89,10 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
 
 
+	@Option(names = { "--interestPointMergeDistance" }, description = "when grouping of views is selected, merge interest points within that radius in px (default: 5.0)")
+	protected Double interestPointMergeDistance = 5.0;
+
+	
 	@Option(names = { "-rit", "--ransacIterations" }, description = "number of ransac iterations (default: 10,000)")
 	protected Integer ransacIterations = 10000;
 
@@ -138,7 +139,7 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 			System.out.println( "Reference timepoint = " + this.referenceTP );
 
 		// identify groups/subsets
-		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, groupTimePoints );
+		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
 		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
 		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, this.viewReg );
 		identifySubsets( setup, overlapDetection );
@@ -178,94 +179,212 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 		final double ratioOfDistance = this.significance;
 		final int redundancy = this.redundancy;
 		final int numNeighbors = this.numNeighbors;
+		final double interestPointMergeDistance = this.interestPointMergeDistance;
 
-		final JavaRDD<int[][]> rdd = sc.parallelize( Spark.serializeViewIdPairsForRDD( setup.getPairs() ) );
+		final JavaRDD< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, int[][] > > > rddResults;
 
-		final JavaPairRDD< ArrayList< PointMatchGeneric< InterestPoint > >, int[][] > rddResults = rdd.mapToPair( serializedPair ->
+		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
 		{
-			final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
-			final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( serializedPair );
+			System.out.println( "The following ViewIds will be matched to each other: ");
+			setup.getPairs().forEach( pair -> System.out.println( "\t" + Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) ) );
+			System.out.println( "In total: " + setup.getPairs().size() + " pair(s).");
 
-			//System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) );
+			final JavaRDD<int[][]> rdd = sc.parallelize( Spark.serializeViewIdPairsForRDD( setup.getPairs() ) );
 
-			final ArrayList< ViewId > views = new ArrayList<>();
-			views.add( pair.getA() );
-			views.add( pair.getB() );
-
-			final HashMap< ViewId, String > labelMap = new HashMap<>();
-			labelMap.put( pair.getA(), label);
-			labelMap.put( pair.getB(), label);
-
-			// load & transform all interest points
-			final Map< ViewId, List< InterestPoint > > interestpoints =
-					TransformationTools.getAllTransformedInterestPoints(
-						views,
-						data.getViewRegistrations().getViewRegistrations(),
-						data.getViewInterestPoints().getViewInterestPoints(),
-						labelMap );
-
-			// only keep those interestpoints that currently overlap with a view to register against
-			if ( interestpointsForReg == InterestPointOverlapType.OVERLAPPING_ONLY )
+			rddResults = rdd.map( serializedPair ->
 			{
-				final Set< Group< ViewId > > groups = new HashSet<>();
+				final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
+				final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( serializedPair );
 
-				// this code is to make sure that we are not removing interestpoints for overlapping views that are part of the same group
-				// because they will be combined into one big View and they most likely overlap
-				//if ( groupingType == InterestpointGroupingType.ADD_ALL )
-				//	for ( final Subset< ViewId > subset : subsets )
-				//		groups.addAll( subset.getGroups() );
+				//System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) );
 
-				TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
+				final ArrayList< ViewId > views = new ArrayList<>();
+				views.add( pair.getA() );
+				views.add( pair.getB() );
 
-				System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": Remaining interest points for alignment: " );
-				for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
-					System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": " + element.getKey() + ": " + element.getValue().size() );
-			}
+				final HashMap< ViewId, String > labelMap = new HashMap<>();
+				labelMap.put( pair.getA(), label);
+				labelMap.put( pair.getB(), label);
 
-			final ExecutorService service = Threads.createFixedExecutorService( 1 );
+				// load & transform all interest points
+				final Map< ViewId, List< InterestPoint > > interestpoints =
+						TransformationTools.getAllTransformedInterestPoints(
+							views,
+							data.getViewRegistrations().getViewRegistrations(),
+							data.getViewInterestPoints().getViewInterestPoints(),
+							labelMap );
 
-			final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
-			final Model< ? > model = createModelInstance();
+				// only keep those interestpoints that currently overlap with a view to register against
+				if ( interestpointsForReg == InterestPointOverlapType.OVERLAPPING_ONLY )
+				{
+					final Set< Group< ViewId > > groups = new HashSet<>();
 
-			MatcherPairwise< InterestPoint > matcher;
+					TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
 
-			if ( registrationMethod == Method.FAST_ROTATION )
-			{
-				final GeometricHashingParameters gp = new GeometricHashingParameters(
+					System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": Remaining interest points for alignment: " );
+					for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
+						System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": " + element.getKey() + ": " + element.getValue().size() );
+				}
+
+				final ExecutorService service = Threads.createFixedExecutorService( 1 );
+
+				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
+				final Model< ? > model = createModelInstance();
+
+				final MatcherPairwise< InterestPoint > matcher = createMatcherInstance(
+						rp,
+						registrationMethod,
 						model,
-						GeometricHashingParameters.differenceThreshold,
-						(float)ratioOfDistance,
-						(int)redundancy );
+						numNeighbors,
+						redundancy,
+						(float)ratioOfDistance );
 
-				matcher = new GeometricHashingPairwise<>( rp, gp );
-			}
-			else if ( registrationMethod == Method.FAST_TRANSLATION )
+				// compute all pairwise matchings
+				final PairwiseResult<InterestPoint> result =
+						MatcherPairwiseTools.computePairs( 
+								new ArrayList<>( Arrays.asList( pair ) ),
+								interestpoints,
+								matcher,
+								service ).get( 0 ).getB();
+
+				service.shutdown();
+
+				return new ArrayList<>( Arrays.asList( new Tuple2<>( new ArrayList<>( result.getInliers() ), serializedPair ) ) );
+			});
+		}
+		else
+		{
+			System.out.println( "grouped" );
+
+			final List<Pair<Group<ViewId>, Group<ViewId>>> groupedPairs =
+					setup.getSubsets().stream().map( s -> s.getGroupedPairs() ).flatMap(List::stream).collect( Collectors.toList() );
+
+			System.out.println( "The following groups of ViewIds will be matched to each other: ");
+			groupedPairs.forEach( pair -> System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() ) );
+			System.out.println( "In total: " + groupedPairs.size() + " pair(s).");
+
+			final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ) );
+
+			rddResults = rdd.map( serializedGroupPair ->
 			{
-				final FRGLDMParameters fp = new FRGLDMParameters(model, (float)ratioOfDistance, redundancy);
-				matcher = new FRGLDMPairwise<>( rp, fp );
-			}
-			else
-			{
-				final RGLDMParameters dp = new RGLDMParameters(model, RGLDMParameters.differenceThreshold, (float)ratioOfDistance, numNeighbors, redundancy);
-				matcher = new RGLDMPairwise<>( rp, dp );
-			}
+				final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
+				final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
 
-			// compute all pairwise matchings
-			final PairwiseResult<InterestPoint> result =
-					MatcherPairwiseTools.computePairs( 
-							new ArrayList<>( Arrays.asList( pair ) ),
-							interestpoints,
-							matcher,
-							service ).get( 0 ).getB();
+				final ArrayList< ViewId > views = new ArrayList<>();
+				views.addAll( pair.getA().getViews() );
+				views.addAll( pair.getB().getViews() );
 
-			service.shutdown();
+				final HashMap< ViewId, String > labelMap = new HashMap<>();
+				views.forEach( v -> labelMap.put( v, label) );
 
-			return new Tuple2<>( new ArrayList<>( result.getInliers() ), serializedPair );
-		});
+				// load & transform all interest points
+				final Map< ViewId, List< InterestPoint > > interestpoints =
+						TransformationTools.getAllTransformedInterestPoints(
+							views,
+							data.getViewRegistrations().getViewRegistrations(),
+							data.getViewInterestPoints().getViewInterestPoints(),
+							labelMap );
+
+				// only keep those interestpoints that currently overlap with a view to register against
+				if ( interestpointsForReg == InterestPointOverlapType.OVERLAPPING_ONLY )
+				{
+					final Set< Group< ViewId > > groups = new HashSet<>();
+
+					// this code is to make sure that we are not removing interestpoints for overlapping views that are part of the same group
+					// because they will be combined into one big View and they most likely overlap
+					groups.add( pair.getA() );
+					groups.add( pair.getB() );
+
+					TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
+
+					System.out.println( pair.getA() + " <=> " + pair.getB() + ": Remaining interest points for alignment: " );
+					for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
+						System.out.println( pair.getA() + " <=> " + pair.getB() + ": " + element.getKey() + ": " + element.getValue().size() );
+				}
+
+				final Map< Group< ViewId >, List< GroupedInterestPoint< ViewId > > > groupedInterestpoints = new HashMap<>();
+
+				final InterestPointGroupingMinDistance< ViewId > ipGrouping 
+						= new InterestPointGroupingMinDistance<>( interestPointMergeDistance, interestpoints );
+
+				IOFunctions.println( pair.getA() + " <=> " + pair.getB() + ": Using a maximum radius of " + ipGrouping.getRadius() + " to filter interest points from overlapping views." );
+
+				groupedInterestpoints.put( pair.getA(), ipGrouping.group( pair.getA() ) );
+				IOFunctions.println( pair.getA() + " <=> " + pair.getB() + ": Grouping interestpoints for " + pair.getA() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
+
+				groupedInterestpoints.put( pair.getB(), ipGrouping.group( pair.getB() ) );
+				IOFunctions.println( pair.getA() + " <=> " + pair.getB() + ": Grouping interestpoints for " + pair.getB() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
+
+				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
+				final Model< ? > model = createModelInstance();
+
+				final MatcherPairwise matcher = createMatcherInstance(
+						rp,
+						registrationMethod,
+						model,
+						numNeighbors,
+						redundancy,
+						(float)ratioOfDistance );
+
+				final List< Pair< Pair< Group< ViewId >, Group< ViewId > >, PairwiseResult< GroupedInterestPoint< ViewId > > > > resultGroup =
+						MatcherPairwiseTools.computePairs( new ArrayList<>( Arrays.asList( pair ) ), groupedInterestpoints, matcher );
+
+				final HashMap< Pair< ViewId, ViewId >, ArrayList<PointMatchGeneric<InterestPoint>> > mapResults = new HashMap<>();
+
+				for ( final PointMatchGeneric<GroupedInterestPoint<ViewId>> pm : resultGroup.get( 0 ).getB().getInliers() )
+				{
+					GroupedInterestPoint<ViewId> p1 = pm.getPoint1();
+					GroupedInterestPoint<ViewId> p2 = pm.getPoint2();
+
+					final ViewId v1 = p1.getV();
+					final ViewId v2 = p2.getV();
+
+					final InterestPoint ip1 = new InterestPoint( p1.getId(), p1.getL() );
+					final InterestPoint ip2 = new InterestPoint( p2.getId(), p2.getL() );
+					final PointMatchGeneric<InterestPoint> pmNew = new PointMatchGeneric<>( ip1, ip2 );
+
+					final ValuePair<ViewId, ViewId> pv = new ValuePair<>( v1, v2 );
+
+					ArrayList<PointMatchGeneric<InterestPoint>> list = mapResults.get( pv );
+
+					if ( list == null )
+					{
+						list = new ArrayList<>();
+						list.add( pmNew );
+						mapResults.put(pv, list);
+					}
+					else
+					{
+						list.add( pmNew );
+					}
+				}
+
+				final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>> resultsLocal = new ArrayList<>();
+
+				System.out.println( pair.getA() + " <=> " + pair.getB() + ": The following correspondences were found per ViewId: ");
+				for ( final Entry< Pair< ViewId, ViewId >, ArrayList<PointMatchGeneric<InterestPoint>> > entry : mapResults.entrySet( ))
+				{
+					if ( entry.getValue().size() < model.getMinNumMatches() )
+					{
+						System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() + ": " + Group.pvid( entry.getKey().getA() ) + "<->" + Group.pvid( entry.getKey().getB() )  + ": " + entry.getValue().size() + " correspondences (will be omitted as it is less than model.getMinNumMatches())." );
+					}
+					else
+					{
+						System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() + ": " + Group.pvid( entry.getKey().getA() ) + "<->" + Group.pvid( entry.getKey().getB() )  + ": " + entry.getValue().size() + " correspondences." );
+						resultsLocal.add( new Tuple2<>( new ArrayList<>( entry.getValue() ), Spark.serializeViewIdPairForRDD( entry.getKey() ) ) );
+					}
+				}
+
+				System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() + ": Remaining per-view correspondences=" + mapResults.size() );
+
+				return resultsLocal;
+			});
+		}
 
 		rddResults.cache();
 		rddResults.count();
-		final List<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>> results = rddResults.collect();
+
+		final List<ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>>> results = rddResults.collect();
 
 		// add the corresponding detections and output result
 		if ( clearCorrespondences )
@@ -273,18 +392,19 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 		else
 			System.out.println( "Adding corresponding interest points (be sure to use --clearCorrespondences if you run multiple times, you are not using it right now) ...");
 
-		for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]> tuple : results )
-		{
-			final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( tuple._2() );
-			
-			final ViewId vA = pair.getA();
-			final ViewId vB = pair.getB();
-
-			final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelMapGlobal.get( vA ) );
-			final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelMapGlobal.get( vB ) );
-
-			MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelMapGlobal.get( vA ), labelMapGlobal.get( vB ), listA, listB );
-		}
+		for ( final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>> tupleList : results )
+			for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]> tuple : tupleList )
+			{
+				final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( tuple._2() );
+				
+				final ViewId vA = pair.getA();
+				final ViewId vB = pair.getB();
+	
+				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelMapGlobal.get( vA ) );
+				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelMapGlobal.get( vB ) );
+	
+				MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelMapGlobal.get( vA ), labelMapGlobal.get( vB ), listA, listB );
+			}
 
 		if (!dryRun)
 		{
@@ -301,6 +421,51 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 		return null;
 	}
 
+	public static MatcherPairwise< InterestPoint > createMatcherInstance(
+			final RANSACParameters rp,
+			final Method registrationMethod,
+			final Model< ? > model,
+			final int numNeighbors,
+			final int redundancy,
+			final float ratioOfDistance )
+	{
+		MatcherPairwise< InterestPoint > matcher;
+
+		if ( registrationMethod == Method.FAST_ROTATION )
+		{
+			final GeometricHashingParameters gp = new GeometricHashingParameters(
+					model,
+					GeometricHashingParameters.differenceThreshold,
+					(float)ratioOfDistance,
+					(int)redundancy );
+
+			matcher = new GeometricHashingPairwise<>( rp, gp );
+		}
+		else if ( registrationMethod == Method.FAST_TRANSLATION )
+		{
+			final FRGLDMParameters fp = new FRGLDMParameters(model, (float)ratioOfDistance, redundancy);
+			matcher = new FRGLDMPairwise<>( rp, fp );
+		}
+		else
+		{
+			final RGLDMParameters dp = new RGLDMParameters(model, RGLDMParameters.differenceThreshold, (float)ratioOfDistance, numNeighbors, redundancy);
+			matcher = new RGLDMPairwise<>( rp, dp );
+		}
+
+		return matcher;
+	}
+
+	public static void getAllGroupedPairs( final Collection< Subset< ViewId > > subsets )
+	{
+		subsets.stream().map( s -> s.getGroupedPairs() ).collect( Collectors.toList() );
+		final List<Pair<Group<ViewId>, Group<ViewId>>> groupedPairs = new ArrayList<>();
+		
+		for ( final Subset< ViewId > subset : subsets )
+		{
+			List<Pair<Group<ViewId>, Group<ViewId>>> g = subset.getGroupedPairs();
+		}
+	}
+	
 	// TODO: move to multiview-reconstruction (AdvancedRegistrationParameters)
 	public static PairwiseSetup< ViewId > pairwiseSetupInstance(
 			final RegistrationType registrationType,

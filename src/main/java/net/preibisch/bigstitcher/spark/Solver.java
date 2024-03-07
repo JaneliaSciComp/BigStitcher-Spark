@@ -53,12 +53,6 @@ public class Solver extends AbstractInterestPointRegistration
 {
 	private static final long serialVersionUID = 5220898723968914742L;
 
-	// TODO: support grouping tiles, channels
-	final boolean groupTiles = false;
-	final boolean groupIllums = false;
-	final boolean groupChannels = false;
-	final boolean groupTimePoints = false;
-
 	//public enum MapbackModel { TRANSLATION, RIGID };
 
 	public ArrayList< ViewId > fixedViewIds;
@@ -113,6 +107,8 @@ public class Solver extends AbstractInterestPointRegistration
 
 		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
 			return null;
+
+		// TODO: support grouping
 
 		if ( this.referenceTP == null )
 			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();	
@@ -314,7 +310,10 @@ public class Solver extends AbstractInterestPointRegistration
 		*/
 
 		if (!dryRun)
+		{
+			System.out.println( "Saving resulting XML ... ");
 			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+		}
 
 		System.out.println( "Done.");
 		return null;

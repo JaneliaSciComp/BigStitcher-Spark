@@ -17,6 +17,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class Spark {
 
@@ -56,16 +57,58 @@ public class Spark {
 		return serializedViewIds;
 	}
 
+	public static Pair<Group<ViewId>, Group<ViewId>> deserializeGroupedViewIdPairForRDD( final int[][][] serializedPair )
+	{
+		final ArrayList< ViewId > pairA = new ArrayList<>( serializedPair[ 0 ].length );
+		final ArrayList< ViewId > pairB = new ArrayList<>( serializedPair[ 1 ].length );
+
+		for ( int a = 0; a < serializedPair[ 0 ].length; ++a )
+			pairA.add( deserializeViewId( serializedPair[ 0 ][ a ]) );
+
+		for ( int b = 0; b < serializedPair[ 1 ].length; ++b )
+			pairB.add( deserializeViewId( serializedPair[ 1 ][ b ]) );
+
+		return new ValuePair<Group<ViewId>, Group<ViewId>>( new Group<>( pairA ), new Group<>( pairB ) );
+	}
+
 	public static ArrayList<int[][]> serializeViewIdPairsForRDD( final List< Pair<ViewId, ViewId> > pairs )
 	{
 		final ArrayList<int[][]> ser = new ArrayList<>();
 
 		for ( final Pair<ViewId, ViewId> pair : pairs )
-		{
-			final int[][] pairInt = new int[2][];
+			ser.add( serializeViewIdPairForRDD( pair ) );
 
-			pairInt[0] = serializeViewId( pair.getA() );
-			pairInt[1] = serializeViewId( pair.getB() );
+		return ser;
+	}
+
+	public static int[][] serializeViewIdPairForRDD( final Pair<ViewId, ViewId> pair )
+	{
+		final int[][] pairInt = new int[2][];
+
+		pairInt[0] = serializeViewId( pair.getA() );
+		pairInt[1] = serializeViewId( pair.getB() );
+
+		return pairInt;
+	}
+
+	public static ArrayList<int[][][]> serializeGroupedViewIdPairsForRDD( final List< Pair<Group<ViewId>, Group<ViewId>>> pairs )
+	{
+		final ArrayList<int[][][]> ser = new ArrayList<>();
+
+		for ( final Pair<Group<ViewId>, Group<ViewId>> pair : pairs )
+		{
+			final int[][][] pairInt = new int[2][][];
+
+			pairInt[0] = new int[ pair.getA().getViews().size() ][];
+			pairInt[1] = new int[ pair.getB().getViews().size() ][];
+
+			int i = 0;
+			for ( final ViewId viewId : pair.getA().getViews() )
+				pairInt[0][i++] = serializeViewId( viewId );
+
+			i = 0;
+			for ( final ViewId viewId : pair.getB().getViews() )
+				pairInt[1][i++] = serializeViewId( viewId );
 
 			ser.add( pairInt );
 		}
