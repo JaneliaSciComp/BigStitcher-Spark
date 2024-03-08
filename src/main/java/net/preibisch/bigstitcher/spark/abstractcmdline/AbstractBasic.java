@@ -20,6 +20,7 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
+		System.out.println( "xml: " + xmlPath);
 		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2("", xmlPath);
 
 		return dataGlobal;

@@ -1,12 +1,36 @@
 package net.preibisch.bigstitcher.spark.abstractcmdline;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 import mpicbg.models.AffineModel3D;
 import mpicbg.models.IdentityModel;
 import mpicbg.models.InterpolatedAffineModel3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.TranslationModel3D;
+import mpicbg.spim.data.SpimData;
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.bigstitcher.spark.SparkGeometricDescriptorRegistration.Method;
+import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAll;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAllRange;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.IndividualTimepoints;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.ReferenceTimepoint;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.AllAgainstAllOverlap;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.TimepointRange;
 import picocli.CommandLine.Option;
 
 public abstract class AbstractInterestPointRegistration extends AbstractSelectableViews
@@ -51,6 +75,46 @@ public abstract class AbstractInterestPointRegistration extends AbstractSelectab
 	@Option(names = { "--lambda" }, description = "lamdba to use for regularization model (default: 0.1)")
 	protected Double lambda = 0.1;
 
+	protected SpimData2 dataGlobal;
+	protected ArrayList< ViewId > viewIdsGlobal;
+
+	public void initRegistrationParameters() throws SpimDataException
+	{
+		this.dataGlobal = this.loadSpimData2();
+
+		if ( dataGlobal == null )
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
+
+		this.viewIdsGlobal = this.loadViewIds( dataGlobal );
+
+		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
+			throw new IllegalArgumentException( "No ViewIds found." );
+
+		if ( this.referenceTP == null )
+			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();
+		else
+		{
+			final HashSet< Integer > timepointToProcess = 
+					new HashSet<>( SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal ).stream().mapToInt( tp -> tp.getId() ).boxed().collect(Collectors.toList()) );
+
+			if ( !timepointToProcess.contains( referenceTP ) )
+				throw new IllegalArgumentException( "Specified reference timepoint is not part of the ViewIds that are processed." );
+		}
+
+		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
+			System.out.println( "Reference timepoint = " + this.referenceTP );
+	}
+
+	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg )
+	{
+		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
+		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
+		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
+		identifySubsets( setup, overlapDetection );
+
+		return setup;
+	}
+
 	public Model< ? > createModelInstance()
 	{
 		// parse model
@@ -81,6 +145,45 @@ public abstract class AbstractInterestPointRegistration extends AbstractSelectab
 			return tm;
 		else
 			return new InterpolatedAffineModel3D( tm, rm, lambda );
+	}
+
+	// TODO: move to multiview-reconstruction (AdvancedRegistrationParameters)
+	public static PairwiseSetup< ViewId > pairwiseSetupInstance(
+			final RegistrationType registrationType,
+			final List< ViewId > views,
+			final Set< Group< ViewId > > groups,
+			final int rangeTP,
+			final int referenceTP)
+	{
+		if ( registrationType == RegistrationType.TIMEPOINTS_INDIVIDUALLY )
+			return new IndividualTimepoints( views, groups );
+		else if ( registrationType == RegistrationType.ALL_TO_ALL )
+			return new AllToAll<>( views, groups );
+		else if ( registrationType == RegistrationType.ALL_TO_ALL_WITH_RANGE )
+			return new AllToAllRange< ViewId, TimepointRange< ViewId > >( views, groups, new TimepointRange<>( rangeTP ) );
+		else
+			return new ReferenceTimepoint( views, groups, referenceTP );
+	}
+
+
+	// TODO: move to multiview-reconstruction (Interest_Point_Registration)
+	public static void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
+	{
+		IOFunctions.println( "Defined pairs, removed " + setup.definePairs().size() + " redundant view pairs." );
+		IOFunctions.println( "Removed " + setup.removeNonOverlappingPairs( overlapDetection ).size() + " pairs because they do not overlap (Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
+		setup.reorderPairs();
+		setup.detectSubsets();
+		setup.sortSubsets();
+		IOFunctions.println( "Identified " + setup.getSubsets().size() + " subsets " );
+	}
+
+	// TODO: move to multiview-reconstruction (BasicRegistrationParameters)
+	public static OverlapDetection< ViewId > getOverlapDetection( final SpimData spimData, final OverlapType overlapType )
+	{
+		if ( overlapType == OverlapType.ALL_AGAINST_ALL )
+			return new AllAgainstAllOverlap<>( 3 );
+		else
+			return new SimpleBoundingBoxOverlap<>( spimData );
 	}
 
 }

@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import mpicbg.models.AbstractModel;
@@ -14,6 +15,7 @@ import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
+import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -27,6 +29,8 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters.GlobalOptType;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -43,6 +47,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatch
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
@@ -95,31 +100,10 @@ public class Solver extends AbstractInterestPointRegistration
 	@Override
 	public Void call() throws Exception
 	{
-		final SpimData2 dataGlobal = this.loadSpimData2();
-
-		if ( dataGlobal == null )
-			return null;
-
-		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
-
-		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
-			return null;
+		initRegistrationParameters();
 
 		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
 			return null;
-
-		// TODO: support grouping
-
-		if ( this.referenceTP == null )
-			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();	
-		else
-		{
-			final HashSet< Integer > timepointToProcess = 
-					new HashSet<>( SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal ).stream().mapToInt( tp -> tp.getId() ).boxed().collect(Collectors.toList()) );
-
-			if ( !timepointToProcess.contains( referenceTP ) )
-				throw new IllegalArgumentException( "Specified reference timepoint is not part of the ViewIds that are processed." );
-		}
 
 		// assemble fixed views
 		final HashSet< ViewId > fixedViewIds;
@@ -131,7 +115,7 @@ public class Solver extends AbstractInterestPointRegistration
 		else
 		{
 			if ( this.fixedViewIds == null || this.fixedViewIds.size() == 0 )
-				fixedViewIds = assembleFixed( viewIdsGlobal, dataGlobal.getSequenceDescription(), registrationTP, referenceTP ); // only TIMEPOINTS_INDIVIDUALLY and TO_REFERENCE_TIMEPOINT matter
+				fixedViewIds = assembleFixedAuto( viewIdsGlobal, dataGlobal.getSequenceDescription(), registrationTP, referenceTP ); // only TIMEPOINTS_INDIVIDUALLY and TO_REFERENCE_TIMEPOINT matter
 			else
 				fixedViewIds = new HashSet<>( this.fixedViewIds );
 		}
@@ -215,7 +199,13 @@ public class Solver extends AbstractInterestPointRegistration
 			}
 
 		// run global optimization
-		final ArrayList< Group< ViewId > > groups = new ArrayList<>();
+		final Collection< Group< ViewId > > groups;
+
+		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
+			groups = new ArrayList<>();
+		else // for grouping all we need here is the set of groups
+			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
+
 		final PointMatchCreator pmc = new InterestPointMatchCreator( pairs );
 
 		final GlobalOptimizationParameters globalOptParameters = new GlobalOptimizationParameters(relativeThreshold, absoluteThreshold, globalOptType, false );
@@ -319,7 +309,7 @@ public class Solver extends AbstractInterestPointRegistration
 		return null;
 	}
 
-	public static HashSet< ViewId > assembleFixed(
+	public static HashSet< ViewId > assembleFixedAuto(
 			final ArrayList< ViewId > allViewIds,
 			final SequenceDescription sd,
 			final RegistrationType registrationTP,
@@ -360,26 +350,6 @@ public class Solver extends AbstractInterestPointRegistration
 		{
 			fixed.add( allViewIds.get( 0 ) ); // always the first view is fixed
 		}
-
-		return fixed;
-	}
-
-	public static HashSet< ViewId > assembleFixed(
-			final ArrayList< Subset< ViewId > > subsets,
-			final ArrayList< ViewId > fixedViewIds,
-			final SequenceDescription sd )
-	{
-		final HashSet< ViewId > fixed = new HashSet<>();
-
-		if ( fixedViewIds == null || fixedViewIds.size() == 0 )
-			for ( final Subset< ViewId > subset : subsets )
-				fixed.add( Subset.getViewsSorted( subset.getViews() ).get( 0 ) ); // always the first view is fixed
-		else
-			fixed.addAll( fixedViewIds ); // user-defined fixed views
-
-		System.out.println("The following ViewIds are used as fixed views: ");
-		fixed.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
-		System.out.println();
 
 		return fixed;
 	}
@@ -504,7 +474,7 @@ public class Solver extends AbstractInterestPointRegistration
 		return true;
 	}
 
-	public static void main(final String... args)
+	public static void main(final String... args) throws SpimDataException
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new Solver()).execute(args));

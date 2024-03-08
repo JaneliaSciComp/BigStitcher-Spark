@@ -17,7 +17,7 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
 import mpicbg.models.Model;
-import mpicbg.spim.data.SpimData;
+import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
@@ -26,10 +26,8 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.Threads;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
@@ -37,19 +35,11 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAll;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAllRange;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.IndividualTimepoints;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.ReferenceTimepoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.AllAgainstAllOverlap;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.TimepointRange;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
@@ -111,38 +101,19 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 	@Override
 	public Void call() throws Exception
 	{
-		final SpimData2 dataGlobal = this.loadSpimData2();
-
-		if ( dataGlobal == null )
-			return null;
-
-		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
-
-		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
-			return null;
+		initRegistrationParameters();
 
 		if ( this.numNeighbors != 3 && registrationMethod != Method.PRECISE_TRANSLATION )
 			throw new IllegalArgumentException( "Only PRECISE_TRANSLATION method supports numNeighbors != 3." );
 
-		if ( this.referenceTP == null )
-			this.referenceTP = viewIdsGlobal.get( 0 ).getTimePointId();
-		else
-		{
-			final HashSet< Integer > timepointToProcess = 
-					new HashSet<>( SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal ).stream().mapToInt( tp -> tp.getId() ).boxed().collect(Collectors.toList()) );
-
-			if ( !timepointToProcess.contains( referenceTP ) )
-				throw new IllegalArgumentException( "Specified reference timepoint is not part of the ViewIds that are processed." );
-		}
-
-		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
-			System.out.println( "Reference timepoint = " + this.referenceTP );
-
 		// identify groups/subsets
+		final PairwiseSetup< ViewId > setup = setupGroups( viewReg );
+		/*
 		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
 		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
 		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, this.viewReg );
 		identifySubsets( setup, overlapDetection );
+		*/
 
 		// find out how many pairs there are
 		//final int numJobs = (setup.getPairs().size()/pairsPerSparkJob) + (setup.getPairs().size()%pairsPerSparkJob > 0 ? 1 : 0);
@@ -465,47 +436,8 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 			List<Pair<Group<ViewId>, Group<ViewId>>> g = subset.getGroupedPairs();
 		}
 	}
-	
-	// TODO: move to multiview-reconstruction (AdvancedRegistrationParameters)
-	public static PairwiseSetup< ViewId > pairwiseSetupInstance(
-			final RegistrationType registrationType,
-			final List< ViewId > views,
-			final Set< Group< ViewId > > groups,
-			final int rangeTP,
-			final int referenceTP)
-	{
-		if ( registrationType == RegistrationType.TIMEPOINTS_INDIVIDUALLY )
-			return new IndividualTimepoints( views, groups );
-		else if ( registrationType == RegistrationType.ALL_TO_ALL )
-			return new AllToAll<>( views, groups );
-		else if ( registrationType == RegistrationType.ALL_TO_ALL_WITH_RANGE )
-			return new AllToAllRange< ViewId, TimepointRange< ViewId > >( views, groups, new TimepointRange<>( rangeTP ) );
-		else
-			return new ReferenceTimepoint( views, groups, referenceTP );
-	}
 
-
-	// TODO: move to multiview-reconstruction (Interest_Point_Registration)
-	public static void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
-	{
-		IOFunctions.println( "Defined pairs, removed " + setup.definePairs().size() + " redundant view pairs." );
-		IOFunctions.println( "Removed " + setup.removeNonOverlappingPairs( overlapDetection ).size() + " pairs because they do not overlap (Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
-		setup.reorderPairs();
-		setup.detectSubsets();
-		setup.sortSubsets();
-		IOFunctions.println( "Identified " + setup.getSubsets().size() + " subsets " );
-	}
-
-	// TODO: move to multiview-reconstruction (BasicRegistrationParameters)
-	public static OverlapDetection< ViewId > getOverlapDetection( final SpimData spimData, final OverlapType overlapType )
-	{
-		if ( overlapType == OverlapType.ALL_AGAINST_ALL )
-			return new AllAgainstAllOverlap<>( 3 );
-		else
-			return new SimpleBoundingBoxOverlap<>( spimData );
-	}
-
-	public static void main(final String... args)
+	public static void main(final String... args) throws SpimDataException
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new SparkGeometricDescriptorRegistration()).execute(args));
