@@ -213,8 +213,8 @@ public class Solver extends AbstractInterestPointRegistration
 		{
 			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError, maxIterations, maxPlateauwidth );
 
-			models = GlobalOpt.computeTiles(
-							(Model)model,
+			models = (HashMap)GlobalOpt.computeTiles(
+							(Model)(Object)model,
 							pmc,
 							cs,
 							fixedViewIds,
@@ -222,8 +222,8 @@ public class Solver extends AbstractInterestPointRegistration
 		}
 		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 		{
-			models = GlobalOptIterative.computeTiles(
-							(Model)model,
+			models = (HashMap)GlobalOptIterative.computeTiles(
+							(Model)(Object)model,
 							pmc,
 							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
 							new MaxErrorLinkRemoval(),
@@ -236,8 +236,8 @@ public class Solver extends AbstractInterestPointRegistration
 			if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE )
 				globalOptParameters.relativeThreshold = globalOptParameters.absoluteThreshold  = Double.MAX_VALUE;
 
-			models = GlobalOptTwoRound.computeTiles(
-					(Model & Affine3D)model,
+			models = (HashMap)GlobalOptTwoRound.computeTiles(
+					(Model & Affine3D)(Object)model,
 					pmc,
 					new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
 					new MaxErrorLinkRemoval(),
