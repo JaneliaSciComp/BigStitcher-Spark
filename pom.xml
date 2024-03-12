@@ -266,6 +266,11 @@
             <artifactId>jna</artifactId>
             <version>5.7.0</version>
         </dependency>
+        <dependency>
+            <groupId>net.preibisch</groupId>
+            <artifactId>BigStitcher</artifactId>
+            <version>1.2.10</version>
+        </dependency>
     </dependencies>
     <groupId>net.preibisch</groupId>
 
