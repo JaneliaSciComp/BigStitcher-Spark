@@ -6,6 +6,14 @@ Running compute-intense parts of BigStitcher distributed. For now we support **f
 
 Sharing this early as it might be useful ...
 
+Here is som of the functionality is currently available in BigStitcher-Spark (Documentation coming, check out the cmd-line args, they mostly follow the BigStitcher GUI; each module takes an existing XML):
+* SparkResaveN5 (resave a dataset you defined - use virtual loading only - into N5 for processing)
+* SparkInterestPointDetection (detect interest points for alignment)
+* SparkGeometricDescriptorRegistration (perform pair-wise interest point registration)
+* Solver (global solve - not Spark)
+* SparkAffineFusion (fuse the aligned dataset using affine models)
+* SparkNonRigidFusion (fuse the aligned dataset using non-rigid models)
+
 ## Install
 
 * Prerequisites:  Java and maven must be installed.
