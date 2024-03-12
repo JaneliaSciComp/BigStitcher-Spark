@@ -1,22 +1,25 @@
 package net.preibisch.bigstitcher.spark.util;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
-
-import mpicbg.spim.data.SpimDataException;
-import mpicbg.spim.data.generic.sequence.BasicImgLoader;
-import mpicbg.spim.data.sequence.SequenceDescription;
-import mpicbg.spim.data.sequence.ViewId;
 
 import org.apache.spark.SparkEnv;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import bdv.ViewerImgLoader;
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.sequence.SequenceDescription;
+import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.FinalRealInterval;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class Spark {
@@ -96,24 +99,27 @@ public class Spark {
 		final ArrayList<int[][][]> ser = new ArrayList<>();
 
 		for ( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair : pairs )
-		{
-			final int[][][] pairInt = new int[2][][];
-
-			pairInt[0] = new int[ pair.getA().getViews().size() ][];
-			pairInt[1] = new int[ pair.getB().getViews().size() ][];
-
-			int i = 0;
-			for ( final ViewId viewId : pair.getA().getViews() )
-				pairInt[0][i++] = serializeViewId( viewId );
-
-			i = 0;
-			for ( final ViewId viewId : pair.getB().getViews() )
-				pairInt[1][i++] = serializeViewId( viewId );
-
-			ser.add( pairInt );
-		}
+			ser.add( serializeGroupedViewIdPairForRDD( pair ) );
 
 		return ser;
+	}
+
+	public static int[][][] serializeGroupedViewIdPairForRDD( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair )
+	{
+		final int[][][] pairInt = new int[2][][];
+
+		pairInt[0] = new int[ pair.getA().getViews().size() ][];
+		pairInt[1] = new int[ pair.getB().getViews().size() ][];
+
+		int i = 0;
+		for ( final ViewId viewId : pair.getA().getViews() )
+			pairInt[0][i++] = serializeViewId( viewId );
+
+		i = 0;
+		for ( final ViewId viewId : pair.getB().getViews() )
+			pairInt[1][i++] = serializeViewId( viewId );
+
+		return pairInt;
 	}
 
 	public static ArrayList<int[]> serializeViewIdsForRDD( final List< ViewId > viewIds )
@@ -129,6 +135,40 @@ public class Spark {
 	public static int[] serializeViewId( final ViewId viewId )
 	{
 		return new int[] { viewId.getTimePointId(), viewId.getViewSetupId() };
+	}
+
+	public static class SerializablePairwiseStitchingResult implements Serializable
+	{
+		private static final long serialVersionUID = -8920256594391301778L;
+
+		final int[][][] pair; // Pair< Group<ViewId>, Group<ViewId> > pair;
+		final double[][] matrix = new double[3][4]; //AffineTransform3D transform;
+		final double[] min, max; //final RealInterval boundingBox;
+		final double r;
+		final double hash;
+
+		public SerializablePairwiseStitchingResult( final PairwiseStitchingResult< ViewId> result )
+		{
+			this.r = result.r();
+			this.hash = result.getHash();
+			this.min = result.getBoundingBox().minAsDoubleArray();
+			this.max = result.getBoundingBox().maxAsDoubleArray();
+			this.pair = Spark.serializeGroupedViewIdPairForRDD( result.pair() );
+			((AffineTransform3D)result.getTransform()).toMatrix( matrix );
+		}
+
+		public PairwiseStitchingResult< ViewId > deserialize()
+		{
+			final AffineTransform3D t = new AffineTransform3D();
+			t.set( matrix );
+
+			return new PairwiseStitchingResult<>(
+					Spark.deserializeGroupedViewIdPairForRDD( pair ),
+					new FinalRealInterval(min, max),
+					t,
+					r,
+					hash );
+		}
 	}
 
 	public static String getSparkExecutorId() {
