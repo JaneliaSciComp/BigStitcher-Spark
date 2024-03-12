@@ -91,11 +91,11 @@ public class Spark {
 		return pairInt;
 	}
 
-	public static ArrayList<int[][][]> serializeGroupedViewIdPairsForRDD( final List< Pair<Group<ViewId>, Group<ViewId>>> pairs )
+	public static ArrayList<int[][][]> serializeGroupedViewIdPairsForRDD( final List< ? extends Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>>> pairs )
 	{
 		final ArrayList<int[][][]> ser = new ArrayList<>();
 
-		for ( final Pair<Group<ViewId>, Group<ViewId>> pair : pairs )
+		for ( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair : pairs )
 		{
 			final int[][][] pairInt = new int[2][][];
 

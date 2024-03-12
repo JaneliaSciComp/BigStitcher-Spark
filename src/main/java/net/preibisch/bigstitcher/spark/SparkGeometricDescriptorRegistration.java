@@ -108,22 +108,15 @@ public class SparkGeometricDescriptorRegistration extends AbstractInterestPointR
 
 		// identify groups/subsets
 		final PairwiseSetup< ViewId > setup = setupGroups( viewReg );
-		/*
-		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
-		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
-		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, this.viewReg );
-		identifySubsets( setup, overlapDetection );
-		*/
 
 		// find out how many pairs there are
 		//final int numJobs = (setup.getPairs().size()/pairsPerSparkJob) + (setup.getPairs().size()%pairsPerSparkJob > 0 ? 1 : 0);
 		System.out.println( "In total " + setup.getPairs().size() + " pairs of views need to be aligned.");// with " + pairsPerSparkJob + " pair(s) per Spark job, meaning " + numJobs + " jobs." );
 
-		// TODO: if we group, we will have less pairs, since certain views are combined into one big view
+		// if we group, we will have less pairs, since certain views are combined into one big view
 		//final InterestpointGroupingType groupingType = InterestpointGroupingType.DO_NOT_GROUP; -- this is always ADD_ALL - either group or not (was only necessary in the GUI, because one could group for interest points and/or global opt
 
-		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
-
+		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
