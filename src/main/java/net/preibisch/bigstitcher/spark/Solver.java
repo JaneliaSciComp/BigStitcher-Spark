@@ -22,7 +22,7 @@ import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInterestPointRegistration;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
@@ -50,7 +50,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
-public class Solver extends AbstractInterestPointRegistration
+public class Solver extends AbstractRegistration
 {
 	private static final long serialVersionUID = 5220898723968914742L;
 
@@ -59,6 +59,9 @@ public class Solver extends AbstractInterestPointRegistration
 	public ArrayList< ViewId > fixedViewIds;
 	//public ArrayList< ViewId > mapBackViewIds;
 	//public Model<?> mapBackModel;
+
+	@Option(names = { "-l", "--label" },  description = "label of the interest points used for solve if using interest points (e.g. beads)")
+	protected String label = null;
 
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
@@ -132,67 +135,7 @@ public class Solver extends AbstractInterestPointRegistration
 				: new HashMap<>();
 		*/
 
-		// load all interest points and correspondences
-		System.out.println( "Loading all relevant interest points ... ");
-		for ( final ViewId viewId : viewIdsGlobal )
-		{
-			dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).getInterestPointsCopy();
-			dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-		}
-
-		// extract all corresponding interest points for given ViewId's and label
-		System.out.println( "Setting up all corresponding interest points ... ");
-
-		final ArrayList< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
-
-		for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
-			for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
-			{
-				// order doesn't matter, saved symmetrically
-				final ViewId vA = viewIdsGlobal.get( i );
-				final ViewId vB = viewIdsGlobal.get( j );
-
-				final ViewRegistration vRegA = dataGlobal.getViewRegistrations().getViewRegistration( vA );
-				final ViewRegistration vRegB = dataGlobal.getViewRegistrations().getViewRegistration( vB );
-
-				vRegA.updateModel(); vRegB.updateModel();
-				AffineTransform3D mA = vRegA.getModel();
-				AffineTransform3D mB = vRegB.getModel();
-
-				PairwiseResult< ? > pairResult = new PairwiseResult<>( false );
-				List inliers = new ArrayList<>();
-
-				List<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-				//List<CorrespondingInterestPoints> cpB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-
-				final List<InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getInterestPointsCopy();
-				final List<InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getInterestPointsCopy();
-
-				for ( final CorrespondingInterestPoints p : cpA )
-				{
-					if ( p.getCorrespodingLabel().equals( label ) && p.getCorrespondingViewId().equals( vB ) )
-					{
-						final InterestPoint ipA = ipListA.get( p.getDetectionId() );
-						final InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
-
-						// transform the points
-						mA.apply( ipA.getL(), ipA.getL() );
-						mA.apply( ipA.getW(), ipA.getW() );
-						mB.apply( ipB.getL(), ipB.getL() );
-						mB.apply( ipB.getW(), ipB.getW() );
-
-						inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
-					}
-				}
-
-				// set inliers
-				if ( inliers.size() > 0 )
-				{
-					System.out.println( Group.pvid( vA ) + " <-> " + Group.pvid( vB ) + ": " + inliers.size() + " correspondences added." );
-					pairResult.setInliers( inliers, 0.0 );
-					pairs.add( new ValuePair<>( new ValuePair<>( vA, vB), pairResult)) ;
-				}
-			}
+		final PointMatchCreator pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, label);//new InterestPointMatchCreator( pairs );
 
 		// run global optimization
 		final Collection< Group< ViewId > > groups;
@@ -201,8 +144,6 @@ public class Solver extends AbstractInterestPointRegistration
 			groups = new ArrayList<>();
 		else // for grouping all we need here is the set of groups
 			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
-
-		final PointMatchCreator pmc = new InterestPointMatchCreator( pairs );
 
 		final GlobalOptimizationParameters globalOptParameters = new GlobalOptimizationParameters(relativeThreshold, absoluteThreshold, globalOptType, false );
 		final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs = new ArrayList<>();
@@ -303,6 +244,76 @@ public class Solver extends AbstractInterestPointRegistration
 
 		System.out.println( "Done.");
 		return null;
+	}
+
+	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
+			final SpimData2 dataGlobal,
+			final ArrayList< ViewId > viewIdsGlobal,
+			final String label )
+	{
+		// load all interest points and correspondences
+		System.out.println( "Loading all relevant interest points ... ");
+		for ( final ViewId viewId : viewIdsGlobal )
+		{
+			dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).getInterestPointsCopy();
+			dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
+		}
+
+		// extract all corresponding interest points for given ViewId's and label
+		System.out.println( "Setting up all corresponding interest points ... ");
+
+		final ArrayList< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
+
+		for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
+			for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
+			{
+				// order doesn't matter, saved symmetrically
+				final ViewId vA = viewIdsGlobal.get( i );
+				final ViewId vB = viewIdsGlobal.get( j );
+
+				final ViewRegistration vRegA = dataGlobal.getViewRegistrations().getViewRegistration( vA );
+				final ViewRegistration vRegB = dataGlobal.getViewRegistrations().getViewRegistration( vB );
+
+				vRegA.updateModel(); vRegB.updateModel();
+				AffineTransform3D mA = vRegA.getModel();
+				AffineTransform3D mB = vRegB.getModel();
+
+				PairwiseResult< ? > pairResult = new PairwiseResult<>( false );
+				List inliers = new ArrayList<>();
+
+				List<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
+				//List<CorrespondingInterestPoints> cpB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
+
+				final List<InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getInterestPointsCopy();
+				final List<InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getInterestPointsCopy();
+
+				for ( final CorrespondingInterestPoints p : cpA )
+				{
+					if ( p.getCorrespodingLabel().equals( label ) && p.getCorrespondingViewId().equals( vB ) )
+					{
+						final InterestPoint ipA = ipListA.get( p.getDetectionId() );
+						final InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
+
+						// transform the points
+						mA.apply( ipA.getL(), ipA.getL() );
+						mA.apply( ipA.getW(), ipA.getW() );
+						mB.apply( ipB.getL(), ipB.getL() );
+						mB.apply( ipB.getW(), ipB.getW() );
+
+						inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
+					}
+				}
+
+				// set inliers
+				if ( inliers.size() > 0 )
+				{
+					System.out.println( Group.pvid( vA ) + " <-> " + Group.pvid( vB ) + ": " + inliers.size() + " correspondences added." );
+					pairResult.setInliers( inliers, 0.0 );
+					pairs.add( new ValuePair<>( new ValuePair<>( vA, vB), pairResult)) ;
+				}
+			}
+
+		return new InterestPointMatchCreator( pairs );
 	}
 
 	public static HashSet< ViewId > assembleFixedAuto(

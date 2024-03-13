@@ -32,15 +32,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.TimepointRange;
 import picocli.CommandLine.Option;
 
-public abstract class AbstractInterestPointRegistration extends AbstractSelectableViews
+public abstract class AbstractRegistration extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = 6435121614117716228L;
 
 	public enum TransformationModel { TRANSLATION, RIGID, AFFINE };
 	public enum RegularizationModel { NONE, IDENTITY, TRANSLATION, RIGID, AFFINE };
-
-	@Option(names = { "-l", "--label" }, required = true, description = "label of the interest points used for registration (e.g. beads)")
-	protected String label = null;
 
 	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
 	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;

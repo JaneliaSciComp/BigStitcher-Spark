@@ -21,7 +21,7 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInterestPointRegistration;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -51,11 +51,14 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class SparkGeometricDescriptorRegistration extends AbstractInterestPointRegistration
+public class SparkGeometricDescriptorRegistration extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
 	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION };
+
+	@Option(names = { "-l", "--label" }, required = true, description = "label of the interest points used for registration (e.g. beads)")
+	protected String label = null;
 
 	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION or PRECISE_TRANSLATION")
 	protected Method registrationMethod = null;
