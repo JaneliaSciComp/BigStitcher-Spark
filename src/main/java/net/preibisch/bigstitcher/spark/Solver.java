@@ -4,9 +4,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
@@ -33,6 +35,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOpt;
 import net.preibisch.mvrecon.process.interestpointregistration.global.GlobalOptIterative;
@@ -41,6 +44,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.global.convergenc
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.SimpleIterativeConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.MaxErrorLinkRemoval;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.PointMatchCreator;
+import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.ImageCorrelationPointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
@@ -55,12 +59,31 @@ public class Solver extends AbstractRegistration
 	private static final long serialVersionUID = 5220898723968914742L;
 
 	//public enum MapbackModel { TRANSLATION, RIGID };
+	
+	public enum SolverSource { IP, STITCHING };
 
 	public ArrayList< ViewId > fixedViewIds;
 	//public ArrayList< ViewId > mapBackViewIds;
 	//public Model<?> mapBackModel;
 
-	@Option(names = { "-l", "--label" },  description = "label of the interest points used for solve if using interest points (e.g. beads)")
+	@Option(names = { "-s", "--sourcePoints" }, required = true, description = "which source to use for the solve, IP (interest points) or STITCHING")
+	protected SolverSource sourcePoints = null;
+
+
+	@Option(names = { "--groupIllums" }, description = "group all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to stitch illums as one (default: false for IP, true for stitching)")
+	protected Boolean groupIllums = null;
+
+	@Option(names = { "--groupChannels" }, description = "group all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to stitch channels as one (default: false for IP, true for stitching)")
+	protected Boolean groupChannels = null;
+
+	@Option(names = { "--groupTiles" }, description = "group all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles (default: false)")
+	protected Boolean groupTiles = null;
+
+	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, e.g. for stabilization across time (default: false)")
+	protected Boolean splitTimepoints = null;
+
+
+	@Option(names = { "-l", "--label" }, description = "label of the interest points used for solve if using interest points (e.g. beads)")
 	protected String label = null;
 
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
@@ -104,6 +127,52 @@ public class Solver extends AbstractRegistration
 		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
 			return null;
 
+		// setup specific things for Interestpoints or Stitching as a source
+		if ( sourcePoints == SolverSource.IP )
+		{
+			if ( label == null || label.trim().length() == 0 )
+			{
+				System.out.println( "You need to specify a label (-l) when using interest points." );
+				return null;
+			}
+
+			System.out.println( "Using interest points '" + label + "' as source for solve." );
+
+			if ( groupIllums == null )
+				groupIllums = false;
+
+			if ( groupChannels == null )
+				groupChannels = false;
+
+			if ( groupTiles == null )
+				groupTiles = false;
+
+			if ( splitTimepoints == null )
+				splitTimepoints = false;
+		}
+		else
+		{
+			System.out.println( "Using stitching results as source for solve." );
+
+			if ( groupIllums == null )
+				groupIllums = true;
+
+			if ( groupChannels == null )
+				groupChannels = true;
+
+			if ( groupTiles == null )
+				groupTiles = false;
+
+			if ( splitTimepoints == null )
+				splitTimepoints = false;
+		}
+
+		System.out.println("The following grouping/splitting modes are set: ");
+		System.out.println("groupIllums: " + groupIllums);
+		System.out.println("groupChannels: " + groupChannels);
+		System.out.println("groupTiles: " + groupTiles);
+		System.out.println("splitTimepoints: " + splitTimepoints);
+
 		// assemble fixed views
 		final HashSet< ViewId > fixedViewIds;
 		
@@ -135,7 +204,12 @@ public class Solver extends AbstractRegistration
 				: new HashMap<>();
 		*/
 
-		final PointMatchCreator pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, label);//new InterestPointMatchCreator( pairs );
+		final PointMatchCreator pmc;
+
+		if ( sourcePoints == SolverSource.IP )
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, label);//new InterestPointMatchCreator( pairs );
+		else
+			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal);
 
 		// run global optimization
 		final Collection< Group< ViewId > > groups;
@@ -244,6 +318,42 @@ public class Solver extends AbstractRegistration
 
 		System.out.println( "Done.");
 		return null;
+	}
+
+	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
+			final SpimData2 dataGlobal,
+			final ArrayList< ViewId > viewIdsGlobal )
+	{
+		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
+
+		// filter bad hashes here
+		final int numLinksBefore = results.size();
+		results = results.stream().filter( psr -> 
+		{
+			final ViewId firstVidA = psr.pair().getA().getViews().iterator().next();
+			final ViewId firstVidB = psr.pair().getB().getViews().iterator().next();
+			final ViewRegistration vrA = dataGlobal.getViewRegistrations().getViewRegistration( firstVidA );
+			final ViewRegistration vrB = dataGlobal.getViewRegistrations().getViewRegistration( firstVidB );
+			final double hash = PairwiseStitchingResult.calculateHash( vrA, vrB );
+			return psr.getHash() == hash;
+		}).collect( Collectors.toList() );
+		final int numLinksAfter = results.size();
+
+		if (numLinksAfter != numLinksBefore)
+		{
+			System.out.println("Removed " + ( numLinksBefore - numLinksAfter ) + " of " + numLinksBefore + 
+					" pairwise results because the underlying view registrations have changed.");
+			System.out.println("Did you try to re-run the global optimization after aligning the dataset?");
+			System.out.println("In that case, you can remove the latest transformation and try again.");
+		}
+
+		if (numLinksAfter < 1)
+		{
+			System.out.println( new Date(System.currentTimeMillis()) + ": no links remaining, stopping.");
+			return null;
+		}
+
+		return new ImageCorrelationPointMatchCreator(results);
 	}
 
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(

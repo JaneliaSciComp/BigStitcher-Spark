@@ -48,20 +48,6 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	@Option(names = { "--rangeTP" }, description = "the range of timepoints if timepointAlign == ALL_TO_ALL_RANGE (default: 5)")
 	protected Integer rangeTP = 5;
 
-	
-	@Option(names = { "--groupIllums" }, description = "group all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to stitch illums as one (default: false)")
-	protected boolean groupIllums = false;
-
-	@Option(names = { "--groupChannels" }, description = "group all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to stitch channels as one (default: false)")
-	protected boolean groupChannels = false;
-
-	@Option(names = { "--groupTiles" }, description = "group all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles (default: false)")
-	protected boolean groupTiles = false;
-
-	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, e.g. for stabilization across time (default: false)")
-	protected boolean splitTimepoints = false;
-
-	
 	@Option(names = { "-tm", "--transformationModel" }, description = "which transformation model to use; TRANSLATION, RIGID or AFFINE (default: AFFINE)")
 	protected TransformationModel transformationModel = TransformationModel.AFFINE;
 
@@ -99,16 +85,6 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 
 		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
 			System.out.println( "Reference timepoint = " + this.referenceTP );
-	}
-
-	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg )
-	{
-		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
-		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
-		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
-		identifySubsets( setup, overlapDetection );
-
-		return setup;
 	}
 
 	public Model< ? > createModelInstance()

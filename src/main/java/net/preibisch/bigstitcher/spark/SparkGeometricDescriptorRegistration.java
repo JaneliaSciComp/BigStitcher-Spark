@@ -26,6 +26,7 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -40,6 +41,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
@@ -85,7 +87,20 @@ public class SparkGeometricDescriptorRegistration extends AbstractRegistration
 	@Option(names = { "--interestPointMergeDistance" }, description = "when grouping of views is selected, merge interest points within that radius in px (default: 5.0)")
 	protected Double interestPointMergeDistance = 5.0;
 
-	
+
+	@Option(names = { "--groupIllums" }, description = "group all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to stitch illums as one (default: false)")
+	protected boolean groupIllums = false;
+
+	@Option(names = { "--groupChannels" }, description = "group all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to stitch channels as one (default: false)")
+	protected boolean groupChannels = false;
+
+	@Option(names = { "--groupTiles" }, description = "group all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles (default: false)")
+	protected boolean groupTiles = false;
+
+	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, e.g. for stabilization across time (default: false)")
+	protected boolean splitTimepoints = false;
+
+
 	@Option(names = { "-rit", "--ransacIterations" }, description = "number of ransac iterations (default: 10,000)")
 	protected Integer ransacIterations = 10000;
 
@@ -386,6 +401,16 @@ public class SparkGeometricDescriptorRegistration extends AbstractRegistration
 		System.out.println( "Done.");
 
 		return null;
+	}
+
+	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg )
+	{
+		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
+		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
+		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
+		identifySubsets( setup, overlapDetection );
+
+		return setup;
 	}
 
 	public static MatcherPairwise< InterestPoint > createMatcherInstance(
