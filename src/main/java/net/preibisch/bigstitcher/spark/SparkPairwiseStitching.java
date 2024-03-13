@@ -43,7 +43,6 @@ import net.preibisch.stitcher.algorithm.PairwiseStitchingParameters;
 import net.preibisch.stitcher.algorithm.SpimDataFilteringAndGrouping;
 import net.preibisch.stitcher.algorithm.TransformTools;
 import net.preibisch.stitcher.algorithm.globalopt.TransformationTools;
-import net.preibisch.stitcher.gui.StitchingUIHelper;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
