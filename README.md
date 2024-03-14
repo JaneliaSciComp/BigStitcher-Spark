@@ -34,7 +34,7 @@ Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P 
 --conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
 ```
 
-For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with @kgabor, @tpietzsch and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time.
+For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time.
 
 ## Usage
 
