@@ -27,6 +27,8 @@ Additonally there are some utility methods:
 * [**Example Datasets**](#examples)
 * [**Usage**](#usage)
   * [Resave Dataset](#resave)
+  * [Pairwise Stitching](#stitching)
+  * [Solver](#solver)
   * [Affine Fusion](#affine-fusion)
   * [Non-Rigid Fusion](#nonrigid-fusion)
 
@@ -58,11 +60,11 @@ For running the fatjar on the **cloud** check out services such as [Amazon EMR](
 We provide two example datasets (one for *interest-point based registration*, one that works well with *Stitching*), which are available for download several times with increasing level of reconstruction so you can test different modules of **BigStitcher-Spark** directly. The datasets are again linked throughout the documentation for the individual modules. If you would like to test the entire pipeline we suggest to start with RAW datasets and run the entire pipeline. Here is an overview of the two datasets at different stages:
 
 * Dataset for Stitching:
-  *  [As TIFF (unaligned, no BigStitcher project defined)]()
-  *  [As TIFF/XML (unaligned)]()
-  *  [As N5/XML (unaligned)]()
-  *  [As N5/XML containing pairwise stitching results (unaligned)]()
-  *  [As N5/XML (aligned)]()
+  *  [As TIFF](https://drive.google.com/file/d/15xSQCBHcpEvJWd6YD5iKJzuc0IRpWB8a/view?usp=sharing) (unaligned, no BigStitcher project defined)
+  *  [As TIFF/XML](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) (unaligned)
+  *  [As N5/XML](https://drive.google.com/file/d/1Q2SCJW_tCVKFzrdMrgVrFDyiF6nUN5-B/view?usp=sharing) (unaligned)
+  *  [As N5/XML containing pairwise stitching results](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) (unaligned)
+  *  [As N5/XML](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) (aligned)
 
 * Dataset for Interest Points:
   *  [As TIFF (unaligned, no BigStitcher project defined)]()
@@ -75,12 +77,26 @@ We provide two example datasets (one for *interest-point based registration*, on
 ## Usage<a name="usage">
 
 ### Resave Dataset<a name="resave">
-
+```
 ./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml --dryRun
+```
 
 ### Pairwise Stitching<a name="stitching">
+```
+./stitching -x ~/SparkTest/Stitching/dataset.xml --dryRun
+```
 
-./stitching -x /Users/preibischs/SparkTest/Stitching/dataset.xml --dryRun
+### Solver<a name="#solver">
+When using pairwise stitching:
+```
+./solver -x /Users/preibischs/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
+```
+
+When using interestpoints:
+```
+./solver -x /Users/preibischs/SparkTest/Stitching/dataset.xml -s IP --dryRun
+```
+
 
 ### Affine Fusion<a name="affine-fusion">
 
