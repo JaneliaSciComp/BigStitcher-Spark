@@ -6,7 +6,7 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 * `SparkResaveN5`/`resave` (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
 * `SparkInterestPointDetection`/`detect-interestpoints` (detect interest points for alignment)
-* `SparkGeometricDescriptorRegistration`/`register-interestpoints` (perform pair-wise interest point registration)
+* `SparkGeometricDescriptorRegistration`/`register-interestpoints` (perform pair-wise interest point matching)
 * `SparkPairwiseStitching`/`stitching` (run pairwise stitching between overlapping tiles)
 * `Solver`/`solver` (perform the global solve, works with interest points and stitching)
 * `SparkAffineFusion`/`affine-fusion` (fuse the aligned dataset using affine models, including translation)
@@ -28,6 +28,8 @@ Additonally there are some utility methods:
 * [**Usage**](#usage)
   * [Resave Dataset](#resave)
   * [Pairwise Stitching](#stitching)
+  * [Detect Interest Points](#ip-detect)
+  * [Match Interest Points](#ip-match)
   * [Solver](#solver)
   * [Affine Fusion](#affine-fusion)
   * [Non-Rigid Fusion](#nonrigid-fusion)
@@ -69,22 +71,26 @@ We provide two example datasets (one for *interest-point based registration*, on
 * Dataset for **Interest Points**:
   *  [As TIFF](https://drive.google.com/file/d/1VFT2APVPItBCyzrQ7dPWBNILyNh6yDKB/view?usp=sharing) (unaligned, no BigStitcher project defined)
   *  [As TIFF/XML](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing) (unaligned)
-  *  [As N5/XML (unaligned)]()
-  *  [As N5/XML containing interest points (unaligned)]()
-  *  [As N5/XML containing matched interest points (unaligned)]()
-  *  [As N5/XML (aligned)]()
+  *  [As N5/XML]() (unaligned)
+  *  [As N5/XML]() containing interest points (unaligned)
+  *  [As N5/XML]() containing matched interest points (unaligned)
+  *  [As N5/XML]() (aligned)
 
 ## Usage<a name="usage">
 
 ### Resave Dataset<a name="resave">
 ```
 ./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml --dryRun
+./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml
 ```
 
 ### Pairwise Stitching<a name="stitching">
 ```
 ./stitching -x ~/SparkTest/Stitching/dataset.xml --dryRun
 ```
+### Detect Interest Points<a name="ip-detect">
+
+### Match Interest Points]<a name="ip-match">
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
