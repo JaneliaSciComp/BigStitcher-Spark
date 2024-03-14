@@ -12,7 +12,7 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 * **SparkAffineFusion** (fuse the aligned dataset using affine models, including translation)
 * **SparkNonRigidFusion** (fuse the aligned dataset using non-rigid models)
 
-***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher. You can always verify the results of each step BigStitcher-Spark interactively using BigStitcher by simply opening the XML.***
+***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.*** You can always verify the results of each step BigStitcher-Spark interactively using BigStitcher by simply opening the XML.
 
 ## Install
 
