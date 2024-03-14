@@ -16,12 +16,14 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 ### Content
 
-* [**Install and run**](#install)
+* [**Install and Run**](#install)
+  * [Local](#installlocal)
+  * [Cluster & Cloud](#installremote)
 * [**Usage**](#usage)
 
-## Install and run<a name="install">
+## Install and Run<a name="install">
 
-### To run it on your local computer:
+### To run it on your local computer:<a name="installlocal">
 
 * Prerequisites:  Java and maven must be installed.
 * Clone the repo and `cd` into `BigStitcher-Spark`
@@ -31,7 +33,7 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-### To run it on the cluster or the cloud:
+### To run it on the cluster or the cloud:<a name="installremote">
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
