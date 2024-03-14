@@ -216,7 +216,7 @@
         <dependency>
             <groupId>net.preibisch</groupId>
             <artifactId>multiview-reconstruction</artifactId>
-            <version>3.2.7</version>
+            <version>3.2.8</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.epfl.biop</groupId>
@@ -227,12 +227,16 @@
                     <artifactId>reflectasm</artifactId>
                 </exclusion>
                 <exclusion>
-                    <groupId>com.esotericsoftware</groupId>
-                    <artifactId>kryo</artifactId>
+                    <groupId>ome</groupId>
+                    <artifactId>formats-api</artifactId>
                 </exclusion>
                 <exclusion>
-                        <groupId>com.esotericsoftware</groupId>
-                        <artifactId>kryo</artifactId>
+                    <groupId>ome</groupId>
+                    <artifactId>formats-bsd</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>ome</groupId>
+                    <artifactId>formats-gpl</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -269,8 +273,80 @@
         <dependency>
             <groupId>net.preibisch</groupId>
             <artifactId>BigStitcher</artifactId>
-            <version>1.2.10</version>
+            <version>1.2.11</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>ch.epfl.biop</groupId>
+                    <artifactId>ijp-kheops</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.esotericsoftware</groupId>
+                    <artifactId>reflectasm</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>ome</groupId>
+                    <artifactId>formats-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>ome</groupId>
+                    <artifactId>formats-bsd</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>ome</groupId>
+                    <artifactId>formats-gpl</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
+        <!-- old bioformats -->
+        <dependency>
+            <groupId>org.openmicroscopy</groupId>
+            <artifactId>ome-common</artifactId>
+            <version>6.0.4</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <artifactId>kryo</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>ome</groupId>
+            <artifactId>formats-bsd</artifactId>
+            <version>6.5.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <artifactId>kryo</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>ome</groupId>
+            <artifactId>formats-bsd</artifactId>
+            <version>6.5.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <artifactId>kryo</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>ome</groupId>
+            <artifactId>formats-gpl</artifactId>
+            <version>6.5.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>ch.systems.cisd</groupId>
+                    <artifactId>jhdf5</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <artifactId>kryo</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        
     </dependencies>
     <groupId>net.preibisch</groupId>
 
