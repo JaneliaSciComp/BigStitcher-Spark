@@ -107,7 +107,7 @@ When using pairwise stitching:
 
 When using interestpoints:
 ```
-./solver -x ~/SparkTest/IP/dataset.xml -s IP --dryRun
+./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads --dryRun
 ```
 
 
