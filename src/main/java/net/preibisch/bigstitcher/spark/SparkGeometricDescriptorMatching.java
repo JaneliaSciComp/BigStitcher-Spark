@@ -136,16 +136,22 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		// if we group, we will have less pairs, since certain views are combined into one big view
 		//final InterestpointGroupingType groupingType = InterestpointGroupingType.DO_NOT_GROUP; -- this is always ADD_ALL - either group or not (was only necessary in the GUI, because one could group for interest points and/or global opt
 
-		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
-		final JavaSparkContext sc = new JavaSparkContext(conf);
-		sc.setLogLevel("ERROR");
-
 		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, lambda).getClass().getSimpleName() );
 
-		// clear all correspondences if wanted
 		final HashMap< ViewId, String > labelMapGlobal = new HashMap<>();
-		viewIdsGlobal.forEach( viewId -> labelMapGlobal.put( viewId, label ));
+		viewIdsGlobal.forEach( viewId ->
+		{
+			// make sure the label exists for all views that should be processed
+			if ( dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ) == null )
+			{
+				System.out.println( "Error, label '" + label + "' does for exist for ViewId " + Group.pvid( viewId ) );
+				System.exit( 1 );
+			}
 
+			labelMapGlobal.put( viewId, label );
+		});
+
+		// clear all correspondences if wanted
 		if ( clearCorrespondences )
 		{
 			System.out.println( "Clearing correspondences ... ");
@@ -167,6 +173,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel = this.regularizationModel;
 		final double lambda = this.lambda;
+
+		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
+		final JavaSparkContext sc = new JavaSparkContext(conf);
+		sc.setLogLevel("ERROR");
 
 		final JavaRDD< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, int[][] > > > rddResults;
 
@@ -242,7 +252,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		else
 		{
 			System.out.println( "grouped" );
-			System.exit( 0 );
+
 			final List<Pair<Group<ViewId>, Group<ViewId>>> groupedPairs =
 					setup.getSubsets().stream().map( s -> s.getGroupedPairs() ).flatMap(List::stream).collect( Collectors.toList() );
 
