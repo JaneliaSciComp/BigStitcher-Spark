@@ -73,12 +73,6 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Override
 	public Void call() throws Exception
 	{
-		if (dryRun)
-		{
-			System.out.println( "dry-run not supported for ResaveN5.");
-			System.exit( 0 );
-		}
-
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
