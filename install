@@ -2,13 +2,13 @@
 
 # This script is shamelessly extended from https://github.com/saalfeldlab/n5-utils, thanks @axtimwalde & co!
 
-THREADS="-1"
+USERTHREADS="-1"
 USERMEM="-1"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -t|--threads)
-      THREADS="$2"
+      USERTHREADS="$2"
       shift # past argument
       shift # past value
       ;;
@@ -24,24 +24,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ $THREADS == "-1" ]; then
-  echo "Please define the number of threads for Java/Spark to use, e.g.: './install -t 8'. Optionally define the memory that Java will using, e.g. '-m 16' for 16GB RAM. Stopping."
-  exit 1
-else
-  echo "Spark number of threads: "$THREADS
+if [ $USERTHREADS == "-1" ]; then
+  echo "You did not define the number of threads for Java/Spark can use, will be set automatically. You could do it by e.g.: './install -t 8' for 8 threads."
 fi
 
 if [ $USERMEM == "-1" ]; then
-  echo "You did not define the memory that Java/Spark can use, will be set automatically. You could do it by e.g.: './install -m 64' for 64GB of RAM"
+  echo "You did not define the memory that Java/Spark can use, will be set automatically. You could do it by e.g.: './install -m 64' for 64GB of RAM."
 fi
 
-
-VERSION="0.0.2-SNAPSHOT"
-INSTALL_DIR=$(pwd)
-#INSTALL_DIR=${1:-$(pwd)}
-
-echo ""
-echo "Installing into $INSTALL_DIR (for local execution)"
 
 if [ $USERMEM == "-1" ]; then
   # check for operating system
@@ -66,6 +56,37 @@ else
   MEM=$USERMEM
   echo "Setting Java memory limit to" $MEM "GB"
 fi
+
+if [ $USERTHREADS == "-1" ]; then
+  # check for operating system
+  if [[ "$OSTYPE" == "linux-gnu" ]]; then
+    if [ $USERMEM != "-1" ]; then
+      echo "Assuming on Linux operating system"
+    fi
+    THREADS=$(nproc --all)
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    if [ $USERMEM != "-1" ]; then
+      echo "Assuming on MacOS X operating system"
+    fi
+    # sysctl returns number of physical cores
+    THREADS=$(sysctl -n hw.ncpu)
+  else
+    echo "ERROR - Operating system (arg2) must be either linux or osx to determine number of physical cores. Please specify physical by e.g.: './install -t 8' to use 8 threads."
+    exit
+  fi
+  echo "Available threads:" $THREADS", setting Java/Sparks threads accordingly."
+else
+  THREADS=$USERTHREADS
+  echo "Setting Java/Spark number of threads to" $THREADS
+fi
+
+
+VERSION="0.0.2-SNAPSHOT"
+INSTALL_DIR=$(pwd)
+#INSTALL_DIR=${1:-$(pwd)}
+
+echo ""
+echo "Installing into $INSTALL_DIR (for local execution)"
 
 echo 'Building the code'
 
