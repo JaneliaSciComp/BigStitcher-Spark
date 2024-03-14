@@ -96,17 +96,18 @@ We provide two example datasets (one for *interest-point based registration*, on
 
 ### Match Interest Points]<a name="ip-match">
 ```
+./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL
 ```
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
 ```
-./solver -x /Users/preibischs/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
+./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
 ```
 
 When using interestpoints:
 ```
-./solver -x /Users/preibischs/SparkTest/Stitching/dataset.xml -s IP --dryRun
+./solver -x ~/SparkTest/IP/dataset.xml -s IP --dryRun
 ```
 
 
