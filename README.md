@@ -6,7 +6,7 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 * `SparkResaveN5`/`resave` (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
 * `SparkInterestPointDetection`/`detect-interestpoints` (detect interest points for alignment)
-* `SparkGeometricDescriptorRegistration`/`register-interestpoints` (perform pair-wise interest point matching)
+* `SparkGeometricDescriptorMatching`/`match-interestpoints` (perform pair-wise interest point matching)
 * `SparkPairwiseStitching`/`stitching` (run pairwise stitching between overlapping tiles)
 * `Solver`/`solver` (perform the global solve, works with interest points and stitching)
 * `SparkAffineFusion`/`affine-fusion` (fuse the aligned dataset using affine models, including translation)
@@ -72,7 +72,7 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As TIFF](https://drive.google.com/file/d/1VFT2APVPItBCyzrQ7dPWBNILyNh6yDKB/view?usp=sharing) (unaligned, no BigStitcher project defined)
   *  [As TIFF/XML](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing) (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) (unaligned)
-  *  [As N5/XML]() containing interest points (unaligned)
+  *  [As N5/XML](https://drive.google.com/file/d/14hQAljavSNcpUOWwwUOm0Ev2HqcaqWtI/view?usp=sharing) containing interest points (unaligned)
   *  [As N5/XML]() containing matched interest points (unaligned)
   *  [As N5/XML]() (aligned)
 
@@ -88,9 +88,15 @@ We provide two example datasets (one for *interest-point based registration*, on
 ```
 ./stitching -x ~/SparkTest/Stitching/dataset.xml --dryRun
 ```
+
 ### Detect Interest Points<a name="ip-detect">
+```
+./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008
+```
 
 ### Match Interest Points]<a name="ip-match">
+```
+```
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
