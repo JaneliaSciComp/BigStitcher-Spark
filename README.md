@@ -14,11 +14,15 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.*** You can always verify the results of each step BigStitcher-Spark interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Even though the major steps are the same, not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below.
 
-## Install
+## Install and running
+
+**To run it on your local computer:**
 
 * Prerequisites:  Java and maven must be installed.
 * Clone the repo and `cd` into `BigStitcher-Spark`
 * Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create an executable `affine-fusion` in the working directory.
+
+**To run it on the cluster or the cloud:**
 
 ## Usage
 
