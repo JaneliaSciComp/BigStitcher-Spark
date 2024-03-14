@@ -2,25 +2,44 @@
 
 [![install4j](https://www.ej-technologies.com/images/product_banners/install4j_small.png)](https://www.ej-technologies.com/products/install4j/overview.html)
 
-Running compute-intense parts of BigStitcher distributed. For now we support **fusion with affine transformation models** (including translations of course). It should scale very well to large datasets as it tests for each block that is written which images are overlapping. You simply need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
+This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark (better documentation is coming but check out the cmd-line args, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
-Sharing this early as it might be useful ...
+* `SparkResaveN5` (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
+* `SparkInterestPointDetection` (detect interest points for alignment - an alternative to using stitching)
+* `SparkGeometricDescriptorRegistration` (perform pair-wise interest point registration - an alternative to using stitching)
+* `SparkPairwiseStitching` (run pairwise stitching between overlapping tiles - an alternative to using interest points)
+* `Solver` (perform the global solve, works with interest points and stitching)
+* `SparkAffineFusion` (fuse the aligned dataset using affine models, including translation)
+* `SparkNonRigidFusion` (fuse the aligned dataset using non-rigid models)
 
-Here is som of the functionality is currently available in BigStitcher-Spark (Documentation coming, check out the cmd-line args, they mostly follow the BigStitcher GUI; each module takes an existing XML):
-* SparkResaveN5 (resave a dataset you defined - use virtual loading only - into N5 for processing)
-* SparkInterestPointDetection (detect interest points for alignment)
-* SparkGeometricDescriptorRegistration (perform pair-wise interest point registration)
-* Solver (global solve - not Spark)
-* SparkAffineFusion (fuse the aligned dataset using affine models)
-* SparkNonRigidFusion (fuse the aligned dataset using non-rigid models)
+***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.** You can always verify the results of each step BigStitcher-Spark step interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below (typically BigStitcher-Spark supports a specific feature that was hard to implement in BigStitcher and vice-versa).*
 
-## Install
+## Install and run
+
+### To run it on your local computer:
 
 * Prerequisites:  Java and maven must be installed.
 * Clone the repo and `cd` into `BigStitcher-Spark`
 * Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create an executable `affine-fusion` in the working directory.
 
+If you run the code directly from your IDE, you will need to add JVM paramters for the local Spark execution (e.g. 8 cores, 50GB RAM):
+```
+-Dspark.master=local[8] -Xmx50G
+```
+### To run it on the cluster or the cloud:
+
+`mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
+
+Ask your sysadmin for help how to run it on your **cluster**. To get you started there is a [tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane) that explains how we run it on the Janelia cluster. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
+```
+--conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
+```
+
+For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time.
+
 ## Usage
+
+For now we support **fusion with affine transformation models** (including translations of course). It should scale very well to large datasets as it tests for each block that is written which images are overlapping. You simply need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
 Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
 
@@ -38,17 +57,6 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
 
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
-
-And for local spark you need JVM paramters (8 cores, 50GB RAM):
-
-```
--Dspark.master=local[8] -Xmx50G
-```
-Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
-```
---conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
-```
-
 
 You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the n5-utils package (https://github.com/saalfeldlab/n5-utils).
 
