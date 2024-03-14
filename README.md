@@ -12,6 +12,11 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 * `SparkAffineFusion` (fuse the aligned dataset using affine models, including translation)
 * `SparkNonRigidFusion` (fuse the aligned dataset using non-rigid models)
 
+Additonally there are some utility methods:
+* `SparkDownsample` (perform downsampling of existing volumes)
+* `ClearInterestPoints` (clears interest points)
+* `ClearRegistrations` (clears registrations)
+
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.** You can always verify the results of each step BigStitcher-Spark step interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below (typically BigStitcher-Spark supports a specific feature that was hard to implement in BigStitcher and vice-versa).*
 
 ### Content
