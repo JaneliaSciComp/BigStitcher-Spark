@@ -173,6 +173,12 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		for ( int i = 0; i < downsampling.length; ++i )
 			System.out.println( Util.printCoordinates( downsampling[i] ) );
 
+		if ( dryRun )
+		{
+			System.out.println( "This is a dry-run, stopping here.");
+			return null;
+		}
+
 		// create one dataset per ViewSetupId
 		for ( final Entry<Integer, long[]> viewSetup: viewSetupIdToDimensions.entrySet() )
 		{
