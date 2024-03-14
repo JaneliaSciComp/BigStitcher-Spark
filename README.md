@@ -55,7 +55,7 @@ For running the fatjar on the **cloud** check out services such as [Amazon EMR](
 
 ### Affine Fusion<a name="affine-fusion">
 
-This performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
+`affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
 Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
@@ -79,5 +79,5 @@ You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from th
 
 ### Non-Rigid Fusion<a name="nonrigid-fusion">
 
-***Update: now there is support for non-rigid distributed fusion using `net.preibisch.bigstitcher.spark.NonRigidFusionSpark`***
+`nonrigid-fusion` performs **non-rigid distributed fusion** using `net.preibisch.bigstitcher.spark.SparkNonRigidFusion`
 In order to run it one needs to additionally define the corresponding **interest points**, e.g. `-ip beads` that will be used to compute the non-rigid transformation.
