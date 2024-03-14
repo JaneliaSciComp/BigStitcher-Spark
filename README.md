@@ -16,8 +16,8 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 ### Content
 
-* [_**1. Install and run**_](#install)
-* [_**2. Usage**_](#usage)
+* [**Install and run**](#install)
+* [**Usage**](#usage)
 
 ## Install and run<a name="install">
 
