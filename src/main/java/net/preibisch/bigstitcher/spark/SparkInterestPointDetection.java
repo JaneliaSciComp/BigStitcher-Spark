@@ -27,6 +27,7 @@ import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.KDTree;
+import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
@@ -259,8 +260,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						// run DoG only in that area
 						//
 						final ArrayList< InterestPoint > localPoints = DoGImgLib2.computeDoG(
-								Views.interval( input.getA(), intersection ),
+								(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
 								null, // mask
+								intersection,
 								dog.sigma,
 								dog.threshold,
 								dog.localization,
@@ -306,8 +308,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				mipmapTransform = input.getB();
 
 				ips = DoGImgLib2.computeDoG(
-							input.getA(),
+							(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
 							null, // mask
+							new FinalInterval( input.getA() ),
 							dog.sigma,
 							dog.threshold,
 							dog.localization,
