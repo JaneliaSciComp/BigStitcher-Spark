@@ -16,7 +16,7 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 ## Install and run
 
-**To run it on your local computer:**
+### To run it on your local computer:
 
 * Prerequisites:  Java and maven must be installed.
 * Clone the repo and `cd` into `BigStitcher-Spark`
@@ -26,8 +26,7 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-
-**To run it on the cluster or the cloud:**
+### To run it on the cluster or the cloud:
 
 Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
 ```
