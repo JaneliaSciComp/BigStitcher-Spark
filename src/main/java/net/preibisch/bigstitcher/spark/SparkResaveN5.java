@@ -282,6 +282,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					}
 					else
 					{
+						n5Lcl.close();
 						throw new RuntimeException("Unsupported pixel type: " + dataType );
 					}
 				});
@@ -412,6 +413,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 						}
 						else
 						{
+							n5Lcl.close();
 							throw new RuntimeException("Unsupported pixel type: " + dataType );
 						}
 					});
@@ -428,6 +430,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 		dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5Path ), dataGlobal.getSequenceDescription()));
 		new XmlIoSpimData2( null ).save( dataGlobal, xmloutPath );
+
+		n5.close();
 
 		Thread.sleep( 100 );
 		System.out.println( "Resaved project, in total took: " + (System.currentTimeMillis() - time ) + " ms." );
