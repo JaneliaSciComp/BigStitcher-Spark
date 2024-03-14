@@ -2,17 +2,16 @@
 
 [![install4j](https://www.ej-technologies.com/images/product_banners/install4j_small.png)](https://www.ej-technologies.com/products/install4j/overview.html)
 
-Running compute-intense parts of BigStitcher distributed. For now we support **fusion with affine transformation models** (including translations of course). It should scale very well to large datasets as it tests for each block that is written which images are overlapping. You simply need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
+This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark (better documentation is coming but check out the cmd-line args, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
-Sharing this early as it might be useful ...
+* **SparkResaveN5** (resave an XML dataset you defined - use virtual loading only - into N5 for processing)
+* **SparkInterestPointDetection** (detect interest points for alignment - an alternative to using stitching)
+* **SparkGeometricDescriptorRegistration** (perform pair-wise interest point registration - an alternative to using stitching)
+* **SparkPairwiseStitching** (run pairwise stitching between overlapping tiles - an alternative to using interest points)
+* **Solver** (perform the global solve, works with interest points and stitching)
+* **SparkAffineFusion** (fuse the aligned dataset using affine models, including translation)
+* **SparkNonRigidFusion** (fuse the aligned dataset using non-rigid models)
 
-Here is som of the functionality is currently available in BigStitcher-Spark (Documentation coming, check out the cmd-line args, they mostly follow the BigStitcher GUI; each module takes an existing XML):
-* SparkResaveN5 (resave a dataset you defined - use virtual loading only - into N5 for processing)
-* SparkInterestPointDetection (detect interest points for alignment)
-* SparkGeometricDescriptorRegistration (perform pair-wise interest point registration)
-* Solver (global solve - not Spark)
-* SparkAffineFusion (fuse the aligned dataset using affine models)
-* SparkNonRigidFusion (fuse the aligned dataset using non-rigid models)
 
 ## Install
 
@@ -21,6 +20,8 @@ Here is som of the functionality is currently available in BigStitcher-Spark (Do
 * Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create an executable `affine-fusion` in the working directory.
 
 ## Usage
+
+For now we support **fusion with affine transformation models** (including translations of course). It should scale very well to large datasets as it tests for each block that is written which images are overlapping. You simply need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
 Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
 
