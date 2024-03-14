@@ -26,6 +26,7 @@ Additonally there are some utility methods:
   * [Cluster & Cloud](#installremote)
 * [**Usage**](#usage)
   * [Affine Fusion](#affine-fusion)
+  * [Non-Rigid Fusion](#nonrigid-fusion)
 
 ## Install and Run<a name="install">
 
@@ -71,12 +72,12 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
 
+Calling it with `--multiRes` will create a multiresolution pyramid of the fused image.
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
-You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the n5-utils package (https://github.com/saalfeldlab/n5-utils).
+You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
 
-You can create a multiresolution pyramid of this data using https://github.com/saalfeldlab/n5-spark
-
+### Non-Rigid Fusion<a name="nonrigid-fusion">
 
 ***Update: now there is support for non-rigid distributed fusion using `net.preibisch.bigstitcher.spark.NonRigidFusionSpark`***
 In order to run it one needs to additionally define the corresponding **interest points**, e.g. `-ip beads` that will be used to compute the non-rigid transformation.
