@@ -61,8 +61,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,64)")
 	private String blockSizeString = "128,128,64";
 
-	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,32 that each spark thread writes 512,512,32 (default: 1,1,1)")
-	private String blockScaleString = "2,2,1";
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,32 that each spark thread writes 512,512,32 (default: 16,16,1)")
+	private String blockScaleString = "16,16,1";
 
 	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (must contain full res 1,1,1 that is always created), e.g. 1,1,1; 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
 	private String downsampling = null;
@@ -99,7 +99,15 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blockScale = Import.csvStringToIntArray(blockScaleString);
 
+		final int[] computeBlock = new int[] {
+				blockSize[0] * blockScale[ 0 ],
+				blockSize[1] * blockScale[ 1 ],
+				blockSize[2] * blockScale[ 2 ] };
+
 		final N5Writer n5 = new N5FSWriter(n5Path);
+
+		System.out.println( "N5 block size=" + Util.printCoordinates( blockSize ) );
+		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlock ) );
 
 		System.out.println( "Setting up N5 write for basepath: " + n5Path );
 
@@ -118,11 +126,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 			final List<long[][]> grid = Grid.create(
 					vd.getViewSetup().getSize().dimensionsAsLongArray(),
-					new int[] {
-							blockSize[0] * blockScale[ 0 ],
-							blockSize[1] * blockScale[ 1 ],
-							blockSize[2] * blockScale[ 2 ]
-					},
+					computeBlock,
 					blockSize);
 
 			// add timepointId and ViewSetupId & dimensions to the gridblock
@@ -285,6 +289,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 						n5Lcl.close();
 						throw new RuntimeException("Unsupported pixel type: " + dataType );
 					}
+
+					System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 				});
 
 		System.out.println( "Resaved N5 s0 level, took: " + (System.currentTimeMillis() - time ) + " ms." );
