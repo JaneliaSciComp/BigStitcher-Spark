@@ -247,9 +247,14 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			{
 				System.out.println( new Date( System.currentTimeMillis() ) + ": Compute pairwise: " + pair.getA() + " <> " + pair.getB() + ": No shift found, skipping pair." );
 			}
+
+			// try to remove a -> b and b -> a, just to make sure
+			dataGlobal.getStitchingResults().getPairwiseResults().remove( pair );
+			dataGlobal.getStitchingResults().getPairwiseResults().remove( new ValuePair<>( pair.getB(), pair.getA() ) );
 		}
 
 		System.out.println( new Date( System.currentTimeMillis() ) + ": Remaining pairs: " + results.size() );
+
 
 		// update StitchingResults with Results
 		for ( final PairwiseStitchingResult< ViewId > psr : results )

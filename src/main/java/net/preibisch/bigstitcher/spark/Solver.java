@@ -56,13 +56,22 @@ import picocli.CommandLine.Option;
 
 public class Solver extends AbstractRegistration
 {
+	/*
+	-x '/Users/preibischs/Documents/Microscopy/SPIM/HisYFP-SPIM/Spark_test_tp/dataset.xml'
+	-l beadsSpark3
+	--method ONE_ROUND_SIMPLE
+	-rtp ALL_TO_ALL
+	-s IP
+	--splitTimepoints
+	--dryRun
+	*/
 	private static final long serialVersionUID = 5220898723968914742L;
 
-	//public enum MapbackModel { TRANSLATION, RIGID };
-	
 	public enum SolverSource { IP, STITCHING };
 
 	public ArrayList< ViewId > fixedViewIds;
+
+	//public enum MapbackModel { TRANSLATION, RIGID };
 	//public ArrayList< ViewId > mapBackViewIds;
 	//public Model<?> mapBackModel;
 
