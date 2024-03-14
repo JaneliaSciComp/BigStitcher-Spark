@@ -4,13 +4,13 @@
 
 This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark (better documentation is coming but check out the cmd-line args, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
-* **SparkResaveN5** (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
-* **SparkInterestPointDetection** (detect interest points for alignment - an alternative to using stitching)
-* **SparkGeometricDescriptorRegistration** (perform pair-wise interest point registration - an alternative to using stitching)
-* **SparkPairwiseStitching** (run pairwise stitching between overlapping tiles - an alternative to using interest points)
-* **Solver** (perform the global solve, works with interest points and stitching)
-* **SparkAffineFusion** (fuse the aligned dataset using affine models, including translation)
-* **SparkNonRigidFusion** (fuse the aligned dataset using non-rigid models)
+* `SparkResaveN5` (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
+* `SparkInterestPointDetection` (detect interest points for alignment - an alternative to using stitching)
+* `SparkGeometricDescriptorRegistration` (perform pair-wise interest point registration - an alternative to using stitching)
+* `SparkPairwiseStitching` (run pairwise stitching between overlapping tiles - an alternative to using interest points)
+* `Solver` (perform the global solve, works with interest points and stitching)
+* `SparkAffineFusion` (fuse the aligned dataset using affine models, including translation)
+* `SparkNonRigidFusion` (fuse the aligned dataset using non-rigid models)
 
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.*** You can always verify the results of each step BigStitcher-Spark interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Even though the major steps are the same, not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below.
 
