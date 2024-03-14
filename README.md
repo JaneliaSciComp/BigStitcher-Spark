@@ -14,7 +14,7 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.*** You can always verify the results of each step BigStitcher-Spark interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Even though the major steps are the same, not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below.
 
-## Install and running
+## Install and run
 
 **To run it on your local computer:**
 
@@ -22,7 +22,17 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 * Clone the repo and `cd` into `BigStitcher-Spark`
 * Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create an executable `affine-fusion` in the working directory.
 
+If you run the code directly from your IDE, you will need to add JVM paramters for the local Spark execution (e.g. 8 cores, 50GB RAM):
+```
+-Dspark.master=local[8] -Xmx50G
+```
+
 **To run it on the cluster or the cloud:**
+
+Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
+```
+--conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
+```
 
 ## Usage
 
@@ -44,17 +54,6 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
 
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
-
-And for local spark you need JVM paramters (8 cores, 50GB RAM):
-
-```
--Dspark.master=local[8] -Xmx50G
-```
-Ask your sysadmin for help how to run it on your cluster. `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
-```
---conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
-```
-
 
 You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the n5-utils package (https://github.com/saalfeldlab/n5-utils).
 
