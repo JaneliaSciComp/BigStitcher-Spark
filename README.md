@@ -54,7 +54,20 @@ For running the fatjar on the **cloud** check out services such as [Amazon EMR](
 
 ## Example Datasets<a name="examples">
 
-We provide two example datasets (one for *interest-point based registration*, one that works well with *Stitching*), which are available for download several times with increasing level of reconstruction so you can test different modules of **BigStitcher-Spark** directly. The datasets are again linked throughout the documentation for the individual modules. If you would like to test the entire pipeline we suggest to start with RAW datasets and run the entire pipeline.
+We provide two example datasets (one for *interest-point based registration*, one that works well with *Stitching*), which are available for download several times with increasing level of reconstruction so you can test different modules of **BigStitcher-Spark** directly. The datasets are again linked throughout the documentation for the individual modules. If you would like to test the entire pipeline we suggest to start with RAW datasets and run the entire pipeline. Here is an overview of the two datasets at different stages:
+
+* Dataset for Stitching:
+  *  [As TIFF (unaligned)]
+  *  [As N5 (unaligned)]
+  *  [As N5 containing pairwise stitching results (unaligned)]
+  *  [As N5 (aligned)]
+
+* Dataset for Interest Points:
+  *  [As TIFF (unaligned)]
+  *  [As N5 (unaligned)]
+  *  [As N5 containing interest points (unaligned)]
+  *  [As N5 containing matched interest points (unaligned)]
+  *  [As N5 (aligned)]
 
 ## Usage<a name="usage">
 
