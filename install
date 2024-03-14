@@ -121,7 +121,7 @@ echo 'Installing workflow tools ...'
 
 install_command resave "net.preibisch.bigstitcher.spark.SparkResaveN5"
 install_command detect-interestpoints "net.preibisch.bigstitcher.spark.SparkInterestPointDetection"
-install_command register-interestpoints "net.preibisch.bigstitcher.spark.SparkGeometricDescriptorRegistration"
+install_command match-interestpoints "net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching"
 install_command stitching "net.preibisch.bigstitcher.spark.SparkPairwiseStitching"
 install_command solver "net.preibisch.bigstitcher.spark.Solver"
 install_command affine-fusion "net.preibisch.bigstitcher.spark.AffineFusion"

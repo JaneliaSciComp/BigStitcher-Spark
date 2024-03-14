@@ -53,7 +53,7 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class SparkGeometricDescriptorRegistration extends AbstractRegistration
+public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
@@ -461,7 +461,7 @@ public class SparkGeometricDescriptorRegistration extends AbstractRegistration
 	public static void main(final String... args) throws SpimDataException
 	{
 		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new SparkGeometricDescriptorRegistration()).execute(args));
+		System.exit(new CommandLine(new SparkGeometricDescriptorMatching()).execute(args));
 	}
 
 }
