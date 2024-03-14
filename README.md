@@ -78,6 +78,10 @@ We provide two example datasets (one for *interest-point based registration*, on
 
 ./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml --dryRun
 
+### Pairwise Stitching<a name="stitching">
+
+./stitching -x /Users/preibischs/SparkTest/Stitching/dataset.xml --dryRun
+
 ### Affine Fusion<a name="affine-fusion">
 
 `affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
