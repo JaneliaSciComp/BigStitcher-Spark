@@ -5,9 +5,9 @@
 This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark listed as `JavaClassName`/`cmd-line-tool-name` (you can find documentation below, but a good start is also to just check out the cmd-line arguments, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
 * `SparkResaveN5`/`resave` (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
-* `SparkInterestPointDetection`/`detect-interestpoints` (detect interest points for alignment - an alternative to using stitching)
-* `SparkGeometricDescriptorRegistration`/`register-interestpoints` (perform pair-wise interest point registration - an alternative to using stitching)
-* `SparkPairwiseStitching`/`stitching` (run pairwise stitching between overlapping tiles - an alternative to using interest points)
+* `SparkInterestPointDetection`/`detect-interestpoints` (detect interest points for alignment)
+* `SparkGeometricDescriptorRegistration`/`register-interestpoints` (perform pair-wise interest point registration)
+* `SparkPairwiseStitching`/`stitching` (run pairwise stitching between overlapping tiles)
 * `Solver`/`solver` (perform the global solve, works with interest points and stitching)
 * `SparkAffineFusion`/`affine-fusion` (fuse the aligned dataset using affine models, including translation)
 * `SparkNonRigidFusion`/`nonrigid-fusion` (fuse the aligned dataset using non-rigid models)
