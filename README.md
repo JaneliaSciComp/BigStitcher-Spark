@@ -26,6 +26,7 @@ Additonally there are some utility methods:
   * [Cluster & Cloud](#installremote)
 * [**Example Datasets**](#examples)
 * [**Usage**](#usage)
+  * [Resave Dataset](#resave)
   * [Affine Fusion](#affine-fusion)
   * [Non-Rigid Fusion](#nonrigid-fusion)
 
@@ -72,6 +73,10 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As N5/XML (aligned)]()
 
 ## Usage<a name="usage">
+
+### Resave Dataset<a name="resave">
+
+./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml --dryRun
 
 ### Affine Fusion<a name="affine-fusion">
 
