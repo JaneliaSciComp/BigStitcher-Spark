@@ -25,7 +25,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ $THREADS == "-1" ]; then
-  echo "Please define the number of threads for Java/Spark to use, e.g.: './install -t 8'. Stopping."
+  echo "Please define the number of threads for Java/Spark to use, e.g.: './install -t 8'. Optionally define the memory that Java will using, e.g. '-m 16' for 16GB RAM. Stopping."
   exit 1
 else
   echo "Spark number of threads: "$THREADS
@@ -76,21 +76,42 @@ mvn clean install
 #mvn clean install -P fatjar
 mvn -Dmdep.outputFile=cp.txt -Dmdep.includeScope=runtime dependency:build-classpath
 
-echo ""
-echo "Installing 'affine-fusion' command into" $INSTALL_DIR
+# function that installs one command
+# $1 - command name
+# $2 - java class containing the functionality
+install_command () {
+	echo "Installing '$1' command into" $INSTALL_DIR
 
-echo '#!/bin/bash' > affine-fusion
-echo '' >> affine-fusion
-echo "JAR=\$HOME/.m2/repository/net/preibisch/BigStitcher-Spark/${VERSION}/BigStitcher-Spark-${VERSION}.jar" >> affine-fusion
-echo 'java \' >> affine-fusion
-echo "  -Xmx${MEM}g -Dspark.master=local[${THREADS}] \\" >> affine-fusion
-#echo '  -XX:+UseConcMarkSweepGC \' >> affine-fusion
-echo -n '  -cp $JAR:' >> affine-fusion
-echo -n $(cat cp.txt) >> affine-fusion
-echo ' \' >> affine-fusion
-echo '  net.preibisch.bigstitcher.spark.AffineFusion "$@"' >> affine-fusion
+	echo '#!/bin/bash' > $1
+	echo '' >> $1
+	echo "JAR=\$HOME/.m2/repository/net/preibisch/BigStitcher-Spark/${VERSION}/BigStitcher-Spark-${VERSION}.jar" >> $1
+	echo 'java \' >> $1
+	echo "  -Xmx${MEM}g -Dspark.master=local[${THREADS}] \\" >> $1
+#	echo '  -XX:+UseConcMarkSweepGC \' >> $1
+	echo -n '  -cp $JAR:' >> $1
+	echo -n $(cat cp.txt) >> $1
+	echo ' \' >> $1
+	echo '  '$2' "$@"' >> $1
 
-chmod a+x affine-fusion
+	chmod a+x $1
+}
+
+echo 'Installing workflow tools ...'
+
+install_command resave "net.preibisch.bigstitcher.spark.SparkResaveN5"
+install_command detect-interestpoints "net.preibisch.bigstitcher.spark.SparkInterestPointDetection"
+install_command register-interestpoints "net.preibisch.bigstitcher.spark.SparkGeometricDescriptorRegistration"
+install_command stitching "net.preibisch.bigstitcher.spark.SparkPairwiseStitching"
+install_command solver "net.preibisch.bigstitcher.spark.Solver"
+install_command affine-fusion "net.preibisch.bigstitcher.spark.AffineFusion"
+install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFusion"
+
+echo 'Installing utils ...'
+
+install_command downsample "net.preibisch.bigstitcher.spark.SparkDownsample"
+install_command clear-interestpoints "net.preibisch.bigstitcher.spark.ClearInterestPoints"
+install_command clear-registrations "net.preibisch.bigstitcher.spark.ClearRegistrations"
+
 
 if [ $(pwd) == "$INSTALL_DIR" ]; then
     echo "Installation directory equals current directory, we are done."
