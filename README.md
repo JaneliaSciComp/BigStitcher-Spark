@@ -25,10 +25,11 @@ Additonally there are some utility methods:
   * [Local](#installlocal)
   * [Cluster & Cloud](#installremote)
 * [**Usage**](#usage)
+  * [Affine Fusion](#affine-fusion)
 
 ## Install and Run<a name="install">
 
-### To run it on your local computer:<a name="installlocal">
+### To run it on your local computer<a name="installlocal">
 
 * Prerequisites:  Java and maven must be installed.
 * Clone the repo and `cd` into `BigStitcher-Spark`
@@ -38,7 +39,7 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-### To run it on the cluster or the cloud:<a name="installremote">
+### To run it on the cluster or the cloud<a name="installremote">
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
@@ -51,7 +52,9 @@ For running the fatjar on the **cloud** check out services such as [Amazon EMR](
 
 ## Usage<a name="usage">
 
-For now we support **fusion with affine transformation models** (including translations of course). It should scale very well to large datasets as it tests for each block that is written which images are overlapping. You simply need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
+### Affine Fusion<a name="affine-fusion">
+
+This performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
 Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.AffineFusion`:
 
