@@ -87,7 +87,7 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			System.out.println( "Reference timepoint = " + this.referenceTP );
 	}
 
-	public Model< ? > createModelInstance()
+	public static Model< ? > createModelInstance( TransformationModel transformationModel, RegularizationModel regularizationModel, double lambda )
 	{
 		// parse model
 		final Model< ? > tm, rm;

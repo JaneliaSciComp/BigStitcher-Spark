@@ -22,6 +22,8 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.RegularizationModel;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.TransformationModel;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -138,7 +140,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		System.out.println( "Pairwise model = " + createModelInstance().getClass().getSimpleName() );
+		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, lambda).getClass().getSimpleName() );
 
 		// clear all correspondences if wanted
 		final HashMap< ViewId, String > labelMapGlobal = new HashMap<>();
@@ -162,6 +164,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final int redundancy = this.redundancy;
 		final int numNeighbors = this.numNeighbors;
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
+		final TransformationModel transformationModel = this.transformationModel;
+		final RegularizationModel regularizationModel = this.regularizationModel;
+		final double lambda = this.lambda;
 
 		final JavaRDD< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, int[][] > > > rddResults;
 
@@ -211,7 +216,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
 				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
-				final Model< ? > model = createModelInstance();
+				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 				final MatcherPairwise< InterestPoint > matcher = createMatcherInstance(
 						rp,
@@ -237,7 +242,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		else
 		{
 			System.out.println( "grouped" );
-
+			System.exit( 0 );
 			final List<Pair<Group<ViewId>, Group<ViewId>>> groupedPairs =
 					setup.getSubsets().stream().map( s -> s.getGroupedPairs() ).flatMap(List::stream).collect( Collectors.toList() );
 
@@ -298,7 +303,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				IOFunctions.println( pair.getA() + " <=> " + pair.getB() + ": Grouping interestpoints for " + pair.getB() + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 
 				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
-				final Model< ? > model = createModelInstance();
+				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 				final MatcherPairwise matcher = createMatcherInstance(
 						rp,

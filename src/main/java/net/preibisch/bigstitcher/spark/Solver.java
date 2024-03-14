@@ -231,7 +231,7 @@ public class Solver extends AbstractRegistration
 		final GlobalOptimizationParameters globalOptParameters = new GlobalOptimizationParameters(relativeThreshold, absoluteThreshold, globalOptType, false );
 		final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs = new ArrayList<>();
 		final HashMap<ViewId, Tile > models;
-		final Model<?> model = createModelInstance();
+		final Model<?> model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 		if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_SIMPLE )
 		{
