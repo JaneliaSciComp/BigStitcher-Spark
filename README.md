@@ -24,6 +24,7 @@ Additonally there are some utility methods:
 * [**Install and Run**](#install)
   * [Local](#installlocal)
   * [Cluster & Cloud](#installremote)
+* [**Example Datasets**](#examples)
 * [**Usage**](#usage)
   * [Affine Fusion](#affine-fusion)
   * [Non-Rigid Fusion](#nonrigid-fusion)
@@ -50,6 +51,10 @@ Ask your sysadmin for help how to run it on your **cluster**. To get you started
 ```
 
 For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time.
+
+## Example Datasets<a name="examples">
+
+We provide two example datasets (one for *interest-point based registration*, one that works well with *Stitching*), which are available for download several times with increasing level of reconstruction so you can test different modules of **BigStitcher-Spark** directly. The datasets are again linked throughout the documentation for the individual modules. If you would like to test the entire pipeline we suggest to start with RAW datasets and run the entire pipeline.
 
 ## Usage<a name="usage">
 
