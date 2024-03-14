@@ -79,5 +79,4 @@ You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from th
 
 ### Non-Rigid Fusion<a name="nonrigid-fusion">
 
-`nonrigid-fusion` performs **non-rigid distributed fusion** using `net.preibisch.bigstitcher.spark.SparkNonRigidFusion`
-In order to run it one needs to additionally define the corresponding **interest points**, e.g. `-ip beads` that will be used to compute the non-rigid transformation.
+`nonrigid-fusion` performs **non-rigid distributed fusion** using `net.preibisch.bigstitcher.spark.SparkNonRigidFusion`. The arguments are identical to the [Affine Fusion](#affine-fusion), and one needs to additionally define the corresponding **interest points**, e.g. `-ip beads` that will be used to compute the non-rigid transformation.
