@@ -78,67 +78,62 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As N5/XML](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing) containing matched interest points (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1X6JW7WeHA7LR71kXgJV0tHlbY8EMrfRF/view?usp=sharing) (aligned)
 
+For this tutorial I extracted the Stitching dataset into `~/SparkTest/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`.
+
 ## Usage<a name="usage">
 
 ### Resave Dataset<a name="resave">
+
+When working with BigStitcher the first step is to [define a dataset](https://imagej.net/plugins/bigstitcher/define-new-dataset), where the goal is to provide sufficient meta-data in order to allow BigStitcher (and BigDataViewer) to load your images. This step is typically done in the BigStitcher GUI, but some people have written scripts to automatically generate XML's for their datasets (e.g. [here](https://github.com/nvladimus/npy2bdv/tree/v1.0.0)). If you want to start from scratch, please use [this dataset for stitching](https://drive.google.com/file/d/15xSQCBHcpEvJWd6YD5iKJzuc0IRpWB8a/view?usp=sharing) or [this one using interest points](https://drive.google.com/file/d/1VFT2APVPItBCyzrQ7dPWBNILyNh6yDKB/view?usp=sharing).
+
+After the dataset is defined one usually re-saved the input data (TIFF, CZI, ...) into a multi-resolution format that makes it possible to interactively display and work with the data the image as various resolution levels, and is essential for distributed processing. Right now, we use the N5 format for temporary storage of the input data. This resaving process can take substantial amounts of time if your input is large and can be distributed using Spark. Importantly, you need to define your dataset using the **Automatic Loader (Bioformats based)** and select to **Load data directly** and **load data virtually**.
+
+For testing the re-saving with Spark use your defined dataset(s), or download [this dataset for stitching](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) or [this dataset for interest points](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing)
+
 Resaving the stitching dataset:
-```
-./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml
-```
+
+<code>./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml</code>
+
 Resaving the interest point dataset:
-```
-./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml
-```
+
+<code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
+
 ### Pairwise Stitching<a name="stitching">
-```
-./stitching -x ~/SparkTest/Stitching/dataset.xml --dryRun
-```
+<code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
 ### Detect Interest Points<a name="ip-detect">
-```
-./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008
-```
+<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008</code>
 
 ### Match Interest Points<a name="ip-match">
-Per timepoint alignemnt:
-```
-./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences
-```
+Per timepoint alignment:
+
+<code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
+
 For timeseries alignment, grouping all views of a timepoint together:
-```
-./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints
-```
+
+<code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
-```
-./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
-```
+
+<code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
 When using interestpoints (per timepoint):
-```
-./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads
-```
-When using interestpoints (for timeseries alignment with grouping all views of a timepoint together)
-```
-./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints
-```
+
+<code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
+
+When using interestpoints (for timeseries alignment with grouping all views of a timepoint together):
+
+<code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ### Affine Fusion<a name="affine-fusion">
 
 `affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
-Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
+Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
-```
--x '~/test/dataset.xml'
--o '~/test/test-spark.n5'
--d '/ch488/s0'
---UINT8
---minIntensity 1
---maxIntensity 254
---channelId 0
-```
+<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.n5 -d /ch0/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 1 --maxIntensity 254 --channelId 0</code>
+
 *Note: here I save it as UINT8 [0..255] and scale all intensities between `1` and `254` to that range (so it is more obvious what happens). If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
 
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
@@ -146,7 +141,7 @@ Here is my example config for this [example dataset](https://drive.google.com/fi
 Calling it with `--multiRes` will create a multiresolution pyramid of the fused image.
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
-You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
+You can open the N5 in Fiji (`File > Import > HDF5/N5/ZARR/OME-NGFF`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
 
 ### Non-Rigid Fusion<a name="nonrigid-fusion">
 
