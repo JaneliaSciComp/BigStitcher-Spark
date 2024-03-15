@@ -78,6 +78,8 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As N5/XML](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing) containing matched interest points (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1X6JW7WeHA7LR71kXgJV0tHlbY8EMrfRF/view?usp=sharing) (aligned)
 
+For this tutorial I extracted the Stitching dataset into `~/TestSpark/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`.
+
 ## Usage<a name="usage">
 
 ### Resave Dataset<a name="resave">
@@ -86,7 +88,7 @@ When working with BigStitcher the first step is to [define a dataset](https://im
 
 After the dataset is defined one usually re-saved the input data (TIFF, CZI, ...) into a multi-resolution format that makes it possible to interactively display and work with the data the image as various resolution levels, and is essential for distributed processing. Right now, we use the N5 format for temporary storage of the input data. This resaving process can take substantial amounts of time if your input is large and can be distributed using Spark. Importantly, you need to define your dataset using the **Automatic Loader (Bioformats based)** and select to **Load data directly** and **load data virtually**.
 
-For testing the re-saving with Spark use your defined dataset(s), or download [this dataset for stitching](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) or [this one using interest points](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing)
+For testing the re-saving with Spark use your defined dataset(s), or download [this dataset for stitching](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) or [this dataset for interest points](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing)
 
 Resaving the stitching dataset:
 
