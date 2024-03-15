@@ -131,7 +131,7 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 Here is am example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
 ```
-./affine-fusion  -x ~/SparkTest/Stitching/dataset.xml  -o ~/SparkTest/Stitching/fused.n5 
+> ./affine-fusion  -x ~/SparkTest/Stitching/dataset.xml  -o ~/SparkTest/Stitching/fused.n5 
 -d /ch0/s0
 -s ZARR
 --multiRes
