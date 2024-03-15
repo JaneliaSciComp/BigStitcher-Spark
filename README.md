@@ -131,10 +131,11 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 Here is am example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
 ```
-./affine-fusion 
--x ~/SparkTest/Stitching/dataset.xml 
+./affine-fusion &&
+-x ~/SparkTest/Stitching/dataset.xml &&
 -o ~/SparkTest/Stitching/fused.n5 
 -d /ch0/s0
+-s ZARR
 --multiRes
 --preserveAnisotropy
 --UINT8
@@ -149,7 +150,7 @@ Here is am example config for this [example dataset](https://drive.google.com/fi
 Calling it with `--multiRes` will create a multiresolution pyramid of the fused image.
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
-You can open the N5 in Fiji (`File > Import > N5`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
+You can open the N5 in Fiji (`File > Import > HDF5/N5/ZARR/OME-NGFF`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
 
 ### Non-Rigid Fusion<a name="nonrigid-fusion">
 
