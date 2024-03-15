@@ -94,9 +94,10 @@ We provide two example datasets (one for *interest-point based registration*, on
 ./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008
 ```
 
-### Match Interest Points]<a name="ip-match">
+### Match Interest Points<a name="ip-match">
 ```
 ./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences
+./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints
 ```
 
 ### Solver<a name="#solver">
@@ -107,7 +108,8 @@ When using pairwise stitching:
 
 When using interestpoints:
 ```
-./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads --dryRun
+./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads
+./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints
 ```
 
 
