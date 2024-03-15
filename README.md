@@ -34,6 +34,8 @@ Additonally there are some utility methods:
   * [Affine Fusion](#affine-fusion)
   * [Non-Rigid Fusion](#nonrigid-fusion)
 
+<img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/bs-spark.png" alt="Overview of the BigStitcher-Spark pipeline">
+
 ## Install and Run<a name="install">
 
 ### To run it on your local computer<a name="installlocal">
