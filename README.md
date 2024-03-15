@@ -81,11 +81,14 @@ We provide two example datasets (one for *interest-point based registration*, on
 ## Usage<a name="usage">
 
 ### Resave Dataset<a name="resave">
+Resaving the stitching dataset:
 ```
-./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml --dryRun
+./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml
+```
+Resaving the interest point dataset:
+```
 ./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml
 ```
-
 ### Pairwise Stitching<a name="stitching">
 ```
 ./stitching -x ~/SparkTest/Stitching/dataset.xml --dryRun
@@ -97,8 +100,12 @@ We provide two example datasets (one for *interest-point based registration*, on
 ```
 
 ### Match Interest Points<a name="ip-match">
+Per timepoint alignemnt:
 ```
 ./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences
+```
+For timeseries alignment, grouping all views of a timepoint together:
+```
 ./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints
 ```
 
@@ -108,12 +115,14 @@ When using pairwise stitching:
 ./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
 ```
 
-When using interestpoints:
+When using interestpoints (per timepoint):
 ```
 ./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads
+```
+When using interestpoints (for timeseries alignment with grouping all views of a timepoint together)
+```
 ./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints
 ```
-
 
 ### Affine Fusion<a name="affine-fusion">
 
