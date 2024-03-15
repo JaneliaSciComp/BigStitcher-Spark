@@ -128,12 +128,15 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 
 `affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
-Here is my example config for this [example dataset](https://drive.google.com/file/d/13cz9HTqTwd9xoN2o7U7UyZrHylr8TNTA/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
+Here is am example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
 ```
--x '~/test/dataset.xml'
--o '~/test/test-spark.n5'
--d '/ch488/s0'
+./affine-fusion 
+-x ~/SparkTest/Stitching/dataset.xml 
+-o ~/SparkTest/Stitching/fused.n5 
+-d /ch0/s0
+--multiRes
+--preserveAnisotropy
 --UINT8
 --minIntensity 1
 --maxIntensity 254
