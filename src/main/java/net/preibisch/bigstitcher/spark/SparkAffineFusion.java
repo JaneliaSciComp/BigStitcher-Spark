@@ -44,6 +44,8 @@ import net.preibisch.mvrecon.process.export.ExportTools;
 import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -80,8 +82,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
-	@Option(names = "--blocksPerJob", description = "super-block multiplier, each spark job processes one super-block, for example \"2,2,2\" means 8 blocks per job (default: 1,1,1)")
-	private String blocksPerJobString = "1,1,1";
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 4,4,1)")
+	private String blockScaleString = "4,4,1";
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
@@ -152,7 +154,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
-		final int[] blocksPerJob = Import.csvStringToIntArray(blocksPerJobString);
+		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
 		System.out.println( "Fusing: " + boundingBox.getTitle() +
 				": " + Util.printInterval( boundingBox ) +
 				" with blocksize " + Util.printCoordinates( blockSize ) +
@@ -484,6 +486,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 			// The size of the block that this job renders (in pixels)
 			final long[] superBlockSize = gridBlock[ 1 ];
+
+			System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
 			// The min grid coordinate of the block that this job renders, in units of the output grid.
 			// Note, that the block that is rendered may cover multiple output grid cells.
