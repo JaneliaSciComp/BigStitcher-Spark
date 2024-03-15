@@ -83,7 +83,7 @@ We provide two example datasets (one for *interest-point based registration*, on
 ### Resave Dataset<a name="resave">
 Resaving the stitching dataset:
 ```
-./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/datasetn5.xml
+./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml
 ```
 Resaving the interest point dataset:
 ```
