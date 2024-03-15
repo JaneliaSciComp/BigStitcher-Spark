@@ -65,7 +65,7 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As TIFF](https://drive.google.com/file/d/15xSQCBHcpEvJWd6YD5iKJzuc0IRpWB8a/view?usp=sharing) (unaligned, no BigStitcher project defined)
   *  [As TIFF/XML](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1Q2SCJW_tCVKFzrdMrgVrFDyiF6nUN5-B/view?usp=sharing) (unaligned)
-  *  [As N5/XML containing pairwise stitching results](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) (unaligned)
+  *  [As N5/XML](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) containing pairwise stitching results (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) (aligned)
 
 * Dataset for **Interest Points**:
