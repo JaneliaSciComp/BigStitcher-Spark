@@ -82,65 +82,42 @@ We provide two example datasets (one for *interest-point based registration*, on
 
 ### Resave Dataset<a name="resave">
 Resaving the stitching dataset:
-```
-./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml
-```
+<code>./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml</code>
+
 Resaving the interest point dataset:
-```
-./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml
-```
+<code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
+
 ### Pairwise Stitching<a name="stitching">
-```
-./stitching -x ~/SparkTest/Stitching/dataset.xml --dryRun
-```
+<code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
 ### Detect Interest Points<a name="ip-detect">
-```
-./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008
-```
+<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008</code>
 
 ### Match Interest Points<a name="ip-match">
 Per timepoint alignemnt:
-```
-./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences
-```
+<code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
+
 For timeseries alignment, grouping all views of a timepoint together:
-```
-./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints
-```
+<code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
-```
-./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
-```
+<code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
 When using interestpoints (per timepoint):
-```
-./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads
-```
+<code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
+
 When using interestpoints (for timeseries alignment with grouping all views of a timepoint together)
-```
-./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints
-```
+<code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ### Affine Fusion<a name="affine-fusion">
 
 `affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
 
-Here is am example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
+Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
-```
-> ./affine-fusion  -x ~/SparkTest/Stitching/dataset.xml  -o ~/SparkTest/Stitching/fused.n5 
--d /ch0/s0
--s ZARR
---multiRes
---preserveAnisotropy
---UINT8
---minIntensity 1
---maxIntensity 254
---channelId 0
-```
+<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.n5 -d /ch0/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 1 --maxIntensity 254 --channelId 0</code>
+
 *Note: here I save it as UINT8 [0..255] and scale all intensities between `1` and `254` to that range (so it is more obvious what happens). If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
 
 ***Importantly: since we have more than one channel, I specified to use channel 0, otherwise the channels are fused together, which is most likely not desired. Same applies if multiple timepoints are present.***
