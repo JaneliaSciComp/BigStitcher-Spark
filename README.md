@@ -65,7 +65,7 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As TIFF](https://drive.google.com/file/d/15xSQCBHcpEvJWd6YD5iKJzuc0IRpWB8a/view?usp=sharing) (unaligned, no BigStitcher project defined)
   *  [As TIFF/XML](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1Q2SCJW_tCVKFzrdMrgVrFDyiF6nUN5-B/view?usp=sharing) (unaligned)
-  *  [As N5/XML containing pairwise stitching results](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) (unaligned)
+  *  [As N5/XML](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) containing pairwise stitching results (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) (aligned)
 
 * Dataset for **Interest Points**:
@@ -73,8 +73,8 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As TIFF/XML](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing) (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/14hQAljavSNcpUOWwwUOm0Ev2HqcaqWtI/view?usp=sharing) containing interest points (unaligned)
-  *  [As N5/XML]() containing matched interest points (unaligned)
-  *  [As N5/XML]() (aligned)
+  *  [As N5/XML](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing) containing matched interest points (unaligned)
+  *  [As N5/XML](https://drive.google.com/file/d/1X6JW7WeHA7LR71kXgJV0tHlbY8EMrfRF/view?usp=sharing) (aligned)
 
 ## Usage<a name="usage">
 
@@ -94,19 +94,22 @@ We provide two example datasets (one for *interest-point based registration*, on
 ./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008
 ```
 
-### Match Interest Points]<a name="ip-match">
+### Match Interest Points<a name="ip-match">
 ```
+./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences
+./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints
 ```
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
 ```
-./solver -x /Users/preibischs/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
+./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING --dryRun
 ```
 
 When using interestpoints:
 ```
-./solver -x /Users/preibischs/SparkTest/Stitching/dataset.xml -s IP --dryRun
+./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads
+./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints
 ```
 
 
