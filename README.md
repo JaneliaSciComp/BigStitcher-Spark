@@ -82,9 +82,11 @@ We provide two example datasets (one for *interest-point based registration*, on
 
 ### Resave Dataset<a name="resave">
 Resaving the stitching dataset:
+
 <code>./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml</code>
 
 Resaving the interest point dataset:
+
 <code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
 
 ### Pairwise Stitching<a name="stitching">
@@ -94,20 +96,25 @@ Resaving the interest point dataset:
 <code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008</code>
 
 ### Match Interest Points<a name="ip-match">
-Per timepoint alignemnt:
+Per timepoint alignment:
+
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
 
 For timeseries alignment, grouping all views of a timepoint together:
+
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
+
 <code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
 When using interestpoints (per timepoint):
+
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
-When using interestpoints (for timeseries alignment with grouping all views of a timepoint together)
+When using interestpoints (for timeseries alignment with grouping all views of a timepoint together):
+
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ### Affine Fusion<a name="affine-fusion">
