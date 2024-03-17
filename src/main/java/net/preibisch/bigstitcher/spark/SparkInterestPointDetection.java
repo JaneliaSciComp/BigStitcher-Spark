@@ -4,13 +4,15 @@ import java.io.File;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 
 import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
@@ -20,6 +22,7 @@ import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
@@ -44,6 +47,7 @@ import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
@@ -65,7 +69,8 @@ import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParam
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
-import scala.Tuple2;
+import scala.Tuple3;
+import scala.Tuple4;
 
 public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
@@ -74,6 +79,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	public static double combineDistance = 0.5; // when to merge interestpoints that were found in overlapping ROIS (overlappingOnly)
 
 	public enum IP { MIN, MAX, BOTH };
+	public enum Localization { NONE, QUADRATIC };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label for the interest points (e.g. beads)")
 	private String label = null;
@@ -87,6 +93,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--type" }, description = "the type of interestpoints to find, MIN, MAX or BOTH (default: MAX)")
 	private IP type = IP.MAX;
 
+	@Option(names = { "--localization" }, description = "Subpixel localization method, NONE or QUADRATIC (default: QUADRATIC)")
+	private Localization localization = Localization.QUADRATIC;
+
 	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view (default: false)")
 	private boolean overlappingOnly = false;
 
@@ -98,6 +107,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 	@Option(names = { "-i1", "--maxIntensity" }, description = "max intensity for segmentation, e.g. 2048.0 (default: load from image)")
 	private Double maxIntensity = null;
+
+
+	@Option(names = "--blockSize", description = "blockSize for running the interest point detection - at the scale of detection (default: 512,512,128)")
+	private String blockSizeString = "512,512,128";
 
 
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
@@ -123,20 +136,15 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "sigma: " + sigma );
 		System.out.println( "threshold: " + threshold );
 		System.out.println( "type: " + type );
+		System.out.println( "localization: " + localization );
 		System.out.println( "minIntensity: " + minIntensity );
 		System.out.println( "maxIntensity: " + maxIntensity );
 		System.out.println( "downsampleXY: " + dsxy );
 		System.out.println( "downsampleZ: " + dsz );
 		System.out.println( "overlappingOnly: " + overlappingOnly );
 
-		final ArrayList<int[]> serializedViewIds = Spark.serializeViewIdsForRDD( viewIdsGlobal );
-
-		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
-
-		final JavaSparkContext sc = new JavaSparkContext(conf);
-		sc.setLogLevel("ERROR");
-
-		final JavaRDD<int[]> rdd = sc.parallelize( serializedViewIds );
+		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
+		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
 
 		final String xmlPath = this.xmlPath;
 		final String label = this.label;
@@ -150,30 +158,144 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final boolean findMax = (this.type == IP.MAX || this.type == IP.BOTH);
 		final boolean onlyOverlappingRegions = overlappingOnly;
 		final double combineDistance = SparkInterestPointDetection.combineDistance;
+		final Localization localization = this.localization;
 
-		// we need this in case we want to detect in overlapping areas only
-		final int[][] allSerializedViewIds = Spark.serializeViewIds( viewIdsGlobal );
+		//
+		// assemble all intervals that need to be processed
+		//
+		final ArrayList< Pair< ViewId, Interval > > toProcess = new ArrayList<>();
 
-		final JavaPairRDD< Integer, int[] > rddResults = rdd.mapToPair( serializedView ->
+		for ( final ViewId viewId : viewIdsGlobal )
+		{
+			final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
+			final ImgLoader imgLoader = dataGlobal.getSequenceDescription().getImgLoader();
+
+			// load mipmap transform and bounds
+			// TODO: can we load the dimensions without (Virtually) opening the image?
+			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
+					imgLoader,
+					vd,
+					new long[] { downsampleXY, downsampleXY, downsampleZ },
+					true );
+
+			if ( onlyOverlappingRegions )
+			{
+				final ArrayList< Interval > allIntervals = new ArrayList<>();
+
+				final AffineTransform3D mipmapTransform = input.getB(); // maps downsampled image into global coordinate system
+				final AffineTransform3D t1 = mipmapTransform.inverse(); // maps global coordinates into coordinate system of the downsampled image
+
+				for ( final ViewId otherViewId : viewIdsGlobal )
+				{
+					if ( otherViewId.equals( viewId ) )
+						continue;
+
+					//
+					// does it overlap?
+					//
+					final Dimensions dim = ViewUtil.getDimensions( dataGlobal, viewId );
+					final Dimensions dimOtherViewId = ViewUtil.getDimensions( dataGlobal, otherViewId );
+					final ViewDescription vdOtherViewId = dataGlobal.getSequenceDescription().getViewDescription( viewId );
+
+					final ViewRegistration reg = ViewUtil.getViewRegistration( dataGlobal, viewId );
+					final ViewRegistration regOtherViewId = ViewUtil.getViewRegistration( dataGlobal, otherViewId );
+
+					// load other mipmap transform
+					final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
+					openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, new long[] { downsampleXY, downsampleXY, downsampleZ }, true, true );
+
+					// map the other view into the local coordinate space of the view we find interest points in
+					// apply inverse of the mipmap transform of each
+					final AffineTransform3D t2 = regOtherViewId.getModel().preConcatenate( reg.getModel().inverse() ).preConcatenate( mipmapTransformOtherViewId.inverse() );
+
+					final Interval boundingBox = Intervals.smallestContainingInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
+					final Interval boundingBoxOther = Intervals.smallestContainingInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
+
+					if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
+					{
+						final Interval intersectionBoxes = Intervals.intersect( boundingBox, boundingBoxOther );
+						final Interval intersection = Intervals.intersect( input.getA(), intersectionBoxes ); // make sure it fits (e.g. rounding errors)
+
+						System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
+						System.out.println( "intersection=" + Util.printInterval( intersection ) );
+
+						allIntervals.add( intersection );
+					}
+				}
+
+				// TODO: some sort of intersections might be useful
+				allIntervals.forEach( interval -> toProcess.add( new ValuePair<>( viewId, interval ) ) );
+			}
+			else
+			{
+				toProcess.add( new ValuePair<>( viewId, new FinalInterval( input.getA() ) ) );
+			}
+		}
+
+		// turn all areas into grids and serializable objects
+		final ArrayList< Tuple3<int[], long[], long[][] > > sparkProcess = new ArrayList<>();
+
+		System.out.println( "The following intervals will be processed:");
+
+		for ( final Pair< ViewId, Interval > pair : toProcess )
+		{
+			final List<long[][]> grid = Grid.create( pair.getB().dimensionsAsLongArray(), blockSize );
+			final long[] intervalOffset = pair.getB().minAsLongArray();
+			final int[] serializedViewId = Spark.serializeViewId( pair.getA() );
+
+			grid.forEach( gridEntry -> {
+				sparkProcess.add( new Tuple3<>( serializedViewId, intervalOffset, gridEntry ) );
+
+				final long[] superBlockMin = new long[ intervalOffset.length ];
+				Arrays.setAll( superBlockMin, d -> gridEntry[ 0 ][ d ] + intervalOffset[ d ] );
+
+				final long[] superBlockMax = new long[ intervalOffset.length ];
+				Arrays.setAll( superBlockMax, d -> superBlockMin[ d ] + gridEntry[ 1 ][ d ] - 1 );
+
+				System.out.println( "Processing " + Group.pvid(pair.getA()) + ", " + Util.printInterval( new FinalInterval(superBlockMin, superBlockMax) ) + " of full interval " + Util.printInterval( pair.getB() ) );
+			});
+		}
+
+		System.out.println( "Total number of jobs: " + sparkProcess.size() );
+		
+		final SparkConf conf = new SparkConf().setAppName("SparkInterestPointDetection");
+
+		final JavaSparkContext sc = new JavaSparkContext(conf);
+		sc.setLogLevel("ERROR");
+
+		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess );
+
+		// return ViewId, interval, locations, intensities
+		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
-			final ViewId viewId = Spark.deserializeViewId( serializedView );
+			final ViewId viewId = Spark.deserializeViewId( serializedInput._1() );
 			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
 
-			System.out.println( "Processing " + Group.pvid(viewId) + " ... " );
+			// The min coordinates of the block that this job processes (in pixels)
+			final long[] superBlockMin = new long[ serializedInput._2().length ];
+			Arrays.setAll( superBlockMin, d -> serializedInput._3()[ 0 ][ d ] + serializedInput._2()[ d ] );
 
-			if ( !vd.isPresent() )
-			{
-				System.out.println( Group.pvid(viewId) + " is not present. skipping." );
-				return new Tuple2<>( -1, serializedView );
-			}
+			// The size of the block that this job renders (in pixels)
+			final long[] superBlockSize = serializedInput._3()[ 1 ];
+
+			// The min coordinates of the block that this job processes (in pixels)
+			final long[] superBlockMax = new long[ serializedInput._2().length ];
+			Arrays.setAll( superBlockMax, d -> superBlockMin[ d ] + superBlockSize[ d ] - 1 );
+
+			// The min grid coordinate of the block that this job renders, in units of the output grid.
+			// Note, that the block that is rendered may cover multiple output grid cells.
+			final long[] outputGridOffset = serializedInput._3()[ 2 ];
+			// TODO: this may not be relevant here, need it for saving usually
+
+			final Interval processInterval = new FinalInterval( superBlockMin, superBlockMax );
 
 			final DoGParameters dog = new DoGParameters();
 
 			dog.imgloader = data.getSequenceDescription().getImgLoader();
 			dog.toProcess = new ArrayList< ViewDescription >( Arrays.asList( vd ) );
 
-			dog.localization = DifferenceOfGUI.defaultLocalization;
+			dog.localization = localization == Localization.NONE ? 0 : 1;// DifferenceOfGUI.defaultLocalization;
 			dog.downsampleZ = downsampleZ;
 			dog.downsampleXY = downsampleXY;
 			dog.imageSigmaX = DifferenceOfGUI.defaultImageSigmaX;
@@ -200,149 +322,210 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			dog.showProgressMin = Double.NaN;
 			dog.showProgressMax = Double.NaN;
 
+			//
+			// runs virtual downsampling so it only loads what it needs
+			// ideally only run with pre-computed downsample steps for efficiency
+			//
+			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
+						dog.imgloader,
+						vd,
+						new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
+						true );
+
+			System.out.println( "Processing " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " of full interval " + Util.printInterval( input.getA() ) );
+
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
-			final ArrayList< InterestPoint > ips;
-			final Pair<RandomAccessibleInterval, AffineTransform3D> input;
-			final AffineTransform3D mipmapTransform;
+			final ArrayList< InterestPoint > ips = DoGImgLib2.computeDoG(
+					(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
+					null, // mask
+					processInterval,
+					dog.sigma,
+					dog.threshold,
+					dog.localization,
+					dog.findMin,
+					dog.findMax,
+					dog.minIntensity,
+					dog.maxIntensity,
+					new int[] {128, 128, 64},
+					service,
+					dog.cuda,
+					dog.deviceCUDA,
+					dog.accurateCUDA,
+					dog.percentGPUMem );
 
-			if ( onlyOverlappingRegions )
+			service.shutdown();
+
+			if ( ips == null || ips.size() == 0 )
 			{
-				//
-				// runs virtual downsampling so it only loads what it needs
-				// ideally only run with pre-computed downsample steps for efficiency
-				//
-				input = openAndDownsample(
-							dog.imgloader,
-							vd,
-							new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
-							true );
+				System.out.println( "No interest points found for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
+				return new Tuple4<>( serializedInput._1(), Spark.serializeInterval( processInterval ), null, null );
+			}
 
-				mipmapTransform = input.getB();
-				ips = new ArrayList<>();
+			final double[] intensities;
 
-				// for each overlapping area do (we merge the points later)
-				for ( final ViewId otherViewId : Spark.deserializeViewIds( allSerializedViewIds ) )
+			if ( storeIntensities )
+			{
+				System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
+
+				// for image interpolation
+				final RealRandomAccessible<FloatType> rra = Views.interpolate(
+						Views.extendBorder(
+								Converters.convertRAI(
+										(RandomAccessibleInterval<RealType>)(Object)input.getA(),
+										(a,b) -> b.set( a.getRealFloat() ),
+										new FloatType() ) ),
+						new NLinearInterpolatorFactory<>() );
+				final RealRandomAccess< FloatType> r = rra.realRandomAccess();
+
+				intensities = new double[ ips.size() ];
+
+				for ( int i = 0; i < ips.size(); ++i )
 				{
-					if ( otherViewId.equals( viewId ) )
-						continue;
-
-					//
-					// does it overlap?
-					//
-					final Dimensions dim = ViewUtil.getDimensions( data, viewId );
-					final Dimensions dimOtherViewId = ViewUtil.getDimensions( data, otherViewId );
-
-					final ViewRegistration reg = ViewUtil.getViewRegistration( data, viewId );
-					final ViewRegistration regOtherViewId = ViewUtil.getViewRegistration( data, otherViewId );
-
-					// load other mipmap transform
-					final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
-					openAndDownsample(dog.imgloader, vd, mipmapTransformOtherViewId, new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ }, true, true );
-
-					// map the other view into the local coordinate space of the view we find interest points in
-					// apply inverse of the mipmap transform of each
-					final AffineTransform3D t1 = mipmapTransform.inverse();
-					final AffineTransform3D t2 = regOtherViewId.getModel().preConcatenate( reg.getModel().inverse() ).preConcatenate( mipmapTransformOtherViewId.inverse() );
-
-					final Interval boundingBox = Intervals.smallestContainingInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
-					final Interval boundingBoxOther = Intervals.smallestContainingInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
-
-					if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
-					{
-						final Interval intersectionBoxes = Intervals.intersect( boundingBox, boundingBoxOther );
-						final Interval intersection = Intervals.intersect( input.getA(), intersectionBoxes ); // make sure it fits (e.g. rounding errors)
-
-						System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
-						System.out.println( "intersection=" + Util.printInterval( intersectionBoxes ) );
-
-						//
-						// run DoG only in that area
-						//
-						final ArrayList< InterestPoint > localPoints = DoGImgLib2.computeDoG(
-								(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
-								null, // mask
-								intersection,
-								dog.sigma,
-								dog.threshold,
-								dog.localization,
-								dog.findMin,
-								dog.findMax,
-								dog.minIntensity,
-								dog.maxIntensity,
-								DoGImgLib2.blockSize,
-								service,
-								dog.cuda,
-								dog.deviceCUDA,
-								dog.accurateCUDA,
-								dog.percentGPUMem );
-
-						// combine points since overlapping areas might exist
-						if ( ips.size() == 0 )
-						{
-							ips.addAll( localPoints );
-						}
-						else
-						{
-							final KDTree< InterestPoint > tree = new KDTree<>(ips, ips);
-							final NearestNeighborSearchOnKDTree< InterestPoint > search = new NearestNeighborSearchOnKDTree<>( tree );
-
-							for ( final InterestPoint ip : localPoints )
-							{
-								search.search( ip );
-								if ( search.getDistance() > combineDistance )
-									ips.add( ip );
-							}
-						}
-					}
+					r.setPosition( ips.get( i ) );
+					intensities[ i ] = r.get().get();
 				}
 			}
 			else
 			{
-				input = openAndDownsample(
-							dog.imgloader,
-							vd,
-							new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
-							false );
-
-				mipmapTransform = input.getB();
-
-				ips = DoGImgLib2.computeDoG(
-							(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
-							null, // mask
-							new FinalInterval( input.getA() ),
-							dog.sigma,
-							dog.threshold,
-							dog.localization,
-							dog.findMin,
-							dog.findMax,
-							dog.minIntensity,
-							dog.maxIntensity,
-							DoGImgLib2.blockSize,
-							service,
-							dog.cuda,
-							dog.deviceCUDA,
-							dog.accurateCUDA,
-							dog.percentGPUMem );
+				intensities = null;
 			}
 
-			service.shutdown();
-
 			// correcting for downsampling
-			System.out.println( "Correcting interest points '" + label + "', " + Group.pvid(viewId) + " for downsampling ... " );
+			System.out.println( "Correcting interest points '" + label + "', " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " for downsampling ... " );
 
-			DownsampleTools.correctForDownsampling( ips, mipmapTransform );
+			DownsampleTools.correctForDownsampling( ips, input.getB() );
 
-			// save interest point N5
-			if (!dryRun)
+			final double[][] points = new double[ ips.size() ][];
+
+			for ( int i = 0; i < ips.size(); ++i )
+				points[ i ] = ips.get( i ).getL();
+
+			System.out.println( "Returning " + ips.size() + " interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
+
+			// return ViewId, interval, locations, intensities
+			return new Tuple4<>( serializedInput._1(), Spark.serializeInterval( processInterval ), points, intensities );
+		});
+
+
+		rddResult.cache();
+		rddResult.count();
+
+		final List<Tuple4<int[], long[][], double[][], double[]>> results = rddResult.collect();
+
+		sc.close();
+
+		System.out.println( "Computed all interest points, statistics:" );
+
+		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap<>();
+		final HashMap< ViewId, List< Double > > intensitiesIPs = new HashMap<>();
+
+		// assemble all interest point intervals per ViewId
+		final HashMap< ViewId, List< List< InterestPoint > > > interestPointsPerViewId = new HashMap<>();
+		final HashMap< ViewId, List< List< Double > > > intensitiesPerViewId = new HashMap<>();
+
+		for ( final Tuple4<int[], long[][], double[][], double[]> tuple : results )
+		{
+			final ViewId viewId = Spark.deserializeViewId( tuple._1() );
+			//final Interval interval = Spark.deserializeInterval( tuple._2() );
+			final double[][] points = tuple._3();
+
+			if ( points != null && points.length > 0 )
+			{
+				interestPointsPerViewId.putIfAbsent(viewId, new ArrayList<>() );
+				interestPointsPerViewId.get( viewId ).add( Spark.deserializeInterestPoints(points) );
+
+				if ( storeIntensities )
+				{
+					intensitiesPerViewId.putIfAbsent(viewId, new ArrayList<>() );
+					intensitiesPerViewId.get( viewId ).add( DoubleStream.of(tuple._4()).boxed().collect(Collectors.toList() ) );
+				}
+			}
+		}
+
+		// TODO: fix overlap
+		final ArrayList< ViewId > viewIds = new ArrayList<>( interestPointsPerViewId.keySet() );
+		Collections.sort( viewIds );
+
+		for ( final ViewId viewId : viewIds )
+		{
+			final ArrayList< InterestPoint > myIps = new ArrayList<>();
+			final ArrayList< Double > myIntensities = new ArrayList<>();
+
+			final List< List< InterestPoint > > ipsList = interestPointsPerViewId.get( viewId );
+			final List< List< Double > > intensitiesList;
+
+			if ( storeIntensities )
+				intensitiesList = intensitiesPerViewId.get( viewId );
+			else
+				intensitiesList = null;
+
+			// combine points since overlapping areas might exist
+			for ( int l = 0; l < ipsList.size(); ++l )
+			{
+				final List< InterestPoint > ips = ipsList.get( l );
+				final List< Double > intensities;
+
+				if ( storeIntensities )
+					intensities = intensitiesList.get( l );
+				else
+					intensities = null;
+
+				if ( !overlappingOnly || myIps.size() == 0 )
+				{
+					myIps.addAll( ips );
+
+					if ( storeIntensities )
+						myIntensities.addAll( intensities );
+				}
+				else
+				{
+					final KDTree< InterestPoint > tree = new KDTree<>(myIps, myIps);
+					final NearestNeighborSearchOnKDTree< InterestPoint > search = new NearestNeighborSearchOnKDTree<>( tree );
+
+					for ( int i = 0; i < ips.size(); ++i )
+					{
+						final InterestPoint ip = ips.get( i );
+						search.search( ip );
+
+						if ( search.getDistance() > combineDistance )
+						{
+							myIps.add( ip );
+
+							if ( storeIntensities )
+								myIntensities.add( intensities.get( i ) );
+						}
+					}
+				}
+			}
+
+			if ( myIps.size() > 0 )
+			{
+				interestPoints.put(viewId, myIps);
+	
+				if ( storeIntensities )
+					intensitiesIPs.put(viewId, myIntensities );
+	
+				System.out.println( Group.pvid( viewId ) + ": " + myIps.size() );
+			}
+			else
+			{
+				System.out.println( Group.pvid( viewId ) + ": no points found." );
+			}
+		}
+
+		if ( !dryRun )
+		{
+			// save interest points
+			for ( final ViewId viewId : viewIds )
 			{
 				System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
-
-				final InterestPoints ipl = InterestPoints.newInstance( data.getBasePath(), viewId, label );
-
-				ipl.setInterestPoints( ips );
+				
+				final InterestPoints ipl = InterestPoints.newInstance( dataGlobal.getBasePath(), viewId, label );
+	
+				ipl.setInterestPoints( interestPoints.get( viewId ) );
 				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
-
+	
 				ipl.saveInterestPoints( true );
 				ipl.saveCorrespondingInterestPoints( true );
 
@@ -356,7 +539,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
 					final String datasetIntensities = i.ipDataset() + "/intensities";
 
-					if ( ips.size() == 0 )
+					if ( interestPoints.get( viewId ).size() == 0 )
 					{
 						n5Writer.createDataset(
 								datasetIntensities,
@@ -367,21 +550,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					}
 					else
 					{
-						// for image interpolation
-						final RealRandomAccessible<FloatType> rra = Views.interpolate(
-								Views.extendBorder(
-										Converters.convertRAI(
-												(RandomAccessibleInterval<RealType>)(Object)input.getA(),
-												(a,b) -> b.set( a.getRealFloat() ),
-												new FloatType() ) ),
-								new NLinearInterpolatorFactory<>() );
-	
-						final RealRandomAccess< FloatType> r = rra.realRandomAccess();
-	
-						// to undo the mipmap transform correction
-						final AffineTransform3D invMM = mipmapTransform.inverse();
-						final double[] tmp = new double[ ips.get( 0 ).getL().length ];
-	
+						List<Double> intensitiesList = intensitiesIPs.get( viewId );
+
 						// 1 x N array (which is a 2D array)
 						final FunctionRandomAccessible< FloatType > intensities =
 								new FunctionRandomAccessible<>(
@@ -389,17 +559,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 										(location, value) ->
 										{
 											final int index = location.getIntPosition( 1 );
-											final InterestPoint ip = ips.get( index );
-	
-											invMM.apply( ip.getL(), tmp );
-											r.setPosition( tmp );
-	
-											value.set( r.get().get() );
+											value.set( intensitiesList.get( index ).floatValue() );
 										},
 										FloatType::new );
 	
 						final RandomAccessibleInterval< FloatType > intensityData =
-								Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, ips.size() - 1 } );
+								Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, intensitiesList.size() - 1 } );
 	
 						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
 					}
@@ -410,45 +575,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				}
 			}
 
-			System.out.println( "Finished " + Group.pvid(viewId) + "." );
+			// save XML
+			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
+					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+	
+			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
 
-			return new Tuple2<>( ips.size(), serializedView );
-		});
-
-		rddResults.cache();
-		rddResults.count();
-
-		final List<Tuple2<Integer, int[]>> results = rddResults.collect();
-
-		System.out.println( "Computed all interest points, statistics:" );
-
-		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap< ViewId, List< InterestPoint > >();
-
-		for ( final Tuple2<Integer, int[] > tuple : results )
-		{
-			final ViewId viewId = Spark.deserializeViewId( tuple._2() );
-			final int numDetection = tuple._1();
-
-			if ( numDetection >= 0 )
-			{
-				interestPoints.put( viewId, new ArrayList<>() ); // just for saving the XML - it does not save the actual list
-				System.out.println( Group.pvid( viewId ) + ": " + numDetection );
-			}
-			else
-			{
-				System.out.println( Group.pvid( viewId ) + ": missing view, skipping " );
-			}
-		}
-
-		final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-				" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-
-		InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
-
-		sc.close();
-
-		if (!dryRun)
-		{
 			System.out.println( "Saving XML (metadata only) ..." );
 	
 			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
