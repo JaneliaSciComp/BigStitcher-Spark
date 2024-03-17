@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 
@@ -51,6 +52,7 @@ import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
+import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
@@ -108,6 +110,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "-i1", "--maxIntensity" }, description = "max intensity for segmentation, e.g. 2048.0 (default: load from image)")
 	private Double maxIntensity = null;
 
+	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using " + SparkAffineFusion.N_PREFETCH_THREADS + " threads, useful in cloud environments (default: false)")
+	private boolean prefetch = false;
+
 
 	@Option(names = "--blockSize", description = "blockSize for running the interest point detection - at the scale of detection (default: 512,512,128)")
 	private String blockSizeString = "512,512,128";
@@ -142,6 +147,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "downsampleXY: " + dsxy );
 		System.out.println( "downsampleZ: " + dsz );
 		System.out.println( "overlappingOnly: " + overlappingOnly );
+		System.out.println( "prefetching with " + SparkAffineFusion.N_PREFETCH_THREADS + " threads: " + prefetch );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
@@ -159,6 +165,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final boolean onlyOverlappingRegions = overlappingOnly;
 		final double combineDistance = SparkInterestPointDetection.combineDistance;
 		final Localization localization = this.localization;
+		final boolean prefetch = this.prefetch;
 
 		//
 		// assemble all intervals that need to be processed
@@ -333,6 +340,17 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						true );
 
 			System.out.println( "Processing " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " of full interval " + Util.printInterval( input.getA() ) );
+
+			if ( prefetch )
+			{
+				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
+				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, processInterval );
+
+				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
+
+				prefetchExecutor.invokeAll( prefetchBlocks );
+				prefetchExecutor.shutdown();
+			}
 
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
