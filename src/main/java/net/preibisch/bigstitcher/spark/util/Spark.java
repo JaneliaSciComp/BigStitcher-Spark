@@ -13,12 +13,15 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.FinalInterval;
 import net.imglib2.FinalRealInterval;
+import net.imglib2.Interval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -132,9 +135,29 @@ public class Spark {
 		return serializedViewIds;
 	}
 
+	public static ArrayList< InterestPoint > deserializeInterestPoints( final double[][] points )
+	{
+		final ArrayList< InterestPoint > list = new ArrayList<>();
+		
+		for ( int i = 0; i < points.length; ++i )
+			list.add( new InterestPoint(i, points[ i ] ));
+
+		return list;
+	}
+
 	public static int[] serializeViewId( final ViewId viewId )
 	{
 		return new int[] { viewId.getTimePointId(), viewId.getViewSetupId() };
+	}
+
+	public static Interval deserializeInterval( final long[][] serializedInterval )
+	{
+		return new FinalInterval( serializedInterval[ 0 ], serializedInterval[ 1 ] );
+	}
+
+	public static long[][] serializeInterval( final Interval interval )
+	{
+		return new long[][]{ interval.minAsLongArray(), interval.maxAsLongArray() };
 	}
 
 	public static class SerializablePairwiseStitchingResult implements Serializable
