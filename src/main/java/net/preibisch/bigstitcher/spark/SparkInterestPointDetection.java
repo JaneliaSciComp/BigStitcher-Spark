@@ -245,8 +245,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					final AffineTransform3D t1 = mipmapTransform.inverse();
 					final AffineTransform3D t2 = regOtherViewId.getModel().preConcatenate( reg.getModel().inverse() ).preConcatenate( mipmapTransformOtherViewId.inverse() );
 
-					final Interval boundingBox = Intervals.largestContainedInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
-					final Interval boundingBoxOther = Intervals.largestContainedInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
+					final Interval boundingBox = Intervals.smallestContainingInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
+					final Interval boundingBoxOther = Intervals.smallestContainingInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
 
 					if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
 					{
@@ -337,25 +337,25 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			if (!dryRun)
 			{
 				System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
-	
+
 				final InterestPoints ipl = InterestPoints.newInstance( data.getBasePath(), viewId, label );
-	
+
 				ipl.setInterestPoints( ips );
 				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
-	
+
 				ipl.saveInterestPoints( true );
 				ipl.saveCorrespondingInterestPoints( true );
-	
+
 				// store image intensities for interest points
 				if ( storeIntensities )
 				{
 					System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
-	
+
 					final InterestPointsN5 i = (InterestPointsN5)ipl;
-	
+
 					final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
 					final String datasetIntensities = i.ipDataset() + "/intensities";
-	
+
 					if ( ips.size() == 0 )
 					{
 						n5Writer.createDataset(
