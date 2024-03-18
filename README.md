@@ -100,11 +100,11 @@ It is analogous for the interest point dataset:
 
 Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes individual blocks of the input images, so also few, very big images will be processed efficiently.
 
 ### Pairwise Stitching<a name="stitching">
 
-To perform classical stitching (translation only), first pairwise stitching between overlapping tiles needs to be computed. 
+To perform classical stitching (translation only), first pairwise stitching between overlapping tiles needs to be computed. So far we only support standard grouping where all channels and illuminations of a specific Tile will be grouped together as one image and stitching is performed individually per Timepoint and Angle. To run the stitching with default paramters you need to run:
 
 <code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
