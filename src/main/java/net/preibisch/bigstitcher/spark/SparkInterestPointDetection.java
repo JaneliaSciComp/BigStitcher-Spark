@@ -344,14 +344,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( prefetch )
 			{
-				// here we put in the inverse mipmap transform and pretebd its a fusion so we can re-use Tobi's code
+				// here we put in the inverse mipmap transform and pretend its a fusion so we can re-use Tobi's code
 				// that finds which blocks need to be prefetched from an input image
-				final ViewRegistration vr = data.getViewRegistrations().getViewRegistration( viewId );
-				vr.getTransformList().clear();
-				vr.getTransformList().add( new ViewTransformAffine( "inverse mipmap transform", input.getB().inverse() ) );
-				vr.updateModel();
-
-				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, processInterval, 0 );
+				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, input.getB().inverse(), processInterval, 0 );
 
 				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
 

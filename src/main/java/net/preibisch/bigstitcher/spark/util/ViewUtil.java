@@ -100,7 +100,7 @@ public class ViewUtil
 			final ViewId viewId,
 			final Interval fusedBlock )
 	{
-		return findOverlappingBlocks(data, viewId, fusedBlock, 1 );
+		return findOverlappingBlocks(data, viewId, data.getViewRegistrations().getViewRegistration( viewId ).getModel(), fusedBlock, 1 );
 	}
 
 	/**
@@ -113,6 +113,8 @@ public class ViewUtil
 	 * 		has all images and transformations
 	 * @param viewId
 	 * 		which view to check
+	 * @param model
+	 * 		the transformation model applied to the View during fusion
 	 * @param fusedBlock
 	 * 		the interval that will be processed (in world coordinates)
 	 * @param expand
@@ -123,6 +125,7 @@ public class ViewUtil
 	public static List< PrefetchPixel< ? > > findOverlappingBlocks(
 			final SpimData data,
 			final ViewId viewId,
+			final AffineTransform3D model,
 			final Interval fusedBlock,
 			final int expand )
 	{
@@ -136,8 +139,8 @@ public class ViewUtil
 					"failed to find setupImgLoader for " + viewIdToString( viewId ) + " in " + data );
 		}
 
-		final ViewRegistrations registrations = data.getViewRegistrations();
-		final AffineTransform3D model = registrations.getViewRegistration( viewId ).getModel();
+		//final ViewRegistrations registrations = data.getViewRegistrations();
+		//final AffineTransform3D model = registrations.getViewRegistration( viewId ).getModel();
 
 		final ImgAndMipmapTransform< ? > best = ImgAndMipmapTransform.forBestResolution( setupImgLoader, viewId.getTimePointId(), model );
 		final RandomAccessibleInterval< ? > img = best.img;
