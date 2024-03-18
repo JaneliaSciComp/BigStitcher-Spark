@@ -110,6 +110,8 @@ To perform classical stitching (translation only), first pair-wise stitching bet
 
 Please run `stitching` without parameters to get help for all command line arguments. `-ds` sets the resolution at which cross correlation is performed; `2,2,1` is the default and usually superior to `1,1,1` due to suppressed noice, even higher resolution levels typically work well too since by default the peaks are located with subpixel accuracy. `--disableSubpixelResolution` disables subpixel accurate shifts. `-p` sets the number of phase correlation peaks that are checked with cross-correlation (incrementing this number can help with stitching issues). `--minR` and `--maxR` are filters that specify the accepted range for cross correlation for any pair of overlapping tiles, reducing `--minR` may be useful to accept more pair and excluding a `--maxR` of `1` may be useful too if you get wrong links with `r=1.0`. `--maxShiftX/Y/Z` and `--maxShiftTotal` set the maximal allowed shift between any pair of images relative to their current location; limiting it if the current position is close to the correct one might be useful.
 
+TODO: select specific views ...
+
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over pairs of images.
 
 ### Detect Interest Points<a name="ip-detect">
