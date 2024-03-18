@@ -104,9 +104,13 @@ Please run `resave` without parameters to get help for all command line argument
 
 ### Pairwise Stitching<a name="stitching">
 
-To perform classical stitching (translation only), first pairwise stitching between overlapping tiles needs to be computed. So far we only support standard grouping where all channels and illuminations of a specific Tile will be grouped together as one image and stitching is performed individually per Timepoint and Angle. To run the stitching with default paramters you need to run:
+To perform classical stitching (translation only), first pair-wise stitching between all overlapping tiles needs to be computed. So far we only support standard grouping where all channels and illuminations of a specific Tile will be grouped together as one image and stitching is performed individually per Timepoint and Angle. To run the stitching with default paramters you need to run:
 
 <code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
+
+Please run `stitching` without parameters to get help for all command line arguments. `-ds` sets the resolution at which cross correlation is performed; `2,2,1` is the default and usually superior to `1,1,1` due to suppressed noice, even higher resolution levels typically work well too since by default the peaks are located with subpixel accuracy. `--disableSubpixelResolution` disables subpixel accurate shifts. `-p` sets the number of phase correlation peaks that are checked with cross-correlation (incrementing this number can help with stitching issues). `--minR` and `--maxR` are filters that specify the accepted range for cross correlation for any pair of overlapping tiles, reducing `--minR` may be useful to accept more pair and excluding a `--maxR` of `1` may be useful too if you get wrong links with `r=1.0`. `--maxShiftX/Y/Z` and `--maxShiftTotal` set the maximal allowed shift between any pair of images relative to their current location; limiting it if the current position is close to the correct one might be useful.
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over pairs of images.
 
 ### Detect Interest Points<a name="ip-detect">
 <code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255 --prefetch</code>
