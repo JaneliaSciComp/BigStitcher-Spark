@@ -90,11 +90,11 @@ After the dataset is defined one usually re-saved the input data (TIFF, CZI, ...
 
 For testing the re-saving with Spark use your defined dataset(s), or download [this dataset for stitching](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) or [this dataset for interest points](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing)
 
-Resaving the stitching dataset:
+The command for resaving the stitching dataset could look like this and will overwrite the input XML, a backup XML will be automatically created:
 
 <code>./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml</code>
 
-Resaving the interest point dataset:
+It is analogous for the interest point dataset:
 
 <code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
 
