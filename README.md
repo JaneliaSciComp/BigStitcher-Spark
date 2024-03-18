@@ -88,17 +88,24 @@ When working with BigStitcher the first step is to [define a dataset](https://im
 
 After the dataset is defined one usually re-saved the input data (TIFF, CZI, ...) into a multi-resolution format that makes it possible to interactively display and work with the data the image as various resolution levels, and is essential for distributed processing. Right now, we use the N5 format for temporary storage of the input data. This resaving process can take substantial amounts of time if your input is large and can be distributed using Spark. Importantly, you need to define your dataset using the **Automatic Loader (Bioformats based)** and select to **Load data directly** and **load data virtually**.
 
-For testing the re-saving with Spark use your defined dataset(s), or download [this dataset for stitching](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) or [this dataset for interest points](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing)
+For testing the re-saving (and multi-resolution pyramid creation) with Spark use your defined dataset(s), or download [this dataset for stitching](https://drive.google.com/file/d/1-nqzBbtff8u93LGbCTPRwikWJH6o6B46/view?usp=sharing) or [this dataset for interest points](https://drive.google.com/file/d/1Qs3juqQgYlDc2KglbcFTFKzdAQxgS9zc/view?usp=sharing)
 
-Resaving the stitching dataset:
+The command for resaving the stitching dataset could look like this and will overwrite the input XML, a backup XML will be automatically created:
 
 <code>./resave -x ~/SparkTest/Stitching/dataset.xml -xo ~/SparkTest/Stitching/dataset.xml</code>
 
-Resaving the interest point dataset:
+It is analogous for the interest point dataset:
 
 <code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
 
+Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes individual blocks of the input images, so also few, very big images will be processed efficiently.
+
 ### Pairwise Stitching<a name="stitching">
+
+To perform classical stitching (translation only), first pairwise stitching between overlapping tiles needs to be computed. So far we only support standard grouping where all channels and illuminations of a specific Tile will be grouped together as one image and stitching is performed individually per Timepoint and Angle. To run the stitching with default paramters you need to run:
+
 <code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
 ### Detect Interest Points<a name="ip-detect">
