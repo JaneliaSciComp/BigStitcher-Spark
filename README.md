@@ -98,7 +98,14 @@ It is analogous for the interest point dataset:
 
 <code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
 
+Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well chosen. 
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data.
+
 ### Pairwise Stitching<a name="stitching">
+
+
+
 <code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
 ### Detect Interest Points<a name="ip-detect">
