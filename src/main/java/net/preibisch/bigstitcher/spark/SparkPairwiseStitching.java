@@ -78,6 +78,12 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 	@Option(names = { "--maxShiftTotal" }, description = "maximum shift (in pixels) between two images (total distance) that is allowed during pairwise comparison (default: any)")
 	protected Double maxShiftTotal = null;
 
+	@Option(names = { "--channelCombine" }, description = "defines how images of different channels of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: AVERAGE)")
+	protected ActionType channelCombine = ActionType.AVERAGE;
+
+	@Option(names = { "--illumCombine" }, description = "defines how images of different illuminations of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: PICK_BRIGHTEST)")
+	protected ActionType illumCombine = ActionType.PICK_BRIGHTEST;
+
 	@Override
 	public Void call() throws Exception
 	{
@@ -131,6 +137,8 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		// setup parameters
 		final boolean doSubpixel = !disableSubpixelResolution;
 		final int numPeaks = this.peaksToCheck;
+		final ActionType channelCombine = this.channelCombine;
+		final ActionType illumCombine = this.illumCombine;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkPairwiseStitching");
 		final JavaSparkContext sc = new JavaSparkContext(conf);
@@ -151,8 +159,8 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			final GroupedViewAggregator gva = new GroupedViewAggregator();
 			//gva.addAction( ActionType.PICK_SPECIFIC, Illumination.class, new Illumination( 0 ) );
 			//gva.addAction( ActionType.PICK_SPECIFIC, Illumination.class, new Illumination( 1 ) );
-			gva.addAction( ActionType.AVERAGE, Illumination.class, null );
-			gva.addAction( ActionType.PICK_BRIGHTEST, Channel.class, null );
+			gva.addAction( illumCombine, Illumination.class, null );
+			gva.addAction( channelCombine, Channel.class, null );
 
 			final ExecutorService serviceLocal = Executors.newFixedThreadPool( 1 );
 
