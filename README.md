@@ -102,7 +102,7 @@ Resaving the interest point dataset:
 <code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
 ### Detect Interest Points<a name="ip-detect">
-<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
+<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255 --prefetch</code>
 
 ### Match Interest Points<a name="ip-match">
 Per timepoint alignment:
