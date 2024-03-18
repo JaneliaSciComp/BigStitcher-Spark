@@ -100,6 +100,32 @@ public class ViewUtil
 			final ViewId viewId,
 			final Interval fusedBlock )
 	{
+		return findOverlappingBlocks(data, viewId, fusedBlock, 1 );
+	}
+
+	/**
+	 * Find cells of the given {@code ViewId} required to produce the given
+	 * {@code fusedBlock} interval in world coordinates. If {@code data} is
+	 * multi-resolution, the best resolution is picked (the one that will be
+	 * used for fusion, too).
+	 *
+	 * @param data
+	 * 		has all images and transformations
+	 * @param viewId
+	 * 		which view to check
+	 * @param fusedBlock
+	 * 		the interval that will be processed (in world coordinates)
+	 * @param expand
+	 * 		how much to expand each block (to avoid rounding errors?)
+	 *
+	 * @return a list of {@code PrefetchPixel} callables that will each prefetch one cell.
+	 */
+	public static List< PrefetchPixel< ? > > findOverlappingBlocks(
+			final SpimData data,
+			final ViewId viewId,
+			final Interval fusedBlock,
+			final int expand )
+	{
 		final List< PrefetchPixel< ? > > prefetch = new ArrayList<>();
 
 		final ImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
@@ -116,6 +142,7 @@ public class ViewUtil
 		final ImgAndMipmapTransform< ? > best = ImgAndMipmapTransform.forBestResolution( setupImgLoader, viewId.getTimePointId(), model );
 		final RandomAccessibleInterval< ? > img = best.img;
 		final AffineTransform3D imgToWorld = model.copy();
+
 		imgToWorld.concatenate( best.mipmapTransform );
 
 		RandomAccessible< ? > rai = best.img;
@@ -187,21 +214,19 @@ public class ViewUtil
 
 			if ( transformToSource == null )
 			{
-				expand( cellBBox, 1, projectedCellBBox );
+				expand( cellBBox, expand, projectedCellBBox );
 			}
 			else
 			{
 				transform( transformToSource, projectedCellBBox, cellBBox );
-				expand( projectedCellBBox, 1 );
+				expand( projectedCellBBox, expand );
 			}
 
 			final Interval bounds = Intervals.smallestContainingInterval(
 					imgToWorld.estimateBounds( projectedCellInterval ) );
 
 			if ( overlaps( bounds, fusedBlock ) )
-			{
 				prefetch.add( new PrefetchPixel<>( rai, cellMin.clone() ) );
-			}
 		}
 
 //		prefetch.forEach( System.out::println );
