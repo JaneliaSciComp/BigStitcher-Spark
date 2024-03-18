@@ -23,6 +23,7 @@ import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -343,13 +344,21 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( prefetch )
 			{
-				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
-				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, processInterval );
+				// here we put in the inverse mipmap transform and pretebd its a fusion so we can re-use Tobi's code
+				// that finds which blocks need to be prefetched from an input image
+				final ViewRegistration vr = data.getViewRegistrations().getViewRegistration( viewId );
+				vr.getTransformList().clear();
+				vr.getTransformList().add( new ViewTransformAffine( "inverse mipmap transform", input.getB().inverse() ) );
+				vr.updateModel();
+
+				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, processInterval, 0 );
 
 				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
 
+				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
 				prefetchExecutor.invokeAll( prefetchBlocks );
 				prefetchExecutor.shutdown();
+				System.exit(0);
 			}
 
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
