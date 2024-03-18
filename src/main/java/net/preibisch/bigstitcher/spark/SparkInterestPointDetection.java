@@ -139,21 +139,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 			return null;
 
-		System.out.println( "label: " + label );
-		System.out.println( "sigma: " + sigma );
-		System.out.println( "threshold: " + threshold );
-		System.out.println( "type: " + type );
-		System.out.println( "localization: " + localization );
-		System.out.println( "minIntensity: " + minIntensity );
-		System.out.println( "maxIntensity: " + maxIntensity );
-		System.out.println( "downsampleXY: " + dsxy );
-		System.out.println( "downsampleZ: " + dsz );
-		System.out.println( "overlappingOnly: " + overlappingOnly );
-		System.out.println( "prefetching with " + SparkAffineFusion.N_PREFETCH_THREADS + " threads: " + prefetch );
-
+		// Global variables that need to be serialized for Spark as each job needs access to them
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
-		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
-
 		final String xmlPath = this.xmlPath;
 		final String label = this.label;
 		final int downsampleXY = this.dsxy;
@@ -168,6 +155,19 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final double combineDistance = SparkInterestPointDetection.combineDistance;
 		final Localization localization = this.localization;
 		final boolean prefetch = this.prefetch;
+
+		System.out.println( "label: " + label );
+		System.out.println( "sigma: " + sigma );
+		System.out.println( "threshold: " + threshold );
+		System.out.println( "type: " + type );
+		System.out.println( "localization: " + localization );
+		System.out.println( "minIntensity: " + minIntensity );
+		System.out.println( "maxIntensity: " + maxIntensity );
+		System.out.println( "downsampleXY: " + downsampleXY );
+		System.out.println( "downsampleZ: " + downsampleZ );
+		System.out.println( "overlappingOnly: " + onlyOverlappingRegions );
+		System.out.println( "prefetching with " + SparkAffineFusion.N_PREFETCH_THREADS + " threads: " + prefetch );
+		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
 
 		//
 		// assemble all intervals that need to be processed
@@ -187,6 +187,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					new long[] { downsampleXY, downsampleXY, downsampleZ },
 					true );
 
+			// only find interest points in regions that are currently overlapping with another view
 			if ( onlyOverlappingRegions )
 			{
 				final ArrayList< Interval > allIntervals = new ArrayList<>();
@@ -241,7 +242,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			}
 		}
 
+		//
 		// turn all areas into grids and serializable objects
+		//
 		final ArrayList< Tuple3<int[], long[], long[][] > > sparkProcess = new ArrayList<>();
 
 		System.out.println( "The following intervals will be processed:");
@@ -292,14 +295,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final long[] superBlockMax = new long[ serializedInput._2().length ];
 			Arrays.setAll( superBlockMax, d -> superBlockMin[ d ] + superBlockSize[ d ] - 1 );
 
+			// the interval this Spark job will process
 			final Interval processInterval = new FinalInterval( superBlockMin, superBlockMax );
 
+			// the parameters for Difference-of-Gaussian (DoG)
 			final DoGParameters dog = new DoGParameters();
 
 			dog.imgloader = data.getSequenceDescription().getImgLoader();
 			dog.toProcess = new ArrayList< ViewDescription >( Arrays.asList( vd ) );
 
-			dog.localization = localization == Localization.NONE ? 0 : 1;// DifferenceOfGUI.defaultLocalization;
+			dog.localization = localization == Localization.NONE ? 0 : 1;
 			dog.downsampleZ = downsampleZ;
 			dog.downsampleXY = downsampleXY;
 			dog.imageSigmaX = DifferenceOfGUI.defaultImageSigmaX;
@@ -340,7 +345,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( prefetch )
 			{
-				// how big is sigma? it defines the overlap with neighboring blocks that we need
+				// how big is the biggest sigma? It defines the overlap with neighboring blocks that we need
 				final Pair< double[][], Float > sigmas = DoGImgLib2.computeSigmas( (float)dog.sigma, input.getA().numDimensions() );
 				final int[] halfKernelSizes = Gauss3.halfkernelsizes( sigmas.getA()[ 1 ] );
 				final int maxKernelSize = Collections.max( Arrays.stream( halfKernelSizes ).boxed().collect( Collectors.toList()) );
@@ -351,7 +356,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
 
-				// TODO: newCachedThreadPool?
+				// TODO: use newCachedThreadPool?
 				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
 				prefetchExecutor.invokeAll( prefetchBlocks );
 				prefetchExecutor.shutdown();
@@ -359,8 +364,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
+			@SuppressWarnings("unchecked")
 			final ArrayList< InterestPoint > ips = DoGImgLib2.computeDoG(
-					(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
+					(RandomAccessible)Views.extendMirrorDouble( input.getA() ), // the entire image, extended to infinity
 					null, // mask
 					processInterval,
 					dog.sigma,
