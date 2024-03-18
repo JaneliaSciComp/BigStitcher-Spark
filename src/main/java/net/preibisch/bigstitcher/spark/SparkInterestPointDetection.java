@@ -358,7 +358,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
 				prefetchExecutor.invokeAll( prefetchBlocks );
 				prefetchExecutor.shutdown();
-				System.exit(0);
 			}
 
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
