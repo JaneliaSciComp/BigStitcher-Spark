@@ -36,6 +36,7 @@ import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
+import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.converter.Converters;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
@@ -291,11 +292,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final long[] superBlockMax = new long[ serializedInput._2().length ];
 			Arrays.setAll( superBlockMax, d -> superBlockMin[ d ] + superBlockSize[ d ] - 1 );
 
-			// The min grid coordinate of the block that this job renders, in units of the output grid.
-			// Note, that the block that is rendered may cover multiple output grid cells.
-			final long[] outputGridOffset = serializedInput._3()[ 2 ];
-			// TODO: this may not be relevant here, need it for saving usually
-
 			final Interval processInterval = new FinalInterval( superBlockMin, superBlockMax );
 
 			final DoGParameters dog = new DoGParameters();
@@ -344,12 +340,18 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( prefetch )
 			{
+				// how big is sigma? it defines the overlap with neighboring blocks that we need
+				final Pair< double[][], Float > sigmas = DoGImgLib2.computeSigmas( (float)dog.sigma, input.getA().numDimensions() );
+				final int[] halfKernelSizes = Gauss3.halfkernelsizes( sigmas.getA()[ 1 ] );
+				final int maxKernelSize = Collections.max( Arrays.stream( halfKernelSizes ).boxed().collect( Collectors.toList()) );
+
 				// here we put in the inverse mipmap transform and pretend its a fusion so we can re-use Tobi's code
 				// that finds which blocks need to be prefetched from an input image
-				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, input.getB().inverse(), processInterval, 0 );
+				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, input.getB().inverse(), processInterval, maxKernelSize );
 
 				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
 
+				// TODO: newCachedThreadPool?
 				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
 				prefetchExecutor.invokeAll( prefetchBlocks );
 				prefetchExecutor.shutdown();
@@ -448,7 +450,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		for ( final Tuple4<int[], long[][], double[][], double[]> tuple : results )
 		{
 			final ViewId viewId = Spark.deserializeViewId( tuple._1() );
-			//final Interval interval = Spark.deserializeInterval( tuple._2() );
 			final double[][] points = tuple._3();
 
 			if ( points != null && points.length > 0 )
@@ -464,7 +465,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			}
 		}
 
-		// TODO: fix overlap
+		// now combine all jobs and fix potential overlap (overlappingOnly)
 		final ArrayList< ViewId > viewIds = new ArrayList<>( interestPointsPerViewId.keySet() );
 		Collections.sort( viewIds );
 
