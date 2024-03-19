@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.jetbrains.annotations.NotNull;
+
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
@@ -22,11 +24,15 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealPoint;
 import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.algorithm.blocks.BlockProcessor;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
+import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.blocks.PrimitiveBlocks;
 import net.imglib2.img.Img;
+import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
+import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.NativeType;
@@ -108,7 +114,7 @@ public class Fusion
 
 			final int interpolation = 1;
 //			final RandomAccessibleInterval transformedInputImg = TransformView.transformView( inputImg, model, boundingBox, 0, interpolation );
-			final RandomAccessibleInterval transformedInputImg = transformView( inputImg, inputImgType, model, boundingBox );
+			final RandomAccessibleInterval< FloatType > transformedInputImg = transformView( inputImg, inputImgType, model, boundingBox );
 			images.add( transformedInputImg );
 
 
@@ -154,8 +160,105 @@ public class Fusion
 			weights.add( transformedBlending );
 		}
 
-		return new FusedRandomAccessibleInterval( new FinalInterval( getFusedZeroMinInterval( boundingBox ) ), images, weights );
+		final RandomAccessibleInterval< FloatType > fused = getFusedRandomAccessibleInterval_blk( boundingBox, images, weights );
+		return fused;
 	}
+
+
+
+
+
+
+
+
+
+	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval(
+			final Interval boundingBox,
+			final List< RandomAccessibleInterval< FloatType > > images,
+			final List< RandomAccessibleInterval< FloatType > > weights )
+	{
+		return new FusedRandomAccessibleInterval(
+				getFusedZeroMinInterval( boundingBox ), images, weights );
+	}
+
+	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval_blk(
+			final Interval boundingBox,
+			final List< RandomAccessibleInterval< FloatType > > images,
+			final List< RandomAccessibleInterval< FloatType > > weights )
+	{
+		final int[] bb_min = new int[ boundingBox.numDimensions() ];
+		final int[] bb_size = Util.long2int( boundingBox.dimensionsAsLongArray() );
+		final int bb_len = ( int ) Intervals.numElements( bb_size ); // TODO safeInt() or whatever
+
+		final List< float[] > imageFloatsList = new ArrayList<>();
+		for ( RandomAccessibleInterval< FloatType > image : images )
+		{
+			final PrimitiveBlocks< FloatType> imageBlocks = PrimitiveBlocks.of( image );
+			final float[] imageFloats = new float[ bb_len ];
+			imageBlocks.copy( bb_min, imageFloats, bb_size );
+			imageFloatsList.add( imageFloats );
+		}
+
+		final List< float[] > weightFloatsList = new ArrayList<>();
+		for ( RandomAccessibleInterval< FloatType > weight : weights )
+		{
+//			final PrimitiveBlocks< FloatType > weightBlocks = PrimitiveBlocks.of( weight );
+//			final float[] weightFloats = new float[ bb_len ];
+//			weightBlocks.copy( bb_min, weightFloats, bb_size );
+			final float[] weightFloats = ( ( FloatArray ) ( ( ArrayImg ) weight ).update( null ) ).getCurrentStorageArray();
+			weightFloatsList.add( weightFloats );
+		}
+
+		final float[] output = new float[ bb_len ];
+
+		final int LINE_LEN = 64;
+		final float[] sumI = new float[ LINE_LEN ];
+		final float[] sumW = new float[ LINE_LEN ];
+		for ( int offset = 0; offset < bb_len; offset += LINE_LEN )
+		{
+			final int length = Math.min( bb_len - offset, LINE_LEN );
+			Arrays.fill( sumI, 0 );
+			Arrays.fill( sumW, 0 );
+			for ( int i = 0; i < imageFloatsList.size(); i++ )
+			{
+				final float[] imageFloats = imageFloatsList.get( i );
+				final float[] weightFloats = weightFloatsList.get( i );
+				for ( int j = 0; j < length; j++ )
+				{
+					final float weight = weightFloats[ offset + j ];
+					final float intensity = imageFloats[ offset + j ];
+					sumW[ j ] += weight;
+					sumI[ j ] += weight * intensity;
+				}
+			}
+			for ( int j = 0; j < length; j++ )
+			{
+				final float w = sumW[ j ];
+				output[ offset + j ] = ( w > 0 ) ? sumI[ j ] / w : 0;
+			}
+		}
+
+		return ArrayImgs.floats( output, boundingBox.dimensionsAsLongArray() );
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 //	static AtomicBoolean __first = new AtomicBoolean( true );
 
@@ -263,6 +366,9 @@ public class Fusion
 
 						// TODO: next: loop x over 0 .. b0d .. b1d .. b2d .. b3d .. sx
 						//       with bounds checking and floored loop bounds
+						//
+						// TODO: inequalities and order have to be reversed if dd < 0!
+						//       How to test that?
 
 						final int b0di = Math.min( sx, ( int ) b0d );
 						final int b1di = Math.min( sx, ( int ) b1d );
@@ -446,36 +552,6 @@ public class Fusion
 	}
 
 
-	public static void main( String[] args )
-	{
-
-		AffineTransform3D transform = new AffineTransform3D();
-		transform.rotate( 0, 0.2 );
-		transform.rotate( 1, 1.2 );
-		transform.rotate( 2, -2.4 );
-
-
-		final double[] min = { 10, 10, 10 };
-
-		final double[] c = { 1, 2, 3 };
-		final double[] location = new double[ 3 ];
-		transform.applyInverse( location, c );
-
-
-		final double[] l = new double[ 3 ];
-		l[ 0 ] = location[ 0 ] - min[ 0 ];
-		l[ 1 ] = location[ 1 ] - min[ 1 ];
-		l[ 2 ] = location[ 2 ] - min[ 2 ];
-		System.out.println( "l = " + Arrays.toString( l ) );
-
-
-		AffineTransform3D t = new AffineTransform3D();
-		t.translate( min );
-		t.preConcatenate( transform );
-		t.applyInverse( l, c );
-		System.out.println( "l = " + Arrays.toString( l ) );
-
-	}
 
 
 
@@ -503,7 +579,7 @@ public class Fusion
 
 
 
-	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< T > transformView(
+	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformView(
 			final RandomAccessibleInterval< T > input,
 			final Object type, // TODO: resolve generics... this should be T
 			final AffineTransform3D transform,
@@ -518,7 +594,39 @@ public class Fusion
 
 		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
 		final UnaryBlockOperator< T, T > affine = Transform.affine( ( T ) type, t, Transform.Interpolation.NLINEAR );
-		return BlockAlgoUtils.cellImg( blocks, affine, ( T ) type, boundingBox.dimensionsAsLongArray(), new int[] { 64, 64, 64 } );
+		final UnaryBlockOperator< T, FloatType > operator = affine.andThen( Convert.convert( ( T ) type, new FloatType() ) );
+		return BlockAlgoUtils.cellImg(
+				blocks,
+				operator,
+				new FloatType(),
+				boundingBox.dimensionsAsLongArray(),
+				new int[] { 64, 64, 64 } );
+	}
+
+	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformViewArrayImg(
+			final RandomAccessibleInterval< T > input,
+			final Object type, // TODO: resolve generics... this should be T
+			final AffineTransform3D transform,
+			final Interval boundingBox )
+	{
+		final AffineTransform3D t = new AffineTransform3D();
+		t.setTranslation(
+				-boundingBox.min( 0 ),
+				-boundingBox.min( 1 ),
+				-boundingBox.min( 2 ) );
+		t.concatenate( transform );
+
+		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
+		final UnaryBlockOperator< T, T > affine = Transform.affine( ( T ) type, t, Transform.Interpolation.NLINEAR );
+		final UnaryBlockOperator< T, FloatType > operator = affine.andThen( Convert.convert( ( T ) type, new FloatType() ) );
+
+		final BlockProcessor< Object, Object > processor = operator.blockProcessor();
+		processor.setTargetInterval( new FinalInterval( boundingBox.dimensionsAsLongArray() ) );
+		final Object buf = processor.getSourceBuffer();
+		blocks.copy( processor.getSourcePos(), buf, processor.getSourceSize() );
+		final float[] target = new float[ ( int ) Intervals.numElements( boundingBox ) ];
+		processor.compute( buf, target );
+		return ArrayImgs.floats( target, boundingBox.dimensionsAsLongArray() );
 	}
 
 
