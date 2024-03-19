@@ -9,22 +9,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import org.jetbrains.annotations.NotNull;
-
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Cursor;
 import net.imglib2.Dimensions;
-import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.RealPoint;
-import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
-import net.imglib2.algorithm.blocks.BlockProcessor;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.transform.Transform;
@@ -34,7 +27,6 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -42,7 +34,6 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
-import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -81,12 +72,6 @@ public class Fusion
 		System.out.println( "Fusion.fuseVirtual_blk" );
 		System.out.println( "  boundingBox = " + Intervals.toString(boundingBox) );
 
-
-
-
-
-
-
 		// SIMPLIFIED:
 		// assuming:
 		// 	final boolean is2d = true;
@@ -117,14 +102,11 @@ public class Fusion
 			final RandomAccessibleInterval< FloatType > transformedInputImg = transformView( inputImg, inputImgType, model, boundingBox );
 			images.add( transformedInputImg );
 
-
-
 			// SIMPLIFIED
 			// add all (or no) weighting schemes
 			// assuming:
 			// 	final boolean useBlending = true;
 			// 	final boolean useContentBased = false;
-
 
 			// instantiate blending if necessary
 			final float[] blending = Util.getArrayFromValue( defaultBlendingRange, 3 );
@@ -140,45 +122,10 @@ public class Fusion
 					model,
 					boundingBox );
 
-//			final RandomAccessibleInterval< FloatType > transformedBlendingRender = transformBlendingRender(
-//					inputImg,
-//					border,
-//					blending,
-//					model,
-//					boundingBox );
-
-//			if ( __first.getAndSet( false ) )
-//			{
-//				final BdvSource bdv1 = BdvFunctions.show( transformedBlending, "transformBlending" );
-//				final BdvSource bdv2 = BdvFunctions.show( transformedBlendingRender, "transformedBlendingRender", Bdv.options().addTo( bdv1 ) );
-//				bdv1.setDisplayRange( 0, 1 );
-//				bdv1.setColor( new ARGBType( 0xff00ff ) );
-//				bdv2.setDisplayRange( 0, 1 );
-//				bdv2.setColor( new ARGBType( 0x00ff00 ) );
-//			}
-
 			weights.add( transformedBlending );
 		}
 
-		final RandomAccessibleInterval< FloatType > fused = getFusedRandomAccessibleInterval_blk( boundingBox, images, weights );
-		return fused;
-	}
-
-
-
-
-
-
-
-
-
-	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval(
-			final Interval boundingBox,
-			final List< RandomAccessibleInterval< FloatType > > images,
-			final List< RandomAccessibleInterval< FloatType > > weights )
-	{
-		return new FusedRandomAccessibleInterval(
-				getFusedZeroMinInterval( boundingBox ), images, weights );
+		return getFusedRandomAccessibleInterval_blk( boundingBox, images, weights );
 	}
 
 	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval_blk(
@@ -239,48 +186,6 @@ public class Fusion
 		}
 
 		return ArrayImgs.floats( output, boundingBox.dimensionsAsLongArray() );
-	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//	static AtomicBoolean __first = new AtomicBoolean( true );
-
-	private static RandomAccessibleInterval< FloatType > transformBlending(
-			final Interval inputImgInterval,
-			final float[] border,
-			final float[] blending,
-			final AffineTransform3D transform,
-			final Interval boundingBox )
-	{
-		final RealRandomAccessible< FloatType > rra = new BlendingRealRandomAccessible( new FinalInterval( inputImgInterval ), border, blending );
-
-		final AffineTransform3D t = new AffineTransform3D();
-		t.setTranslation(
-				-boundingBox.min( 0 ),
-				-boundingBox.min( 1 ),
-				-boundingBox.min( 2 ) );
-		t.concatenate( transform );
-		final Interval bb = Intervals.zeroMin( boundingBox );
-		return Views.interval(
-				RealViews.affine( rra, t ),
-				bb );
 	}
 
 	private static RandomAccessibleInterval< FloatType > transformBlendingRender(
@@ -456,127 +361,7 @@ public class Fusion
 			final float s = ( d * n ) - i;
 			return lookUp[ i ] * (1.0f - s) + lookUp[ i + 1 ] * s;
 		}
-
-		static float computeWeight(
-				final double[] location,
-				final int[] dimMinus1,
-				final float[] border,
-				final float[] blending,
-				final float[] tmp, // holds dist, if any of it is zero we can stop
-				final int n )
-		{
-			for ( int d = 0; d < n; ++d )
-			{
-				// the position in the image relative to the boundaries and the border
-				final float l = ( float ) location[ d ];
-
-				// the distance to the border that is closer
-				tmp[ d ] = Math.min( l - border[ d ], dimMinus1[ d ] - l - border[ d ] );
-
-				// if this is smaller or equal to 0, the total result will be 0, independent of the number of dimensions
-				if ( tmp[ d ] <= 0 )
-					return 0;
-			}
-
-			// compute multiplicative distance to the respective borders [0...1]
-			float minDistance = 1;
-
-			for ( int d = 0; d < n; ++d )
-			{
-				final float relDist = tmp[ d ] / blending[ d ];
-
-				// within the range where we blend from 0 to 1
-				if ( relDist < 1 )
-					minDistance *= fn( relDist ); //( Math.cos( ( 1 - relDist ) * Math.PI ) + 1 ) / 2;
-			}
-
-			return minDistance;
-		}
-
-		static float computeWeight2(
-				final double[] location,
-				final int[] dimMinus1,
-				final float[] border,
-				final float[] blending,
-				final float[] tmp, // holds dist, if any of it is zero we can stop
-				final int n )
-		{
-			float[] b0 = new float[ n ];
-			float[] b1 = new float[ n ];
-			float[] b2 = new float[ n ];
-			float[] b3 = new float[ n ];
-			for ( int d = 0; d < n; ++d )
-			{
-				b0[ d ] = border[ d ];
-				b1[ d ] = border[ d ] + blending[ d ];
-				b2[ d ] = dimMinus1[ d ] - border[ d ] - blending[ d ];
-				b3[ d ] = dimMinus1[ d ] - border[ d ];
-				// TODO handle b1 > b2
-				// TODO handle (b1+b2)/2 < a
-			}
-
-			return computeWeight3( location, blending, n, b0, b1, b2, b3 );
-		}
-
-		private static float computeWeight3( final double[] location, final float[] blending, final int n, final float[] b0, final float[] b1, final float[] b2, final float[] b3 )
-		{
-			float w = 1;
-			for ( int d = 0; d < n; ++d )
-			{
-				// the position in the image relative to the boundaries and the border
-				final float l = ( float ) location[ d ];
-
-				if ( l < b0[ d ] )
-				{
-					return 0;
-				}
-				else if ( l < b1[ d ] )
-				{
-					w *= fn( ( l - b0[ d ] ) / blending[ d ] );
-				}
-				else if ( l < b2[ d ] )
-				{
-//					w *= 1;
-				}
-				else if ( l < b3[ d ] )
-				{
-					w *= fn( ( b3[ d ] - l ) / blending[ d ] );
-				}
-				else
-				{
-					return 0;
-				}
-			}
-			return w;
-		}
 	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformView(
@@ -603,52 +388,6 @@ public class Fusion
 				new int[] { 64, 64, 64 } );
 	}
 
-	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformViewArrayImg(
-			final RandomAccessibleInterval< T > input,
-			final Object type, // TODO: resolve generics... this should be T
-			final AffineTransform3D transform,
-			final Interval boundingBox )
-	{
-		final AffineTransform3D t = new AffineTransform3D();
-		t.setTranslation(
-				-boundingBox.min( 0 ),
-				-boundingBox.min( 1 ),
-				-boundingBox.min( 2 ) );
-		t.concatenate( transform );
-
-		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
-		final UnaryBlockOperator< T, T > affine = Transform.affine( ( T ) type, t, Transform.Interpolation.NLINEAR );
-		final UnaryBlockOperator< T, FloatType > operator = affine.andThen( Convert.convert( ( T ) type, new FloatType() ) );
-
-		final BlockProcessor< Object, Object > processor = operator.blockProcessor();
-		processor.setTargetInterval( new FinalInterval( boundingBox.dimensionsAsLongArray() ) );
-		final Object buf = processor.getSourceBuffer();
-		blocks.copy( processor.getSourcePos(), buf, processor.getSourceSize() );
-		final float[] target = new float[ ( int ) Intervals.numElements( boundingBox ) ];
-		processor.compute( buf, target );
-		return ArrayImgs.floats( target, boundingBox.dimensionsAsLongArray() );
-	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -664,13 +403,6 @@ public class Fusion
 	//  unmodified from FusionTools
 	//
 	// ------------------------------------------------------------------------
-
-	public static Interval getFusedZeroMinInterval( final Interval bbDS )
-	{
-		final long[] dim = new long[ bbDS.numDimensions() ];
-		bbDS.dimensions( dim );
-		return new FinalInterval( dim );
-	}
 
 	public static float defaultBlendingRange = 40;
 	public static float defaultBlendingBorder = 0;
