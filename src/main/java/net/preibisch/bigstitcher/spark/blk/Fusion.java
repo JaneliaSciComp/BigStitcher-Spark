@@ -264,10 +264,29 @@ public class Fusion
 						// TODO: next: loop x over 0 .. b0d .. b1d .. b2d .. b3d .. sx
 						//       with bounds checking and floored loop bounds
 
-						for ( int x = 0; x < sx; ++x )
+						final int b0di = Math.min( sx, ( int ) b0d );
+						final int b1di = Math.min( sx, ( int ) b1d );
+						final int b2di = Math.min( sx, ( int ) b2d );
+						final int b3di = Math.min( sx, ( int ) b3d );
+						int x = 0;
+						for ( ; x < b0di; ++x )
 						{
-							float weight = computeWeight( x, blend, b0d, b1d, b2d, b3d );
+							weights[ offset + x ] = 0;
+						}
+						for ( ; x < b1di; ++x )
+						{
+							float weight = SmallLookup.fn( ( x - b0d ) / blend );
 							weights[ offset + x ] *= weight;
+						}
+						x = Math.max( x, b2di );
+						for ( ; x < b3di; ++x )
+						{
+							float weight = SmallLookup.fn( ( b3d - x ) / blend );
+							weights[ offset + x ] *= weight;
+						}
+						for ( ; x < sx; ++x )
+						{
+							weights[ offset + x ] = 0;
 						}
 					}
 				}
