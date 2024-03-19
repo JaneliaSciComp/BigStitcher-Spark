@@ -143,7 +143,7 @@ A typical, simple command line call to register each timepoint alignment individ
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
 
-`-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`.
+`-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
 
 `-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
 
