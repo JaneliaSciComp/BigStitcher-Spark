@@ -136,7 +136,7 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 
 ### Match Interest Points<a name="ip-match">
 
-Once 
+After interest points are detected they are pair-wise matching between all views/images. Several point cloud matching methods and ways how views can be grouped are supported, which will be explained below. Importantly, matching & solving can be performed once or iteratively; typical workflows that match & solve more than once are 1) to first align each timepoint of a series using affine models individually followed by registration across time using translation models or 2) to first align using geometric descriptor matching to then subsequently refine the result using Iterative Closest Point (ICP) that only works once the current transformation is very good.
 
 Per timepoint alignment:
 
