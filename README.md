@@ -133,13 +133,12 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined block across all processed images at once.
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/BigStitcher-interestpoints.jpg" alt="Visualizing interest points in BigStitcher">
-<br><br><br>
 
 ### Match Interest Points<a name="ip-match">
 
-After interest points are detected they are pair-wise matching between all views/images. Several point cloud matching methods and ways how views can be grouped are supported, which will be explained below. Importantly, matching & solving can be performed once or iteratively; typical workflows that match & solve more than once are 1) to first align each timepoint of a series using affine models individually followed by registration across time using translation models or 2) to first align using geometric descriptor matching to then subsequently refine the result using Iterative Closest Point (ICP) that only works once the current transformation is very good.
+After interest points are detected they are pair-wise matching between all views/images (***NOTE:*** this also for for Stitchng, try it out!). Several point cloud matching methods and ways how views can be grouped are supported, which will be explained below. Importantly, matching & solving can be performed once or iteratively; typical workflows that match & solve more than once are 1) to first align each timepoint of a series using affine models individually followed by registration across time using translation models or 2) to first align using geometric descriptor matching to then subsequently refine the result using Iterative Closest Point (ICP) that only works once the current transformation is very good.
 
-Per timepoint alignment:
+A typical, simple command line call to register each timepoint alignment individually using [this example](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) looks like:
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
 
