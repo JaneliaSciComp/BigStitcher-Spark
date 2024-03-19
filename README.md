@@ -122,7 +122,7 @@ Interest-point based registration is generally more reliable and faster than sti
 
 <code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
 
-The results will be written in the `XML` and the `interestpoints.n5` directory, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization. If you want to inspect the interest points you can open the XML in BigStitcher, go to multiview mode, right click, start the **Interest Point Explorer** and click on the number of detections that will then be overlaid onto the images.
+The results will be written in the `XML` and the `interestpoints.n5` directory, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization. If you want to inspect the interest points you can open the XML in BigStitcher, go to multiview mode, right click, start the **Interest Point Explorer** and click on the number of detections that will then be overlaid onto the images (see screenshot below).
 
 Please run `detect-interestpoints` without parameters to get help for all command line arguments. `-s` and `-t` define the sigma and threshold of the Difference-of-Gaussian, respectively and `-l` specifies the label for the interest points. `--minIntensity` and `--maxIntensity` set the intensity range in which all processed blocks are normalized to `[0...1]`; these values are mandatory since each individual Spark job is unable to figure out correct min/max values of the images. You could find good guesses for all these values by starting the interactive interest point detection in BigStitcher. `-dsxy` and `-dsz` define the downsampling at which interest point detection is performed. Using `--localization` you can specify the type of subpixel localization, either `NONE` or `QUADRATIC`. `--type` allows to set which type of intensity peaks should be identified; `MIN`, `MAX` or `BOTH`. Finally, `--blockSize` sets the blocksize that will be processed in each Spark job.
 
@@ -131,6 +131,8 @@ Please run `detect-interestpoints` without parameters to get help for all comman
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined block across all processed images at once.
+
+<img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/BigStitcher-interestpoints.jpg" alt="Visualizing interest points in BigStitcher">
 
 ### Match Interest Points<a name="ip-match">
 
