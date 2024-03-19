@@ -117,7 +117,12 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over pairs of images.
 
 ### Detect Interest Points<a name="ip-detect">
+
+Interest-point based registration is generally more reliable and faster than stitching while supporting various transformation models including (regularized) Translation, (regularized) Rigid, (regularized) Affine, and Non-Rigid. At the same time parameter selection is more involved. The first step is to detect interest points in the images. A typical command line call that works well on [this example dataset](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) looks as follows:
+
 <code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
+
+The results will be written in the XML and the interestpoints.n5 directory, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization.
 
 ### Match Interest Points<a name="ip-match">
 Per timepoint alignment:
