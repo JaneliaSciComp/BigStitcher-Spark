@@ -7,12 +7,8 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
-import bdv.util.Bdv;
-import bdv.util.BdvFunctions;
-import bdv.util.BdvSource;
 import mpicbg.spim.data.generic.AbstractSpimData;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
@@ -30,14 +26,10 @@ import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.blocks.PrimitiveBlocks;
 import net.imglib2.img.Img;
-import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealViews;
-import net.imglib2.stream.Streams;
 import net.imglib2.type.NativeType;
-import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
@@ -206,28 +198,107 @@ public class Fusion
 		t.translate( inputImgInterval.minAsDoubleArray() );
 		t.preConcatenate( t1 );
 
-		final Img< FloatType > rai = ArrayImgs.floats( boundingBox.dimensionsAsLongArray() );
-		final Cursor< FloatType > c = rai.localizingCursor();
-
+		final long[] dim = boundingBox.dimensionsAsLongArray();
+		final float[] weights = new float[ ( int ) Intervals.numElements( dim ) ];
+		final Img< FloatType > rai = ArrayImgs.floats( weights, dim );
 
 		final int n = 3;
 		final int[] dimMinus1 = {
 				( int ) inputImgInterval.dimension( 0 ) - 1,
 				( int ) inputImgInterval.dimension( 1 ) - 1,
 				( int ) inputImgInterval.dimension( 2 ) - 1 };
-		final float[] tmp = new float[ n ];
 
+		final float[] b0 = new float[ n ];
+		final float[] b1 = new float[ n ];
+		final float[] b2 = new float[ n ];
+		final float[] b3 = new float[ n ];
+		for ( int d = 0; d < n; ++d )
+		{
+			b0[ d ] = border[ d ];
+			b1[ d ] = border[ d ] + blending[ d ];
+			b2[ d ] = dimMinus1[ d ] - border[ d ] - blending[ d ];
+			b3[ d ] = dimMinus1[ d ] - border[ d ];
+			// TODO handle b1 > b2
+			// TODO handle (b1+b2)/2 < a
+		}
 
-		double[] location = new double[ n ];
-		final RealPoint pos = RealPoint.wrap( location );
-		while( c.hasNext()) {
-			c.fwd();
-			t.applyInverse( pos, c );
-			final float weight = SmallLookup.computeWeight( location, dimMinus1, border, blending, tmp, n );
-			c.get().set( weight );
+		final double[] p = new double[ n ];
+		final double[] location = new double[ n ];
+		final double[] d0 = t.inverse().d( 0 ).positionAsDoubleArray();
+		final int sx = ( int ) dim[ 0 ];
+		final int sy = ( int ) dim[ 1 ];
+		final int sz = ( int ) dim[ 2 ];
+		for ( int z = 0; z < sz; ++z )
+		{
+			p[ 2 ] = z;
+			for ( int y = 0; y < sy; ++y )
+			{
+				p[ 1 ] = y;
+				p[ 0 ] = 0;
+				t.applyInverse( location, p );
+				final int offset = ( z * sy + y ) * sx;
+				for ( int x = 0; x < sx; ++x )
+				{
+					weights[ offset + x ] = 1;
+				}
+				for ( int d = 0; d < 3; ++d )
+				{
+					final float l0 = ( float ) location[ d ];
+					final float dd = ( float ) d0[ d ];
+					if ( Math.abs( dd ) < 0.0001f )
+					{
+						float weight = computeWeight( l0, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] );
+						for ( int x = 0; x < sx; ++x )
+						{
+							weights[ offset + x ] *= weight;
+						}
+					}
+					else
+					{
+						final float blend = blending[ d ] / dd;
+						final float b0d = ( b0[ d ] - l0 ) / dd;
+						final float b1d = ( b1[ d ] - l0 ) / dd;
+						final float b2d = ( b2[ d ] - l0 ) / dd;
+						final float b3d = ( b3[ d ] - l0 ) / dd;
+
+						// TODO: next: loop x over 0 .. b0d .. b1d .. b2d .. b3d .. sx
+						//       with bounds checking and floored loop bounds
+
+						for ( int x = 0; x < sx; ++x )
+						{
+							float weight = computeWeight( x, blend, b0d, b1d, b2d, b3d );
+							weights[ offset + x ] *= weight;
+						}
+					}
+				}
+			}
 		}
 
 		return rai;
+	}
+
+	private static float computeWeight( final float l, final float blending, final float b0, final float b1, final float b2, final float b3 )
+	{
+		if ( l < b0 )
+		{
+			return 0;
+		}
+		else if ( l < b1 )
+		{
+			return SmallLookup.fn( ( l - b0 ) / blending );
+		}
+		else if ( l < b2 )
+		{
+			return 1;
+		}
+		else if ( l < b3 )
+		{
+			return SmallLookup.fn( ( b3 - l ) / blending );
+		}
+		else
+		{
+			return 0;
+		}
 	}
 
 	static class SmallLookup
@@ -297,6 +368,62 @@ public class Fusion
 			return minDistance;
 		}
 
+		static float computeWeight2(
+				final double[] location,
+				final int[] dimMinus1,
+				final float[] border,
+				final float[] blending,
+				final float[] tmp, // holds dist, if any of it is zero we can stop
+				final int n )
+		{
+			float[] b0 = new float[ n ];
+			float[] b1 = new float[ n ];
+			float[] b2 = new float[ n ];
+			float[] b3 = new float[ n ];
+			for ( int d = 0; d < n; ++d )
+			{
+				b0[ d ] = border[ d ];
+				b1[ d ] = border[ d ] + blending[ d ];
+				b2[ d ] = dimMinus1[ d ] - border[ d ] - blending[ d ];
+				b3[ d ] = dimMinus1[ d ] - border[ d ];
+				// TODO handle b1 > b2
+				// TODO handle (b1+b2)/2 < a
+			}
+
+			return computeWeight3( location, blending, n, b0, b1, b2, b3 );
+		}
+
+		private static float computeWeight3( final double[] location, final float[] blending, final int n, final float[] b0, final float[] b1, final float[] b2, final float[] b3 )
+		{
+			float w = 1;
+			for ( int d = 0; d < n; ++d )
+			{
+				// the position in the image relative to the boundaries and the border
+				final float l = ( float ) location[ d ];
+
+				if ( l < b0[ d ] )
+				{
+					return 0;
+				}
+				else if ( l < b1[ d ] )
+				{
+					w *= fn( ( l - b0[ d ] ) / blending[ d ] );
+				}
+				else if ( l < b2[ d ] )
+				{
+//					w *= 1;
+				}
+				else if ( l < b3[ d ] )
+				{
+					w *= fn( ( b3[ d ] - l ) / blending[ d ] );
+				}
+				else
+				{
+					return 0;
+				}
+			}
+			return w;
+		}
 	}
 
 
