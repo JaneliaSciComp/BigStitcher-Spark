@@ -133,6 +133,7 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined block across all processed images at once.
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/BigStitcher-interestpoints.jpg" alt="Visualizing interest points in BigStitcher">
+<br><br><br>
 
 ### Match Interest Points<a name="ip-match">
 
