@@ -148,28 +148,16 @@ public class Fusion
 	{
 		final RealRandomAccessible< FloatType > rra = new BlendingRealRandomAccessible( new FinalInterval( inputImgInterval ), border, blending );
 
-		final long[] offset = new long[ rra.numDimensions() ];
-		final long[] size = new long[ rra.numDimensions() ];
-
-		for ( int d = 0; d < offset.length; ++d )
-		{
-			offset[ d ] = boundingBox.min( d );
-			size[ d ] = boundingBox.dimension( d );
-		}
-
-		// the virtual weight construct
-		final RandomAccessible< FloatType > virtualBlending =
-				new TransformedRasteredRandomAccessible<>(
-						rra,
-						new FloatType(),
-						transform,
-						offset );
-
-		final RandomAccessibleInterval< FloatType > virtualBlendingInterval = Views.interval(
-				virtualBlending,
-				new FinalInterval( size ) );
-
-		return virtualBlendingInterval;
+		final AffineTransform3D t = new AffineTransform3D();
+		t.setTranslation(
+				-boundingBox.min( 0 ),
+				-boundingBox.min( 1 ),
+				-boundingBox.min( 2 ) );
+		t.concatenate( transform );
+		final Interval bb = Intervals.zeroMin( boundingBox );
+		return Views.interval(
+				RealViews.affine( rra, t ),
+				bb );
 	}
 
 	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< T > transformView(
@@ -188,15 +176,6 @@ public class Fusion
 		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
 		final UnaryBlockOperator< T, T > affine = Transform.affine( ( T ) type, t, Transform.Interpolation.NLINEAR );
 		return BlockAlgoUtils.cellImg( blocks, affine, ( T ) type, boundingBox.dimensionsAsLongArray(), new int[] { 64, 64, 64 } );
-
-//		final Interval bb = Intervals.zeroMin( boundingBox );
-//		return Views.interval(
-//				RealViews.affine(
-//						Views.interpolate(
-//								Views.extendBorder( input ),
-//								new ClampingNLinearInterpolatorFactory<>() ),
-//						t ),
-//				bb );
 	}
 
 
