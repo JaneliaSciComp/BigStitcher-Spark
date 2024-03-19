@@ -124,6 +124,10 @@ Interest-point based registration is generally more reliable and faster than sti
 
 The results will be written in the XML and the interestpoints.n5 directory, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization.
 
+Please run `detect-interestpoints` without parameters to get help for all command line arguments. 
+
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
+
 ### Match Interest Points<a name="ip-match">
 Per timepoint alignment:
 
