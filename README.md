@@ -143,7 +143,11 @@ A typical, simple command line call to register each timepoint alignment individ
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
 
-`-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
+`-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`.
+
+`-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
+
+All methods use RANSAC to robustly identify a set of corresponding points in the set or correspondence candidates. `-rit` defines the number of RANSAC iterations (increasing might help to find more correspondences), `-rme` the maximum error (epsilon) for RANSAC (increasing might help to find more correspondences), `-rmir` the minimum inlier ratio (setting to `0.0` might help to find more correspondences), and `-rmif` defines the minimum inlier factor for RANSAC (i.e. how many times the minimal number of inliers required by the transformation model need to be identified so a pair is valid).
 
 For timeseries alignment, grouping all views of a timepoint together:
 
