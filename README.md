@@ -100,7 +100,7 @@ It is analogous for the interest point dataset:
 
 Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes individual blocks of the input images, so also few, very big images will be processed efficiently.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined blocks across all input images at once, so also few, very big images will be processed efficiently.
 
 ### Pairwise Stitching<a name="stitching">
 
@@ -118,7 +118,7 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 
 ### Detect Interest Points<a name="ip-detect">
 
-Interest-point based registration is generally more reliable and faster than stitching while supporting various transformation models including (regularized) Translation, (regularized) Rigid, (regularized) Affine, and Non-Rigid. At the same time parameter selection is more involved. The first step is to detect interest points in the images. A typical command line call that works well on [this example dataset](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) looks as follows:
+Interest-point based registration is generally more reliable and faster than stitching while supporting various transformation models including **(regularized) Translation**, **(regularized) Rigid**, **(regularized) Affine**, and **Non-Rigid**. At the same time parameter selection is more involved. The first step is to detect interest points in the images. A typical command line call that works well on [this example dataset](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) looks as follows:
 
 <code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
 
@@ -127,6 +127,8 @@ The results will be written in the XML and the interestpoints.n5 directory, in o
 Please run `detect-interestpoints` without parameters to get help for all command line arguments. 
 
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined block across all processed images at once.
 
 ### Match Interest Points<a name="ip-match">
 Per timepoint alignment:
