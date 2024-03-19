@@ -76,7 +76,7 @@ public class BlendingRealRandomAccessible implements RealRandomAccessible< Float
 	@Override
 	public RealRandomAccess<FloatType> realRandomAccess()
 	{
-		return new BlendingRealRandomAccess( interval, border, blending );
+		return new BlendingRealRandomAccess2( interval, border, blending );
 	}
 
 	@Override
