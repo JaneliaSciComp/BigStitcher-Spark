@@ -19,9 +19,14 @@ import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealRandomAccessible;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.algorithm.blocks.UnaryBlockOperator;
+import net.imglib2.algorithm.blocks.transform.Transform;
+import net.imglib2.blocks.PrimitiveBlocks;
 import net.imglib2.interpolation.randomaccess.ClampingNLinearInterpolatorFactory;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealViews;
+import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
@@ -98,9 +103,11 @@ public class Fusion
 			final double[] usedDownsampleFactors = new double[ 3 ];
 			RandomAccessibleInterval inputImg = DownsampleTools.openDownsampled( imgloader, viewId, model, usedDownsampleFactors );
 
+			Object inputImgType = imgloader.getSetupImgLoader( viewId.getViewSetupId() ).getImageType();
+
 			final int interpolation = 1;
 //			final RandomAccessibleInterval transformedInputImg = TransformView.transformView( inputImg, model, boundingBox, 0, interpolation );
-			final RandomAccessibleInterval transformedInputImg = transformView( inputImg, model, boundingBox );
+			final RandomAccessibleInterval transformedInputImg = transformView( inputImg, inputImgType, model, boundingBox );
 			images.add( transformedInputImg );
 
 
@@ -165,8 +172,9 @@ public class Fusion
 		return virtualBlendingInterval;
 	}
 
-	private static < T extends RealType< T > > RandomAccessibleInterval<T> transformView(
+	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< T > transformView(
 			final RandomAccessibleInterval< T > input,
+			final Object type, // TODO: resolve generics... this should be T
 			final AffineTransform3D transform,
 			final Interval boundingBox )
 	{
@@ -177,15 +185,18 @@ public class Fusion
 				-boundingBox.min( 2 ) );
 		t.concatenate( transform );
 
-		final Interval bb = Intervals.zeroMin( boundingBox );
+		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
+		final UnaryBlockOperator< T, T > affine = Transform.affine( ( T ) type, t, Transform.Interpolation.NLINEAR );
+		return BlockAlgoUtils.cellImg( blocks, affine, ( T ) type, boundingBox.dimensionsAsLongArray(), new int[] { 64, 64, 64 } );
 
-		return Views.interval(
-				RealViews.affine(
-						Views.interpolate(
-								Views.extendBorder( input ),
-								new ClampingNLinearInterpolatorFactory<>() ),
-						t ),
-				bb );
+//		final Interval bb = Intervals.zeroMin( boundingBox );
+//		return Views.interval(
+//				RealViews.affine(
+//						Views.interpolate(
+//								Views.extendBorder( input ),
+//								new ClampingNLinearInterpolatorFactory<>() ),
+//						t ),
+//				bb );
 	}
 
 
