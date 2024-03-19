@@ -2,6 +2,7 @@ package net.preibisch.bigstitcher.spark.blk;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -194,22 +195,22 @@ public class Fusion
 			final AffineTransform3D transform,
 			final Interval boundingBox )
 	{
-		final AffineTransform3D t = new AffineTransform3D();
-		t.setTranslation(
+		final AffineTransform3D t1 = new AffineTransform3D();
+		t1.setTranslation(
 				-boundingBox.min( 0 ),
 				-boundingBox.min( 1 ),
 				-boundingBox.min( 2 ) );
-		t.concatenate( transform );
+		t1.concatenate( transform );
+
+		final AffineTransform3D t = new AffineTransform3D();
+		t.translate( inputImgInterval.minAsDoubleArray() );
+		t.preConcatenate( t1 );
 
 		final Img< FloatType > rai = ArrayImgs.floats( boundingBox.dimensionsAsLongArray() );
 		final Cursor< FloatType > c = rai.localizingCursor();
 
 
 		final int n = 3;
-		final int[] min = {
-				( int ) inputImgInterval.min( 0 ),
-				( int ) inputImgInterval.min( 1 ),
-				( int ) inputImgInterval.min( 2 ) };
 		final int[] dimMinus1 = {
 				( int ) inputImgInterval.dimension( 0 ) - 1,
 				( int ) inputImgInterval.dimension( 1 ) - 1,
@@ -222,7 +223,7 @@ public class Fusion
 		while( c.hasNext()) {
 			c.fwd();
 			t.applyInverse( pos, c );
-			final float weight = SmallLookup.computeWeight( location, min, dimMinus1, border, blending, tmp, n );
+			final float weight = SmallLookup.computeWeight( location, dimMinus1, border, blending, tmp, n );
 			c.get().set( weight );
 		}
 
@@ -262,7 +263,6 @@ public class Fusion
 
 		static float computeWeight(
 				final double[] location,
-				final int[] min,
 				final int[] dimMinus1,
 				final float[] border,
 				final float[] blending,
@@ -272,7 +272,7 @@ public class Fusion
 			for ( int d = 0; d < n; ++d )
 			{
 				// the position in the image relative to the boundaries and the border
-				final float l = ( ( float ) location[ d ] - min[ d ] );
+				final float l = ( float ) location[ d ];
 
 				// the distance to the border that is closer
 				tmp[ d ] = Math.min( l - border[ d ], dimMinus1[ d ] - l - border[ d ] );
@@ -300,11 +300,36 @@ public class Fusion
 	}
 
 
+	public static void main( String[] args )
+	{
+
+		AffineTransform3D transform = new AffineTransform3D();
+		transform.rotate( 0, 0.2 );
+		transform.rotate( 1, 1.2 );
+		transform.rotate( 2, -2.4 );
 
 
+		final double[] min = { 10, 10, 10 };
+
+		final double[] c = { 1, 2, 3 };
+		final double[] location = new double[ 3 ];
+		transform.applyInverse( location, c );
 
 
+		final double[] l = new double[ 3 ];
+		l[ 0 ] = location[ 0 ] - min[ 0 ];
+		l[ 1 ] = location[ 1 ] - min[ 1 ];
+		l[ 2 ] = location[ 2 ] - min[ 2 ];
+		System.out.println( "l = " + Arrays.toString( l ) );
 
+
+		AffineTransform3D t = new AffineTransform3D();
+		t.translate( min );
+		t.preConcatenate( transform );
+		t.applyInverse( l, c );
+		System.out.println( "l = " + Arrays.toString( l ) );
+
+	}
 
 
 
