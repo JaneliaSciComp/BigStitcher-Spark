@@ -24,6 +24,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
@@ -65,6 +66,14 @@ public class Fusion
 			final Interval boundingBox // is already downsampled
 	)
 	{
+		System.out.println( "Fusion.fuseVirtual_blk" );
+		System.out.println( "  boundingBox = " + Intervals.toString(boundingBox) );
+
+
+
+
+
+
 
 		// SIMPLIFIED:
 		// assuming:
@@ -161,15 +170,22 @@ public class Fusion
 			final AffineTransform3D transform,
 			final Interval boundingBox )
 	{
-		return Views.zeroMin(
-				Views.interval(
-						RealViews.affine(
-								Views.interpolate(
-										Views.extendBorder( input ),
-										new ClampingNLinearInterpolatorFactory<>() ),
-								transform ),
-						boundingBox )
-		);
+		final AffineTransform3D t = new AffineTransform3D();
+		t.setTranslation(
+				-boundingBox.min( 0 ),
+				-boundingBox.min( 1 ),
+				-boundingBox.min( 2 ) );
+		t.concatenate( transform );
+
+		final Interval bb = Intervals.zeroMin( boundingBox );
+
+		return Views.interval(
+				RealViews.affine(
+						Views.interpolate(
+								Views.extendBorder( input ),
+								new ClampingNLinearInterpolatorFactory<>() ),
+						t ),
+				bb );
 	}
 
 
