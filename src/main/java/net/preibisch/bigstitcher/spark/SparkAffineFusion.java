@@ -1,5 +1,7 @@
 package net.preibisch.bigstitcher.spark;
 
+import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual_blk;
+
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -564,7 +566,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				try ( AutoCloseable prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
 				{
 					// TODO (TP) Can we go lower-level here? This does redundant view filtering internally:
-					final RandomAccessibleInterval< FloatType > source = FusionTools.fuseVirtual(
+					final RandomAccessibleInterval< FloatType > source = fuseVirtual_blk(
 							dataLocal,
 							overlappingBlocks.overlappingViews(),
 							fusedBlock );
