@@ -57,7 +57,7 @@ Ask your sysadmin for help how to run it on your **cluster**. To get you started
 --conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
 ```
 
-For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time.
+For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time. Note that some modules support prefetching `--prefetch`, which is important for cloud execution due to its delays as it pre-loads all image blocks in parallel before processing.
 
 ## Example Datasets<a name="examples">
 
@@ -100,16 +100,37 @@ It is analogous for the interest point dataset:
 
 Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes individual blocks of the input images, so also few, very big images will be processed efficiently.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined blocks across all input images at once, so also few, very big images will be processed efficiently.
 
 ### Pairwise Stitching<a name="stitching">
 
-To perform classical stitching (translation only), first pairwise stitching between overlapping tiles needs to be computed. So far we only support standard grouping where all channels and illuminations of a specific Tile will be grouped together as one image and stitching is performed individually per Timepoint and Angle. To run the stitching with default paramters you need to run:
+To perform classical stitching (translation only), first pair-wise stitching between all overlapping tiles needs to be computed. So far we only support standard grouping where all channels and illuminations of a specific Tile will be grouped together as one image and stitching is performed individually per Timepoint and Angle. To run the stitching with default paramters you can run the following command on this [example dataset](https://drive.google.com/file/d/1Q2SCJW_tCVKFzrdMrgVrFDyiF6nUN5-B/view?usp=sharing):
 
 <code>./stitching -x ~/SparkTest/Stitching/dataset.xml</code>
 
+The results will be written in to the XML, in order to compute transformation models and apply them to the images you need to run the [solver](#solver) that computes a global optimization next.
+
+Please run `stitching` without parameters to get help for all command line arguments. `-ds` sets the resolution at which cross correlation is performed; `2,2,1` is the default and usually superior to `1,1,1` due to suppressed noise, even higher resolution levels typically work well too since by default the peaks are located with subpixel accuracy. `--disableSubpixelResolution` disables subpixel accurate shifts. `-p` sets the number of phase correlation peaks that are checked with cross-correlation (incrementing this number can help with stitching issues). `--minR` and `--maxR` are filters that specify the accepted range for cross correlation for any pair of overlapping tiles, reducing `--minR` may be useful to accept more pair and excluding a `--maxR` of `1` may be useful too if you get wrong links with `r=1.0`. `--maxShiftX/Y/Z` and `--maxShiftTotal` set the maximal allowed shift between any pair of images relative to their current location; limiting it if the current position is close to the correct one might be useful. If your dataset contains multiple channels or illumination directions per Tile, you can select how they will be combined for the pair-wise stitching process using `--channelCombine` and `--illumCombine`, which can be either `AVERAGE` or `PICK_BRIGHTEST`. 
+
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over pairs of images.
+
 ### Detect Interest Points<a name="ip-detect">
-<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255 --prefetch</code>
+
+Interest-point based registration is generally more reliable and faster than stitching while supporting various transformation models including **(regularized) Translation**, **(regularized) Rigid**, **(regularized) Affine**, and **Non-Rigid**. At the same time parameter selection is more involved. The first step is to detect interest points in the images. A typical command line call that works well on [this example dataset](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) looks as follows:
+
+<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
+
+The results will be written in the `XML` and the `interestpoints.n5` directory, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization.
+
+Please run `detect-interestpoints` without parameters to get help for all command line arguments. `-s` and `-t` define the sigma and threshold of the Difference-of-Gaussian, respectively and `-l` specifies the label for the interest points. `--minIntensity` and `--maxIntensity` set the intensity range in which all processed blocks are normalized to `[0...1]`; these values are mandatory since each individual Spark job is unable to figure out correct min/max values of the images. You could find good guesses for all these values by starting the interactive interest point detection in BigStitcher. `-dsxy` and `-dsz` define the downsampling at which interest point detection is performed. Using `--localization` you can specify the type of subpixel localization, either `NONE` or `QUADRATIC`. `--type` allows to set which type of intensity peaks should be identified; `MIN`, `MAX` or `BOTH`. Finally, `--blockSize` sets the blocksize that will be processed in each Spark job.
+
+`--overlappingOnly` is a feature that will only identify interest points in areas of each image that is currently overlapping with another image. `--storeIntensities` will extract intensities of each interest point and store it in the `interestpoints.n5` directory as extra datasets. `--prefetch` will use parallel threads to pre-load all image data blocks ahead of the computation, which is desirable for cloud execution.
+
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined block across all processed images at once.
 
 ### Match Interest Points<a name="ip-match">
 Per timepoint alignment:
