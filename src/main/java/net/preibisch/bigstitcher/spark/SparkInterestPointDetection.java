@@ -106,10 +106,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--storeIntensities" }, description = "creates an additional N5 dataset with the intensities of each detection, linearly interpolated (default: false)")
 	private boolean storeIntensities = false;
 
-	@Option(names = { "-i0", "--minIntensity" }, description = "min intensity for segmentation, e.g. 0.0 (default: load from image)")
+	@Option(names = { "-i0", "--minIntensity" }, required = true, description = "min intensity for segmentation, e.g. 0.0")
 	private Double minIntensity = null;
 
-	@Option(names = { "-i1", "--maxIntensity" }, description = "max intensity for segmentation, e.g. 2048.0 (default: load from image)")
+	@Option(names = { "-i1", "--maxIntensity" }, required = true, description = "max intensity for segmentation, e.g. 2048.0")
 	private Double maxIntensity = null;
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using " + SparkAffineFusion.N_PREFETCH_THREADS + " threads, useful in cloud environments (default: false)")
