@@ -97,7 +97,7 @@ public class Blending
 
 	private static final float EPSILON = 0.0001f;
 
-	private void fill_range(
+	void fill_range(
 			float[] weights,
 			final int offset,
 			final int length,
@@ -144,41 +144,6 @@ public class Blending
 					weights[ offset + x ] *= const_weight;
 			}
 		}
-	}
-
-	static RandomAccessibleInterval< FloatType > transformBlendingRender(
-			final Interval interval,
-			final float[] border,
-			final float[] blending,
-			final AffineTransform3D transform,
-			final Interval boundingBox )
-	{
-		final AffineTransform3D shiftedTransform = new AffineTransform3D();
-		shiftedTransform.setTranslation(
-				-boundingBox.min( 0 ),
-				-boundingBox.min( 1 ),
-				-boundingBox.min( 2 ) );
-		shiftedTransform.concatenate( transform );
-
-		final Blending b = new Blending( interval, border, blending, shiftedTransform );
-		final double[] p = { 0, 0, 0 };
-		final int sx = ( int ) boundingBox.dimension( 0 );
-		final int sy = ( int ) boundingBox.dimension( 1 );
-		final int sz = ( int ) boundingBox.dimension( 2 );
-
-		final float[] weights = new float[ sx * sy * sz ];
-		for ( int z = 0; z < sz; ++z )
-		{
-			p[ 2 ] = z;
-			for ( int y = 0; y < sy; ++y )
-			{
-				p[ 1 ] = y;
-				final int offset = ( z * sy + y ) * sx;
-				b.fill_range( weights, offset, sx, p );
-			}
-		}
-
-		return ArrayImgs.floats( weights, sx, sy, sz );
 	}
 
 	private static float computeWeight(

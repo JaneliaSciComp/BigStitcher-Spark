@@ -85,8 +85,8 @@ public class Fusion
 		// (sorted to be able to use the "lowest ViewId" wins strategy)
 		final List< ViewId > viewIdsToProcess = views.stream().sorted().collect( Collectors.toList() );
 
-		final ArrayList< RandomAccessibleInterval< FloatType > > images = new ArrayList<>();
-		final ArrayList< RandomAccessibleInterval< FloatType > > weights = new ArrayList<>();
+		final List< RandomAccessibleInterval< FloatType > > images = new ArrayList<>();
+		final List< Blending > blendings = new ArrayList<>();
 
 		for ( final ViewId viewId : viewIdsToProcess )
 		{
@@ -118,25 +118,17 @@ public class Fusion
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
 			adjustBlending( viewDescriptions.get( viewId ), blending, border, model );
 
-			final RandomAccessibleInterval< FloatType > transformedBlending = Blending.transformBlendingRender(
-					inputImg,
-					border,
-					blending,
-					model,
-					boundingBox );
-
-			weights.add( transformedBlending );
+			blendings.add( new Blending( inputImg, border, blending, model ) );
 		}
 
-		return getFusedRandomAccessibleInterval_blk( boundingBox, images, weights );
+		return getFusedRandomAccessibleInterval_blk( boundingBox, images, blendings );
 	}
 
 	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval_blk(
 			final Interval boundingBox,
 			final List< RandomAccessibleInterval< FloatType > > images,
-			final List< RandomAccessibleInterval< FloatType > > weights )
+			final List< Blending > blendings )
 	{
-		final int[] bb_min = new int[ boundingBox.numDimensions() ];
 		final int[] bb_size = Util.long2int( boundingBox.dimensionsAsLongArray() );
 		final int bb_len = ( int ) Intervals.numElements( bb_size ); // TODO safeInt() or whatever
 
@@ -145,46 +137,50 @@ public class Fusion
 		{
 			final PrimitiveBlocks< FloatType> imageBlocks = PrimitiveBlocks.of( image );
 			final float[] imageFloats = new float[ bb_len ];
-			imageBlocks.copy( bb_min, imageFloats, bb_size );
+			imageBlocks.copy( new int[ 3 ], imageFloats, bb_size );
 			imageFloatsList.add( imageFloats );
-		}
-
-		final List< float[] > weightFloatsList = new ArrayList<>();
-		for ( RandomAccessibleInterval< FloatType > weight : weights )
-		{
-//			final PrimitiveBlocks< FloatType > weightBlocks = PrimitiveBlocks.of( weight );
-//			final float[] weightFloats = new float[ bb_len ];
-//			weightBlocks.copy( bb_min, weightFloats, bb_size );
-			final float[] weightFloats = ( ( FloatArray ) ( ( ArrayImg ) weight ).update( null ) ).getCurrentStorageArray();
-			weightFloatsList.add( weightFloats );
 		}
 
 		final float[] output = new float[ bb_len ];
 
-		final int LINE_LEN = 64;
-		final float[] sumI = new float[ LINE_LEN ];
-		final float[] sumW = new float[ LINE_LEN ];
-		for ( int offset = 0; offset < bb_len; offset += LINE_LEN )
+		final long[] bb_min = boundingBox.minAsLongArray();
+
+		final int sx = bb_size[ 0 ];
+		final int sy = bb_size[ 1 ];
+		final int sz = bb_size[ 2 ];
+
+		final float[] tmpW = new float[ sx ];
+		final float[] sumW = new float[ sx ];
+		final float[] sumI = new float[ sx ];
+
+		final double[] pos = new double[ 3 ];
+		pos[ 0 ] = bb_min[ 0 ];
+		for ( int z = 0; z < sz; ++z )
 		{
-			final int length = Math.min( bb_len - offset, LINE_LEN );
-			Arrays.fill( sumI, 0 );
-			Arrays.fill( sumW, 0 );
-			for ( int i = 0; i < imageFloatsList.size(); i++ )
+			pos[ 2 ] = z + bb_min[ 2 ];
+			for ( int y = 0; y < sy; ++y )
 			{
-				final float[] imageFloats = imageFloatsList.get( i );
-				final float[] weightFloats = weightFloatsList.get( i );
-				for ( int j = 0; j < length; j++ )
+				pos[ 1 ] = y + bb_min[ 1 ];
+				final int offset = ( z * sy + y ) * sx;
+				Arrays.fill( sumW, 0 );
+				Arrays.fill( sumI, 0 );
+				for ( int i = 0; i < imageFloatsList.size(); i++ )
 				{
-					final float weight = weightFloats[ offset + j ];
-					final float intensity = imageFloats[ offset + j ];
-					sumW[ j ] += weight;
-					sumI[ j ] += weight * intensity;
+					final float[] imageFloats = imageFloatsList.get( i );
+					blendings.get( i ).fill_range( tmpW, 0, sx, pos );
+					for ( int x = 0; x < sx; x++ )
+					{
+						final float weight = tmpW[ x ];
+						final float intensity = imageFloats[ offset + x ];
+						sumW[ x ] += weight;
+						sumI[ x ] += weight * intensity;
+					}
 				}
-			}
-			for ( int j = 0; j < length; j++ )
-			{
-				final float w = sumW[ j ];
-				output[ offset + j ] = ( w > 0 ) ? sumI[ j ] / w : 0;
+				for ( int x = 0; x < sx; x++ )
+				{
+					final float w = sumW[ x ];
+					output[ offset + x ] = ( w > 0 ) ? sumI[ x ] / w : 0;
+				}
 			}
 		}
 
