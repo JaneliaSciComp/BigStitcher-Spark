@@ -22,6 +22,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
+import net.imglib2.converter.RealTypeConverters;
 import net.imglib2.img.cell.CellGrid;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
@@ -31,6 +32,7 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.blk.N5Helper;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -565,7 +567,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 				try ( AutoCloseable prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
 				{
-					// TODO (TP) Can we go lower-level here? This does redundant view filtering internally:
 					final RandomAccessibleInterval< FloatType > source = fuseVirtual_blk(
 							dataLocal,
 							overlappingBlocks.overlappingViews(),
@@ -588,7 +589,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				final long[] gridPos ) throws IOException
 		{
 			final RandomAccessibleInterval< T > convertedSource = convertToOutputType( source );
-			N5Utils.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
+			N5Helper.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
 		}
 
 		@SuppressWarnings( "unchecked" )
@@ -597,14 +598,18 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		{
 			if ( uint8 )
 			{
+				final double a = 1 / range;
+				final double b = 0.5 - minIntensity / range;
 				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
+						rai, ( i, o ) -> o.setByte( ( byte ) ( i.get() * a + b ) ),
 						new UnsignedByteType() );
 			}
 			else if ( uint16 )
 			{
+				final double a = 1 / range;
+				final double b = 0.5 - minIntensity / range;
 				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
+						rai, ( i, o ) -> o.setShort( ( short ) ( i.get() * a + b ) ),
 						new UnsignedShortType() );
 			}
 			else

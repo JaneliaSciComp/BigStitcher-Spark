@@ -20,19 +20,21 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.convert.ClampType;
-import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.transform.Transform;
 import net.imglib2.algorithm.blocks.transform.Transform.ComputationType;
 import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.blocks.PrimitiveBlocks;
-import net.imglib2.img.Img;
-import net.imglib2.img.array.ArrayImg;
+import net.imglib2.blocks.TempArray;
+import net.imglib2.cache.img.ReadOnlyCachedCellImgFactory;
+import net.imglib2.cache.img.ReadOnlyCachedCellImgOptions;
+import net.imglib2.cache.img.SingleCellArrayImg;
 import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
+import net.imglib2.type.PrimitiveType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.CloseableThreadLocal;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
@@ -121,70 +123,7 @@ public class Fusion
 			blendings.add( new Blending( inputImg, border, blending, model ) );
 		}
 
-		return getFusedRandomAccessibleInterval_blk( boundingBox, images, blendings );
-	}
-
-	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval_blk(
-			final Interval boundingBox,
-			final List< RandomAccessibleInterval< FloatType > > images,
-			final List< Blending > blendings )
-	{
-		final int[] bb_size = Util.long2int( boundingBox.dimensionsAsLongArray() );
-		final int bb_len = ( int ) Intervals.numElements( bb_size ); // TODO safeInt() or whatever
-
-		final List< float[] > imageFloatsList = new ArrayList<>();
-		for ( RandomAccessibleInterval< FloatType > image : images )
-		{
-			final PrimitiveBlocks< FloatType> imageBlocks = PrimitiveBlocks.of( image );
-			final float[] imageFloats = new float[ bb_len ];
-			imageBlocks.copy( new int[ 3 ], imageFloats, bb_size );
-			imageFloatsList.add( imageFloats );
-		}
-
-		final float[] output = new float[ bb_len ];
-
-		final long[] bb_min = boundingBox.minAsLongArray();
-
-		final int sx = bb_size[ 0 ];
-		final int sy = bb_size[ 1 ];
-		final int sz = bb_size[ 2 ];
-
-		final float[] tmpW = new float[ sx ];
-		final float[] sumW = new float[ sx ];
-		final float[] sumI = new float[ sx ];
-
-		final double[] pos = new double[ 3 ];
-		pos[ 0 ] = bb_min[ 0 ];
-		for ( int z = 0; z < sz; ++z )
-		{
-			pos[ 2 ] = z + bb_min[ 2 ];
-			for ( int y = 0; y < sy; ++y )
-			{
-				pos[ 1 ] = y + bb_min[ 1 ];
-				final int offset = ( z * sy + y ) * sx;
-				Arrays.fill( sumW, 0 );
-				Arrays.fill( sumI, 0 );
-				for ( int i = 0; i < imageFloatsList.size(); i++ )
-				{
-					final float[] imageFloats = imageFloatsList.get( i );
-					blendings.get( i ).fill_range( tmpW, 0, sx, pos );
-					for ( int x = 0; x < sx; x++ )
-					{
-						final float weight = tmpW[ x ];
-						final float intensity = imageFloats[ offset + x ];
-						sumW[ x ] += weight;
-						sumI[ x ] += weight * intensity;
-					}
-				}
-				for ( int x = 0; x < sx; x++ )
-				{
-					final float w = sumW[ x ];
-					output[ offset + x ] = ( w > 0 ) ? sumI[ x ] / w : 0;
-				}
-			}
-		}
-
-		return ArrayImgs.floats( output, boundingBox.dimensionsAsLongArray() );
+		return getFusedRandomAccessibleInterval_blk_lazy( boundingBox, images, blendings );
 	}
 
 	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformView(
@@ -208,6 +147,117 @@ public class Fusion
 				new FloatType(),
 				boundingBox.dimensionsAsLongArray(),
 				new int[] { 64, 64, 64 } );
+	}
+
+
+	static class Fuser
+	{
+		private final List< PrimitiveBlocks< FloatType > > imgBlocks;
+		private final List< TempArray< float[] > > imgBuffers;
+		private final long[] boundingBox_min;
+		private final List< Blending > blendings;
+
+		private final long[] cell_min;
+		private int[] cell_dims;
+		private final long[] bb_min;
+
+		private final TempArray< float[] > weightsTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
+		private final TempArray< float[] > sumWeightsTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
+		private final TempArray< float[] > sumIntensityTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
+
+		private final double[] pos = new double[ 3 ];
+
+		Fuser(
+				final Interval boundingBox,
+				final List< RandomAccessibleInterval< FloatType > > images,
+				final List< Blending > blendings )
+		{
+			final int n = boundingBox.numDimensions();
+			cell_min = new long[ n ];
+			cell_dims = new int[ n ];
+			bb_min = new long[ n ];
+
+			this.blendings = blendings;
+			imgBlocks = new ArrayList<>();
+			imgBuffers = new ArrayList<>();
+			for ( RandomAccessibleInterval< FloatType > image : images )
+			{
+				imgBlocks.add( PrimitiveBlocks.of( image ) );
+				imgBuffers.add( TempArray.forPrimitiveType( PrimitiveType.FLOAT ) );
+			}
+			boundingBox_min = boundingBox.minAsLongArray();
+		}
+
+		void load( SingleCellArrayImg< FloatType, ? > cell ) throws Exception
+		{
+			Arrays.setAll( cell_min, cell::min );
+			Arrays.setAll( cell_dims, d -> ( int ) cell.dimension( d ) );
+			final int cell_size = ( int ) Intervals.numElements( cell_dims );
+
+			// TODO pre-alloc
+			final float[][] imgFloats = new float[ imgBlocks.size() ][];
+			for ( int i = 0; i < imgFloats.length; ++i )
+			{
+				final PrimitiveBlocks< FloatType > blocks = imgBlocks.get( i );
+				final float[] floats = imgBuffers.get( i ).get( cell_size );
+				blocks.copy( cell_min, floats, cell_dims );
+				imgFloats[ i ] = floats;
+			}
+
+			Arrays.setAll( bb_min, d -> cell_min[ d ] + boundingBox_min[ d ] );
+			final float[] output = ( float[] ) cell.getStorageArray();
+
+			final int sx = cell_dims[ 0 ];
+			final int sy = cell_dims[ 1 ];
+			final int sz = cell_dims[ 2 ];
+
+			final float[] tmpW = weightsTempArray.get( sx );
+			final float[] sumW = sumWeightsTempArray.get( sx );
+			final float[] sumI = sumIntensityTempArray.get( sx );
+
+			pos[ 0 ] = bb_min[ 0 ];
+			for ( int z = 0; z < sz; ++z )
+			{
+				pos[ 2 ] = z + bb_min[ 2 ];
+				for ( int y = 0; y < sy; ++y )
+				{
+					pos[ 1 ] = y + bb_min[ 1 ];
+					final int offset = ( z * sy + y ) * sx;
+					Arrays.fill( sumW, 0 );
+					Arrays.fill( sumI, 0 );
+					for ( int i = 0; i < imgFloats.length; i++ )
+					{
+						final float[] imageFloats = imgFloats[ i ];
+						blendings.get( i ).fill_range( tmpW, 0, sx, pos );
+						for ( int x = 0; x < sx; x++ )
+						{
+							final float weight = tmpW[ x ];
+							final float intensity = imageFloats[ offset + x ];
+							sumW[ x ] += weight;
+							sumI[ x ] += weight * intensity;
+						}
+					}
+					for ( int x = 0; x < sx; x++ )
+					{
+						final float w = sumW[ x ];
+						output[ offset + x ] = ( w > 0 ) ? sumI[ x ] / w : 0;
+					}
+				}
+			}
+		}
+	}
+
+	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval_blk_lazy(
+			final Interval boundingBox,
+			final List< RandomAccessibleInterval< FloatType > > images,
+			final List< Blending > blendings )
+	{
+		final CloseableThreadLocal< Fuser > fuserThreadLocal = CloseableThreadLocal.withInitial( () -> new Fuser( boundingBox, images, blendings ) );
+		return new ReadOnlyCachedCellImgFactory().create(
+				boundingBox.dimensionsAsLongArray(),
+				new FloatType(),
+				cell -> fuserThreadLocal.get().load( cell ),
+				ReadOnlyCachedCellImgOptions.options().cellDimensions( 64, 64, 64 ) );
 	}
 
 
