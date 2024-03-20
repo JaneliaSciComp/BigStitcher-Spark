@@ -1,6 +1,7 @@
 package net.preibisch.bigstitcher.spark;
 
 import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual_blk;
+import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual_blk_convert;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -567,12 +568,23 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 				try ( AutoCloseable prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
 				{
-					final RandomAccessibleInterval< FloatType > source = fuseVirtual_blk(
+					NativeType type;
+					if ( uint8 )
+						type = new UnsignedByteType();
+					else if ( uint16 )
+						type = new UnsignedShortType();
+					else
+						type = new FloatType();
+
+					final RandomAccessibleInterval< NativeType > source = fuseVirtual_blk_convert(
 							dataLocal,
 							overlappingBlocks.overlappingViews(),
-							fusedBlock );
+							fusedBlock,
+							type,
+							minIntensity,
+							range );
 
-					saveBlock( source, executorVolumeWriter, gridPos );
+					N5Helper.saveBlock( source, executorVolumeWriter, n5Dataset, gridPos );
 				}
 			}
 			prefetchExecutor.shutdown();
@@ -581,41 +593,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
 
-		}
-
-		private < T extends NativeType< T > > void saveBlock(
-				final RandomAccessibleInterval< FloatType > source,
-				final N5Writer executorVolumeWriter,
-				final long[] gridPos ) throws IOException
-		{
-			final RandomAccessibleInterval< T > convertedSource = convertToOutputType( source );
-			N5Helper.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
-		}
-
-		@SuppressWarnings( "unchecked" )
-		private < T extends NativeType< T > > RandomAccessibleInterval< T > convertToOutputType(
-				final RandomAccessibleInterval< FloatType > rai )
-		{
-			if ( uint8 )
-			{
-				final double a = 1 / range;
-				final double b = 0.5 - minIntensity / range;
-				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setByte( ( byte ) ( i.get() * a + b ) ),
-						new UnsignedByteType() );
-			}
-			else if ( uint16 )
-			{
-				final double a = 1 / range;
-				final double b = 0.5 - minIntensity / range;
-				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setShort( ( short ) ( i.get() * a + b ) ),
-						new UnsignedShortType() );
-			}
-			else
-			{
-				return ( RandomAccessibleInterval< T > ) rai;
-			}
 		}
 	}
 
