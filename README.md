@@ -146,7 +146,9 @@ A typical, simple command line call to register each timepoint alignment individ
 `-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
 
 `-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
-* `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other. 
+* `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other.
+  * test
+  * test 
 * `FAST_TRANSLATION` is a translation invariant method that uses geometric hashing and can find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
 * `PRECISE_TRANSLATION` is a translation invariant method that uses exhaustive search to find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
 * `ICP` is a method that iteratively assignes closest pairs of points between two images until convergence and can be used for fine alignment.
