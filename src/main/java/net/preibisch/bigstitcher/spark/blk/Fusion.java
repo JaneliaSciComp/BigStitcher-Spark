@@ -19,8 +19,11 @@ import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
+import net.imglib2.algorithm.blocks.convert.ClampType;
 import net.imglib2.algorithm.blocks.convert.Convert;
 import net.imglib2.algorithm.blocks.transform.Transform;
+import net.imglib2.algorithm.blocks.transform.Transform.ComputationType;
+import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.blocks.PrimitiveBlocks;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImg;
@@ -115,7 +118,7 @@ public class Fusion
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
 			adjustBlending( viewDescriptions.get( viewId ), blending, border, model );
 
-			final RandomAccessibleInterval< FloatType > transformedBlending = transformBlendingRender(
+			final RandomAccessibleInterval< FloatType > transformedBlending = Blending.transformBlendingRender(
 					inputImg,
 					border,
 					blending,
@@ -188,182 +191,6 @@ public class Fusion
 		return ArrayImgs.floats( output, boundingBox.dimensionsAsLongArray() );
 	}
 
-	private static RandomAccessibleInterval< FloatType > transformBlendingRender(
-			final Interval inputImgInterval,
-			final float[] border,
-			final float[] blending,
-			final AffineTransform3D transform,
-			final Interval boundingBox )
-	{
-		final AffineTransform3D t1 = new AffineTransform3D();
-		t1.setTranslation(
-				-boundingBox.min( 0 ),
-				-boundingBox.min( 1 ),
-				-boundingBox.min( 2 ) );
-		t1.concatenate( transform );
-
-		final AffineTransform3D t = new AffineTransform3D();
-		t.translate( inputImgInterval.minAsDoubleArray() );
-		t.preConcatenate( t1 );
-
-		final long[] dim = boundingBox.dimensionsAsLongArray();
-		final float[] weights = new float[ ( int ) Intervals.numElements( dim ) ];
-		final Img< FloatType > rai = ArrayImgs.floats( weights, dim );
-
-		final int n = 3;
-		final int[] dimMinus1 = {
-				( int ) inputImgInterval.dimension( 0 ) - 1,
-				( int ) inputImgInterval.dimension( 1 ) - 1,
-				( int ) inputImgInterval.dimension( 2 ) - 1 };
-
-		final float[] b0 = new float[ n ];
-		final float[] b1 = new float[ n ];
-		final float[] b2 = new float[ n ];
-		final float[] b3 = new float[ n ];
-		for ( int d = 0; d < n; ++d )
-		{
-			b0[ d ] = border[ d ];
-			b1[ d ] = border[ d ] + blending[ d ];
-			b2[ d ] = dimMinus1[ d ] - border[ d ] - blending[ d ];
-			b3[ d ] = dimMinus1[ d ] - border[ d ];
-			// TODO handle b1 > b2
-			// TODO handle (b1+b2)/2 < a
-		}
-
-		final double[] p = new double[ n ];
-		final double[] location = new double[ n ];
-		final double[] d0 = t.inverse().d( 0 ).positionAsDoubleArray();
-		final int sx = ( int ) dim[ 0 ];
-		final int sy = ( int ) dim[ 1 ];
-		final int sz = ( int ) dim[ 2 ];
-		for ( int z = 0; z < sz; ++z )
-		{
-			p[ 2 ] = z;
-			for ( int y = 0; y < sy; ++y )
-			{
-				p[ 1 ] = y;
-				p[ 0 ] = 0;
-				t.applyInverse( location, p );
-				final int offset = ( z * sy + y ) * sx;
-				for ( int x = 0; x < sx; ++x )
-				{
-					weights[ offset + x ] = 1;
-				}
-				for ( int d = 0; d < 3; ++d )
-				{
-					final float l0 = ( float ) location[ d ];
-					final float dd = ( float ) d0[ d ];
-					if ( Math.abs( dd ) < 0.0001f )
-					{
-						float weight = computeWeight( l0, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] );
-						for ( int x = 0; x < sx; ++x )
-						{
-							weights[ offset + x ] *= weight;
-						}
-					}
-					else
-					{
-						final float blend = blending[ d ] / dd;
-						final float b0d = ( b0[ d ] - l0 ) / dd;
-						final float b1d = ( b1[ d ] - l0 ) / dd;
-						final float b2d = ( b2[ d ] - l0 ) / dd;
-						final float b3d = ( b3[ d ] - l0 ) / dd;
-
-						// TODO: next: loop x over 0 .. b0d .. b1d .. b2d .. b3d .. sx
-						//       with bounds checking and floored loop bounds
-						//
-						// TODO: inequalities and order have to be reversed if dd < 0!
-						//       How to test that?
-
-						final int b0di = Math.min( sx, ( int ) b0d );
-						final int b1di = Math.min( sx, ( int ) b1d );
-						final int b2di = Math.min( sx, ( int ) b2d );
-						final int b3di = Math.min( sx, ( int ) b3d );
-						int x = 0;
-						for ( ; x < b0di; ++x )
-						{
-							weights[ offset + x ] = 0;
-						}
-						for ( ; x < b1di; ++x )
-						{
-							float weight = SmallLookup.fn( ( x - b0d ) / blend );
-							weights[ offset + x ] *= weight;
-						}
-						x = Math.max( x, b2di );
-						for ( ; x < b3di; ++x )
-						{
-							float weight = SmallLookup.fn( ( b3d - x ) / blend );
-							weights[ offset + x ] *= weight;
-						}
-						for ( ; x < sx; ++x )
-						{
-							weights[ offset + x ] = 0;
-						}
-					}
-				}
-			}
-		}
-
-		return rai;
-	}
-
-	private static float computeWeight( final float l, final float blending, final float b0, final float b1, final float b2, final float b3 )
-	{
-		if ( l < b0 )
-		{
-			return 0;
-		}
-		else if ( l < b1 )
-		{
-			return SmallLookup.fn( ( l - b0 ) / blending );
-		}
-		else if ( l < b2 )
-		{
-			return 1;
-		}
-		else if ( l < b3 )
-		{
-			return SmallLookup.fn( ( b3 - l ) / blending );
-		}
-		else
-		{
-			return 0;
-		}
-	}
-
-	static class SmallLookup
-	{
-		// [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
-		//   0                             1
-		//   n = 10
-		//   d = (double) i / n
-
-		private static final int n = 30;
-
-		// static lookup table for the blending function
-		private static final float[] lookUp = createLookup( n );
-
-		private static float[] createLookup( final int n )
-		{
-			final float[] lookup = new float[ n + 2 ];
-			for ( int i = 0; i <= n; i++ )
-			{
-				final double d = ( double ) i / n;
-				lookup[ i ] = ( float ) ( ( Math.cos( ( 1 - d ) * Math.PI ) + 1 ) / 2 );
-			}
-			lookup[ n + 1 ] = lookup[ n ];
-			return lookup;
-		}
-
-		static float fn( final float d )
-		{
-			final int i = ( int ) ( d * n );
-			final float s = ( d * n ) - i;
-			return lookUp[ i ] * (1.0f - s) + lookUp[ i + 1 ] * s;
-		}
-	}
-
-
 	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformView(
 			final RandomAccessibleInterval< T > input,
 			final Object type, // TODO: resolve generics... this should be T
@@ -378,8 +205,7 @@ public class Fusion
 		t.concatenate( transform );
 
 		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
-		final UnaryBlockOperator< T, T > affine = Transform.affine( ( T ) type, t, Transform.Interpolation.NLINEAR );
-		final UnaryBlockOperator< T, FloatType > operator = affine.andThen( Convert.convert( ( T ) type, new FloatType() ) );
+		final UnaryBlockOperator< T, FloatType > operator = Transform.affine( ( T ) type, t, Interpolation.NLINEAR, ComputationType.FLOAT ).adaptTargetType( new FloatType(), ClampType.NONE );
 		return BlockAlgoUtils.cellImg(
 				blocks,
 				operator,
@@ -387,13 +213,6 @@ public class Fusion
 				boundingBox.dimensionsAsLongArray(),
 				new int[] { 64, 64, 64 } );
 	}
-
-
-
-
-
-
-
 
 
 
