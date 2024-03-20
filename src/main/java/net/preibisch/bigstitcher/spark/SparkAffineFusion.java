@@ -1,7 +1,6 @@
 package net.preibisch.bigstitcher.spark;
 
-import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual_blk;
-import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual_blk_convert;
+import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -22,8 +21,6 @@ import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.Converters;
-import net.imglib2.converter.RealTypeConverters;
 import net.imglib2.img.cell.CellGrid;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
@@ -47,9 +44,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 import net.preibisch.mvrecon.process.export.ExportTools;
 import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -60,7 +55,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -576,7 +571,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					else
 						type = new FloatType();
 
-					final RandomAccessibleInterval< NativeType > source = fuseVirtual_blk_convert(
+					final RandomAccessibleInterval< NativeType > source = fuseVirtual(
 							dataLocal,
 							overlappingBlocks.overlappingViews(),
 							fusedBlock,

@@ -1,6 +1,5 @@
 package net.preibisch.bigstitcher.spark.blk;
 
-import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -14,10 +13,9 @@ import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.blocks.BlockAlgoUtils;
+import net.imglib2.algorithm.blocks.BlockProcessor;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
 import net.imglib2.algorithm.blocks.convert.ClampType;
 import net.imglib2.algorithm.blocks.transform.Transform;
@@ -28,12 +26,9 @@ import net.imglib2.blocks.TempArray;
 import net.imglib2.cache.img.ReadOnlyCachedCellImgFactory;
 import net.imglib2.cache.img.ReadOnlyCachedCellImgOptions;
 import net.imglib2.cache.img.SingleCellArrayImg;
-import net.imglib2.converter.Converters;
-import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.PrimitiveType;
-import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -42,14 +37,11 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
-import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.fusion.FusionTools;
 
 public class Fusion
 {
-
-
-	public static < T extends NativeType< T > > RandomAccessibleInterval< T > fuseVirtual_blk_convert(
+	public static < T extends NativeType< T > > RandomAccessibleInterval< T > fuseVirtual(
 			final AbstractSpimData< ? > spimData,
 			final Collection< ? extends ViewId > views,
 			final Interval boundingBox,
@@ -70,10 +62,10 @@ public class Fusion
 
 		final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions = spimData.getSequenceDescription().getViewDescriptions();
 
-		return fuseVirtual_blk_convert( imgLoader, registrations, viewDescriptions, views, boundingBox, type, minIntensity, range );
+		return fuseVirtual( imgLoader, registrations, viewDescriptions, views, boundingBox, type, minIntensity, range );
 	}
 
-	public static < T extends NativeType< T > > RandomAccessibleInterval< T >  fuseVirtual_blk_convert(
+	public static < T extends NativeType< T > > RandomAccessibleInterval< T > fuseVirtual(
 			final BasicImgLoader imgloader,
 			final Map< ViewId, ? extends AffineTransform3D > registrations, // now contain the downsampling already
 			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
@@ -83,8 +75,8 @@ public class Fusion
 			final double minIntensity,
 			final double range )
 	{
-		System.out.println( "Fusion.fuseVirtual_blk_convert" );
-		System.out.println( "  boundingBox = " + Intervals.toString(boundingBox) );
+//		System.out.println( "Fusion.fuseVirtual" );
+//		System.out.println( "  boundingBox = " + Intervals.toString(boundingBox) );
 
 		// SIMPLIFIED:
 		// assuming:
@@ -96,7 +88,7 @@ public class Fusion
 		// (sorted to be able to use the "lowest ViewId" wins strategy)
 		final List< ViewId > viewIdsToProcess = views.stream().sorted().collect( Collectors.toList() );
 
-		final List< RandomAccessibleInterval< FloatType > > images = new ArrayList<>();
+		final List< TransformedViewBlocks< ? > > images = new ArrayList<>();
 		final List< Blending > blendings = new ArrayList<>();
 
 		for ( final ViewId viewId : viewIdsToProcess )
@@ -111,10 +103,9 @@ public class Fusion
 
 			Object inputImgType = imgloader.getSetupImgLoader( viewId.getViewSetupId() ).getImageType();
 
-			final int interpolation = 1;
-//			final RandomAccessibleInterval transformedInputImg = TransformView.transformView( inputImg, model, boundingBox, 0, interpolation );
-			final RandomAccessibleInterval< FloatType > transformedInputImg = transformView( inputImg, inputImgType, model, boundingBox );
-			images.add( transformedInputImg );
+			final int interpolation = 1; // TODO
+			final TransformedViewBlocks< ? > viewBlocks = new TransformedViewBlocks( inputImg, ( NativeType ) inputImgType, model, boundingBox );
+			images.add( viewBlocks );
 
 			// SIMPLIFIED
 			// add all (or no) weighting schemes
@@ -123,27 +114,62 @@ public class Fusion
 			// 	final boolean useContentBased = false;
 
 			// instantiate blending if necessary
-			final float[] blending = Util.getArrayFromValue( defaultBlendingRange, 3 );
-			final float[] border = Util.getArrayFromValue( defaultBlendingBorder, 3 );
+			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
+			final float[] border = Util.getArrayFromValue( FusionTools.defaultBlendingBorder, 3 );
 
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
-			adjustBlending( viewDescriptions.get( viewId ), blending, border, model );
+			FusionTools.adjustBlending( viewDescriptions.get( viewId ), blending, border, model );
 
 			blendings.add( new Blending( inputImg, border, blending, model ) );
 		}
 
-		return getFusedRandomAccessibleInterval_blk_lazy_convert( boundingBox, images, blendings, type, minIntensity, range );
+		return getFusedRandomAccessibleInterval( boundingBox, images, blendings, type, minIntensity, range );
 	}
 
-	private static < T extends NativeType< T > > RandomAccessibleInterval< T >  getFusedRandomAccessibleInterval_blk_lazy_convert(
+	private static class TransformedViewBlocks< T extends NativeType< T > >
+	{
+		private final PrimitiveBlocks< T > threadSafeBlocks;
+
+		private final UnaryBlockOperator< T, FloatType > threadSafeOperator;
+
+		TransformedViewBlocks(
+				final RandomAccessibleInterval< T > input,
+				final T type, // TODO: resolve generics... this should be T
+				final AffineTransform3D transform,
+				final Interval boundingBox )
+		{
+			final AffineTransform3D t = new AffineTransform3D();
+			t.setTranslation(
+					-boundingBox.min( 0 ),
+					-boundingBox.min( 1 ),
+					-boundingBox.min( 2 ) );
+			t.concatenate( transform );
+			threadSafeBlocks = PrimitiveBlocks.of( Views.extendBorder( input ) )
+					.threadSafe();
+			threadSafeOperator = Transform.affine( new FloatType(), t, Interpolation.NLINEAR, ComputationType.FLOAT )
+					.adaptSourceType( ( T ) type, ClampType.NONE )
+					.threadSafe();
+		}
+
+		void compute( final float[] dest, final Interval interval )
+		{
+			final BlockProcessor< Object, Object > processor = threadSafeOperator.blockProcessor();
+			processor.setTargetInterval( interval );
+			final Object src = processor.getSourceBuffer();
+			threadSafeBlocks.copy( processor.getSourcePos(), src, processor.getSourceSize() );
+			processor.compute( src, dest );
+		}
+	}
+
+	private static < T extends NativeType< T > > RandomAccessibleInterval< T > getFusedRandomAccessibleInterval(
 			final Interval boundingBox,
-			final List< RandomAccessibleInterval< FloatType > > images,
+			final List< TransformedViewBlocks< ? > > images,
 			final List< Blending > blendings,
 			final T type,
 			final double minIntensity,
 			final double range )
 	{
-		final CloseableThreadLocal< FuserConverter< T > > fuserThreadLocal = CloseableThreadLocal.withInitial( () -> new FuserConverter<>( boundingBox, images, blendings, minIntensity, range ) );
+		final CloseableThreadLocal< FuserConverter< T > > fuserThreadLocal = CloseableThreadLocal.withInitial( () -> new FuserConverter<>( boundingBox, images, blendings, type, minIntensity, range ) );
 		return new ReadOnlyCachedCellImgFactory().create(
 				boundingBox.dimensionsAsLongArray(),
 				type,
@@ -151,11 +177,13 @@ public class Fusion
 				ReadOnlyCachedCellImgOptions.options().cellDimensions( 64, 64, 64 ) );
 	}
 
-	static class FuserConverter< T extends NativeType< T > >
+	private static class FuserConverter< T extends NativeType< T > >
 	{
 		// TODO: use arrays instead of lists?
-		private final List< PrimitiveBlocks< FloatType > > imgBlocks;
-		private final List< TempArray< float[] > > imgBuffers;
+		private final List< TransformedViewBlocks< ? > > views;
+		private final TempArray< float[] >[] imgTempArrays;
+		private final float[][] imgBuffers;
+
 		private final long[] boundingBox_min;
 		private final List< Blending > blendings;
 
@@ -170,32 +198,84 @@ public class Fusion
 
 		private final double[] pos = new double[ 3 ];
 
-		private final double minIntensity;
-		private final double range;
+		private final FillOutputLine fillOutputLine;
 
 		FuserConverter(
 				final Interval boundingBox,
-				final List< RandomAccessibleInterval< FloatType > > images,
+				final List< TransformedViewBlocks< ? > > views,
 				final List< Blending > blendings,
-				final double minIntensity,
-				final double range )
+				final T type, // output type
+				final double minIntensity, // only used if output type is uint8 or uint16
+				final double range ) // only used if output type is uint8 or uint16
 		{
-			this.minIntensity = minIntensity;
-			this.range = range;
 			final int n = boundingBox.numDimensions();
 			cell_min = new long[ n ];
 			cell_dims = new int[ n ];
 			bb_min = new long[ n ];
 
+			this.views = views;
 			this.blendings = blendings;
-			imgBlocks = new ArrayList<>();
-			imgBuffers = new ArrayList<>();
-			for ( RandomAccessibleInterval< FloatType > image : images )
-			{
-				imgBlocks.add( PrimitiveBlocks.of( image ) );
-				imgBuffers.add( TempArray.forPrimitiveType( PrimitiveType.FLOAT ) );
-			}
+			final int numImages = blendings.size();
+			imgTempArrays = new TempArray[ numImages ];
+			Arrays.setAll( imgTempArrays, i -> TempArray.forPrimitiveType( PrimitiveType.FLOAT ) );
+			imgBuffers = new float[ numImages ][];
 			boundingBox_min = boundingBox.minAsLongArray();
+
+			fillOutputLine = FillOutputLine.of( type, minIntensity, range );
+		}
+
+		@FunctionalInterface
+		interface FillOutputLine {
+			void compute( float[] sumW, float[] sumI, Object output, int offset, int length );
+
+			static FillOutputLine of(
+					final Object type, // output type
+					final double minIntensity, // only used if output type is uint8 or uint16
+					final double range ) // only used if output type is uint8 or uint16
+			{
+				if ( type instanceof FloatType )
+				{
+					return (sumW, sumI, output, offset, length) -> {
+						final float[] out = ( float[] ) output;
+						for ( int x = 0; x < length; ++x )
+						{
+							final float w = sumW[ x ];
+							final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
+							out[ offset + x ] = value;
+						}
+					};
+				}
+				else if ( type instanceof UnsignedByteType )
+				{
+					final float a = ( float ) ( 1 / range );
+					final float b = ( float ) ( 0.5 - minIntensity / range );
+					return (sumW, sumI, output, offset, length) -> {
+						final byte[] out = ( byte[] ) output;
+						for ( int x = 0; x < length; ++x )
+						{
+							final float w = sumW[ x ];
+							final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
+							out[ offset + x ] = ( byte ) ( value * a + b );
+						}
+					};
+				}
+				else if ( type instanceof UnsignedShortType )
+				{
+					final float a = ( float ) ( 1 / range );
+					final float b = ( float ) ( 0.5 - minIntensity / range );
+					return (sumW, sumI, output, offset, length) -> {
+						final short[] out = ( short[] ) output;
+						for ( int x = 0; x < length; ++x )
+						{
+							final float w = sumW[ x ];
+							final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
+							out[ offset + x ] = ( short ) ( value * a + b );
+						}
+					};
+				}
+				else
+					throw new IllegalArgumentException();
+			}
 		}
 
 		void load( SingleCellArrayImg< T, ? > cell ) throws Exception
@@ -204,13 +284,11 @@ public class Fusion
 			Arrays.setAll( cell_dims, d -> ( int ) cell.dimension( d ) );
 			final int cell_size = ( int ) Intervals.numElements( cell_dims );
 
-			// TODO pre-alloc
-			final float[][] imgFloats = new float[ imgBlocks.size() ][];
-			for ( int i = 0; i < imgFloats.length; ++i )
+			for ( int i = 0; i < imgBuffers.length; ++i )
 			{
-				final float[] floats = imgBuffers.get( i ).get( cell_size );
-				imgBlocks.get( i ).copy( cell_min, floats, cell_dims );
-				imgFloats[ i ] = floats;
+				final float[] floats = imgTempArrays[ i ].get( cell_size );
+				views.get( i ).compute( floats, cell );
+				imgBuffers[ i ] = floats;
 			}
 
 			Arrays.setAll( bb_min, d -> cell_min[ d ] + boundingBox_min[ d ] );
@@ -235,340 +313,21 @@ public class Fusion
 					final int offset = ( z * sy + y ) * sx;
 					Arrays.fill( sumW, 0 );
 					Arrays.fill( sumI, 0 );
-					for ( int i = 0; i < imgFloats.length; i++ )
+					for ( int i = 0; i < imgBuffers.length; i++ )
 					{
-						final float[] imageFloats = imgFloats[ i ];
+						final float[] imgBuffer = imgBuffers[ i ];
 						blendings.get( i ).fill_range( tmpW, 0, sx, pos );
 						for ( int x = 0; x < sx; ++x )
 						{
 							final float weight = tmpW[ x ];
-							final float intensity = imageFloats[ offset + x ];
+							final float intensity = imgBuffer[ offset + x ];
 							sumW[ x ] += weight;
 							sumI[ x ] += weight * intensity;
 						}
 					}
-					setOutput( sumW, sumI, output, offset, sx );
+					fillOutputLine.compute( sumW, sumI, output, offset, sx );
 				}
 			}
-		}
-
-		private void setOutput( final float[] sumW, final float[] sumI, final Object output, final int offset, final int length )
-		{
-			if ( output instanceof float[] )
-				setOutput( sumW, sumI, ( float[] ) output, offset, length );
-			else if ( output instanceof byte[] )
-				setOutput( sumW, sumI, ( byte[] ) output, offset, length );
-			else if ( output instanceof short[] )
-				setOutput( sumW, sumI, ( short[] ) output, offset, length );
-			else
-				throw new IllegalArgumentException();
-		}
-
-		private void setOutput( final float[] sumW, final float[] sumI, final float[] output, final int offset, final int length )
-		{
-			for ( int x = 0; x < length; ++x )
-			{
-				final float w = sumW[ x ];
-				final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-				output[ offset + x ] = value;
-			}
-		}
-
-		private void setOutput( final float[] sumW, final float[] sumI, final byte[] output, final int offset, final int length )
-		{
-			final float a = ( float ) ( 1 / range );
-			final float b = ( float ) ( 0.5 - minIntensity / range );
-			for ( int x = 0; x < length; ++x )
-			{
-				final float w = sumW[ x ];
-				final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-				output[ offset + x ] = ( byte ) ( value * a + b );
-			}
-		}
-
-		private void setOutput( final float[] sumW, final float[] sumI, final short[] output, final int offset, final int length )
-		{
-			final float a = ( float ) ( 1 / range );
-			final float b = ( float ) ( 0.5 - minIntensity / range );
-			for ( int x = 0; x < length; ++x )
-			{
-				final float w = sumW[ x ];
-				final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-				output[ offset + x ] = ( short ) ( value * a + b );
-			}
-		}
-	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	public static RandomAccessibleInterval< FloatType > fuseVirtual_blk(
-			final AbstractSpimData< ? > spimData,
-			final Collection< ? extends ViewId > views,
-			final Interval boundingBox )
-	{
-		final BasicImgLoader imgLoader = spimData.getSequenceDescription().getImgLoader();
-
-		final HashMap< ViewId, AffineTransform3D > registrations = new HashMap<>();
-
-		for ( final ViewId viewId : views )
-		{
-			final ViewRegistration vr = spimData.getViewRegistrations().getViewRegistration( viewId );
-			vr.updateModel();
-			registrations.put( viewId, vr.getModel().copy() );
-		}
-
-		final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions = spimData.getSequenceDescription().getViewDescriptions();
-
-		return fuseVirtual_blk( imgLoader, registrations, viewDescriptions, views, boundingBox );
-	}
-
-	public static RandomAccessibleInterval< FloatType > fuseVirtual_blk(
-			final BasicImgLoader imgloader,
-			final Map< ViewId, ? extends AffineTransform3D > registrations, // now contain the downsampling already
-			final Map< ViewId, ? extends BasicViewDescription< ? > > viewDescriptions,
-			final Collection< ? extends ViewId > views,
-			final Interval boundingBox // is already downsampled
-	)
-	{
-		System.out.println( "Fusion.fuseVirtual_blk" );
-		System.out.println( "  boundingBox = " + Intervals.toString(boundingBox) );
-
-		// SIMPLIFIED:
-		// assuming:
-		// 	final boolean is2d = true;
-
-		// SIMPLIFIED:
-		// we already filtered the opvelapping view
-		// which views to process (use un-altered bounding box and registrations)
-		// (sorted to be able to use the "lowest ViewId" wins strategy)
-		final List< ViewId > viewIdsToProcess = views.stream().sorted().collect( Collectors.toList() );
-
-		final List< RandomAccessibleInterval< FloatType > > images = new ArrayList<>();
-		final List< Blending > blendings = new ArrayList<>();
-
-		for ( final ViewId viewId : viewIdsToProcess )
-		{
-			final AffineTransform3D model = registrations.get( viewId ).copy();
-
-			// this modifies the model so it maps from a smaller image to the global coordinate space,
-			// which applies for the image itself as well as the weights since they also use the smaller
-			// input image as reference
-			final double[] usedDownsampleFactors = new double[ 3 ];
-			RandomAccessibleInterval inputImg = DownsampleTools.openDownsampled( imgloader, viewId, model, usedDownsampleFactors );
-
-			Object inputImgType = imgloader.getSetupImgLoader( viewId.getViewSetupId() ).getImageType();
-
-			final int interpolation = 1;
-//			final RandomAccessibleInterval transformedInputImg = TransformView.transformView( inputImg, model, boundingBox, 0, interpolation );
-			final RandomAccessibleInterval< FloatType > transformedInputImg = transformView( inputImg, inputImgType, model, boundingBox );
-			images.add( transformedInputImg );
-
-			// SIMPLIFIED
-			// add all (or no) weighting schemes
-			// assuming:
-			// 	final boolean useBlending = true;
-			// 	final boolean useContentBased = false;
-
-			// instantiate blending if necessary
-			final float[] blending = Util.getArrayFromValue( defaultBlendingRange, 3 );
-			final float[] border = Util.getArrayFromValue( defaultBlendingBorder, 3 );
-
-			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
-			adjustBlending( viewDescriptions.get( viewId ), blending, border, model );
-
-			blendings.add( new Blending( inputImg, border, blending, model ) );
-		}
-
-		return getFusedRandomAccessibleInterval_blk_lazy( boundingBox, images, blendings );
-	}
-
-	private static < T extends RealType< T > & NativeType< T > > RandomAccessibleInterval< FloatType > transformView(
-			final RandomAccessibleInterval< T > input,
-			final Object type, // TODO: resolve generics... this should be T
-			final AffineTransform3D transform,
-			final Interval boundingBox )
-	{
-		final AffineTransform3D t = new AffineTransform3D();
-		t.setTranslation(
-				-boundingBox.min( 0 ),
-				-boundingBox.min( 1 ),
-				-boundingBox.min( 2 ) );
-		t.concatenate( transform );
-
-		final PrimitiveBlocks< T > blocks = PrimitiveBlocks.of( Views.extendBorder( input ) );
-		final UnaryBlockOperator< T, FloatType > operator = Transform.affine( new FloatType(), t, Interpolation.NLINEAR, ComputationType.FLOAT ).adaptSourceType( ( T ) type, ClampType.NONE );
-		return BlockAlgoUtils.cellImg(
-				blocks,
-				operator,
-				new FloatType(),
-				boundingBox.dimensionsAsLongArray(),
-				new int[] { 64, 64, 64 } );
-	}
-
-
-	static class Fuser
-	{
-		// TODO: use arrays instead of lists?
-		private final List< PrimitiveBlocks< FloatType > > imgBlocks;
-		private final List< TempArray< float[] > > imgBuffers;
-		private final long[] boundingBox_min;
-		private final List< Blending > blendings;
-
-		private final long[] cell_min;
-		private int[] cell_dims;
-		private final long[] bb_min;
-
-		private final TempArray< float[] > weightsTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
-		private final TempArray< float[] > sumWeightsTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
-		private final TempArray< float[] > sumIntensityTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
-
-		private final double[] pos = new double[ 3 ];
-
-		Fuser(
-				final Interval boundingBox,
-				final List< RandomAccessibleInterval< FloatType > > images,
-				final List< Blending > blendings )
-		{
-			final int n = boundingBox.numDimensions();
-			cell_min = new long[ n ];
-			cell_dims = new int[ n ];
-			bb_min = new long[ n ];
-
-			this.blendings = blendings;
-			imgBlocks = new ArrayList<>();
-			imgBuffers = new ArrayList<>();
-			for ( RandomAccessibleInterval< FloatType > image : images )
-			{
-				imgBlocks.add( PrimitiveBlocks.of( image ) );
-				imgBuffers.add( TempArray.forPrimitiveType( PrimitiveType.FLOAT ) );
-			}
-			boundingBox_min = boundingBox.minAsLongArray();
-		}
-
-		void load( SingleCellArrayImg< FloatType, ? > cell ) throws Exception
-		{
-			Arrays.setAll( cell_min, cell::min );
-			Arrays.setAll( cell_dims, d -> ( int ) cell.dimension( d ) );
-			final int cell_size = ( int ) Intervals.numElements( cell_dims );
-
-			// TODO pre-alloc
-			final float[][] imgFloats = new float[ imgBlocks.size() ][];
-			for ( int i = 0; i < imgFloats.length; ++i )
-			{
-				final float[] floats = imgBuffers.get( i ).get( cell_size );
-				imgBlocks.get( i ).copy( cell_min, floats, cell_dims );
-				imgFloats[ i ] = floats;
-			}
-
-			Arrays.setAll( bb_min, d -> cell_min[ d ] + boundingBox_min[ d ] );
-			final float[] output = ( float[] ) cell.getStorageArray();
-
-			final int sx = cell_dims[ 0 ];
-			final int sy = cell_dims[ 1 ];
-			final int sz = cell_dims[ 2 ];
-
-			final float[] tmpW = weightsTempArray.get( sx );
-			final float[] sumW = sumWeightsTempArray.get( sx );
-			final float[] sumI = sumIntensityTempArray.get( sx );
-
-			pos[ 0 ] = bb_min[ 0 ];
-			for ( int z = 0; z < sz; ++z )
-			{
-				pos[ 2 ] = z + bb_min[ 2 ];
-				for ( int y = 0; y < sy; ++y )
-				{
-					pos[ 1 ] = y + bb_min[ 1 ];
-					final int offset = ( z * sy + y ) * sx;
-					Arrays.fill( sumW, 0 );
-					Arrays.fill( sumI, 0 );
-					for ( int i = 0; i < imgFloats.length; i++ )
-					{
-						final float[] imageFloats = imgFloats[ i ];
-						blendings.get( i ).fill_range( tmpW, 0, sx, pos );
-						for ( int x = 0; x < sx; x++ )
-						{
-							final float weight = tmpW[ x ];
-							final float intensity = imageFloats[ offset + x ];
-							sumW[ x ] += weight;
-							sumI[ x ] += weight * intensity;
-						}
-					}
-					for ( int x = 0; x < sx; x++ )
-					{
-						final float w = sumW[ x ];
-						output[ offset + x ] = ( w > 0 ) ? sumI[ x ] / w : 0;
-					}
-				}
-			}
-		}
-	}
-
-	private static RandomAccessibleInterval< FloatType > getFusedRandomAccessibleInterval_blk_lazy(
-			final Interval boundingBox,
-			final List< RandomAccessibleInterval< FloatType > > images,
-			final List< Blending > blendings )
-	{
-		final CloseableThreadLocal< Fuser > fuserThreadLocal = CloseableThreadLocal.withInitial( () -> new Fuser( boundingBox, images, blendings ) );
-		return new ReadOnlyCachedCellImgFactory().create(
-				boundingBox.dimensionsAsLongArray(),
-				new FloatType(),
-				cell -> fuserThreadLocal.get().load( cell ),
-				ReadOnlyCachedCellImgOptions.options().cellDimensions( 64, 64, 64 ) );
-	}
-
-
-
-
-	// ------------------------------------------------------------------------
-	//
-	//  unmodified from FusionTools
-	//
-	// ------------------------------------------------------------------------
-
-	public static float defaultBlendingRange = 40;
-	public static float defaultBlendingBorder = 0;
-
-	/**
-	 * Compute how much blending in the input has to be done so the target values blending and border are achieved in the fused image
-	 *
-	 * @param vd - which view
-	 * @param blending - the target blending range, e.g. 40
-	 * @param border - the target blending border, e.g. 0
-	 * @param transformationModel - the transformation model used to map from the (downsampled) input to the output
-	 */
-	// NOTE (TP) blending and border are modified
-	public static void adjustBlending( final BasicViewDescription< ? > vd, final float[] blending, final float[] border, final AffineTransform3D transformationModel )
-	{
-		adjustBlending( vd.getViewSetup().getSize(), Group.pvid( vd ), blending, border, transformationModel );
-	}
-
-	public static void adjustBlending( final Dimensions dim, final String name, final float[] blending, final float[] border, final AffineTransform3D transformationModel )
-	{
-		final double[] scale = TransformationTools.scaling( dim, transformationModel ).getA();
-
-		final NumberFormat f = TransformationTools.f;
-
-		//System.out.println( "View " + name + " is currently scaled by: (" +
-		//		f.format( scale[ 0 ] ) + ", " + f.format( scale[ 1 ] ) + ", " + f.format( scale[ 2 ] ) + ")" );
-
-		for ( int d = 0; d < blending.length; ++d )
-		{
-			blending[ d ] /= ( float )scale[ d ];
-			border[ d ] /= ( float )scale[ d ];
 		}
 	}
 }
