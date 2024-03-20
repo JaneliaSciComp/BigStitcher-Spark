@@ -22,8 +22,6 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.RegularizationModel;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.TransformationModel;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -48,6 +46,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointPairwise;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters;
@@ -59,12 +59,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
-	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION };
+	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label of the interest points used for registration (e.g. beads)")
 	protected String label = null;
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION or PRECISE_TRANSLATION")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
 	protected Method registrationMethod = null;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
@@ -103,18 +103,29 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	protected boolean splitTimepoints = false;
 
 
-	@Option(names = { "-rit", "--ransacIterations" }, description = "number of ransac iterations (default: 10,000)")
-	protected Integer ransacIterations = 10000;
+	@Option(names = { "-rit", "--ransacIterations" }, description = "max number of ransac iterations (default: 10,000 for descriptors, 200 for ICP)")
+	protected Integer ransacIterations = null;
 
-	@Option(names = { "-rme", "--ransacMaxEpsilon" }, description = "ransac max error in pixels (default: 5.0)")
-	protected Double ransacMaxEpsilon = 5.0;
+	@Option(names = { "-rme", "--ransacMaxError" }, description = "ransac max error in pixels (default: 5.0 for descriptors, 2.5 for ICP)")
+	protected Double ransacMaxError = null;
 
+	// TODOL ignored by ICP
 	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.1)")
 	protected Double ransacMinInlierRatio = 0.1;
 
 	@Option(names = { "-rmif", "--ransacMinInlierFactor" }, description = "ransac min inlier factor, i.e. how many time the minimal number of matches need to found, e.g. affine needs 4 matches, 3x means at least 12 matches required (default: 3.0)")
 	protected Double ransacMinInlierFactor = 3.0;
 
+	
+	@Option(names = { "-ime", "--icpMaxError" }, description = "ICP max error in pixels (default: 5.0)")
+	protected Double icpMaxError = 5.0;
+
+	@Option(names = { "-iit", "--icpIterations" }, description = "max number of ICP iterations (default: 200)")
+	protected Integer icpIterations = 200;
+
+	@Option(names = { "--icpUseRANSAC" }, description = "ICP uses RANSAC at every iteration to filter correspondences (default: false)")
+	protected boolean icpUseRANSAC = false;
+	
 	//@Option(names = { "-p", "--pairsPerSparkJob" }, description = "how many pairs of views are processed per spark job (default: 1)")
 	//protected Integer pairsPerSparkJob = 1;
 
@@ -124,7 +135,27 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		initRegistrationParameters();
 
 		if ( this.numNeighbors != 3 && registrationMethod != Method.PRECISE_TRANSLATION )
-			throw new IllegalArgumentException( "Only PRECISE_TRANSLATION method supports numNeighbors != 3." );
+		{
+			System.out.println( "Only PRECISE_TRANSLATION method supports numNeighbors != 3." );
+			return null;
+		}
+
+		if ( registrationMethod == Method.ICP && ( redundancy != 1 || significance != 3.0 || numNeighbors != 3 ))
+		{
+			System.out.println( "ICP does not support parameters redundancy, significance and numNeighbors" );
+			return null;
+		}
+
+		if ( ransacIterations == null && registrationMethod == Method.ICP )
+		{
+			ransacIterations = 200;
+			ransacMaxError = 2.5;
+		}
+		else if ( ransacIterations == null )
+		{
+			ransacIterations = 10000;
+			ransacMaxError = 5.0;
+		}
 
 		// identify groups/subsets
 		final PairwiseSetup< ViewId > setup = setupGroups( viewReg );
@@ -162,9 +193,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final String label = this.label;
 		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
-		final double ransacMaxEpsilon = this.ransacMaxEpsilon;
+		final double ransacMaxEpsilon = this.ransacMaxError;
 		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
 		final double ransacMinInlierFactor = this.ransacMinInlierFactor;
+		final double icpMaxError = this.icpMaxError;
+		final int icpMaxIterations = this.icpIterations;
+		final boolean icpUseRANSAC = this.icpUseRANSAC;
 		final Method registrationMethod = this.registrationMethod;
 		final double ratioOfDistance = this.significance;
 		final int redundancy = this.redundancy;
@@ -234,7 +268,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						model,
 						numNeighbors,
 						redundancy,
-						(float)ratioOfDistance );
+						(float)ratioOfDistance,
+						icpMaxError,
+						icpMaxIterations,
+						icpUseRANSAC);
 
 				// compute all pairwise matchings
 				final PairwiseResult<InterestPoint> result =
@@ -321,7 +358,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						model,
 						numNeighbors,
 						redundancy,
-						(float)ratioOfDistance );
+						(float)ratioOfDistance,
+						icpMaxError,
+						icpMaxIterations,
+						icpUseRANSAC);
 
 				final List< Pair< Pair< Group< ViewId >, Group< ViewId > >, PairwiseResult< GroupedInterestPoint< ViewId > > > > resultGroup =
 						MatcherPairwiseTools.computePairs( new ArrayList<>( Arrays.asList( pair ) ), groupedInterestpoints, matcher );
@@ -434,7 +474,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final Model< ? > model,
 			final int numNeighbors,
 			final int redundancy,
-			final float ratioOfDistance )
+			final float ratioOfDistance,
+			final double icpMaxDistance,
+			final int icpMaxIterations,
+			final boolean icpUseRANSAC )
 	{
 		MatcherPairwise< InterestPoint > matcher;
 
@@ -453,10 +496,22 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final FRGLDMParameters fp = new FRGLDMParameters(model, (float)ratioOfDistance, redundancy);
 			matcher = new FRGLDMPairwise<>( rp, fp );
 		}
-		else
+		else if ( registrationMethod == Method.PRECISE_TRANSLATION )
 		{
 			final RGLDMParameters dp = new RGLDMParameters(model, RGLDMParameters.differenceThreshold, (float)ratioOfDistance, numNeighbors, redundancy);
 			matcher = new RGLDMPairwise<>( rp, dp );
+		}
+		else
+		{
+			final IterativeClosestPointParameters ip = new IterativeClosestPointParameters(
+					model,
+					icpMaxDistance,
+					icpMaxIterations,
+					false,//icpUseRANSAC,
+					rp.getMaxEpsilon(),
+					rp.getNumIterations(),
+					Math.round( rp.getMinInlierFactor() * model.getMinNumMatches() ) );
+			matcher = new IterativeClosestPointPairwise<>( ip );
 		}
 
 		return matcher;
