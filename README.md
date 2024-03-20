@@ -100,7 +100,7 @@ It is analogous for the interest point dataset:
 
 Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined blocks across all input images at once, so also few, very big images will be processed efficiently.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over user-defined blocks across all input images at once, so also few, very big images will be processed efficiently.
 
 ### Pairwise Stitching<a name="stitching">
 
@@ -114,7 +114,7 @@ Please run `stitching` without parameters to get help for all command line argum
 
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over pairs of images.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over pairs of images.
 
 ### Detect Interest Points<a name="ip-detect">
 
@@ -130,21 +130,34 @@ Please run `detect-interestpoints` without parameters to get help for all comman
 
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark parallelization is written so it parallelizes over user-defined block across all processed images at once.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over user-defined block across all processed images at once.
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/BigStitcher-interestpoints.jpg" alt="Visualizing interest points in BigStitcher">
+&nbsp;
 
 ### Match Interest Points<a name="ip-match">
 
-Once 
+After interest points are detected they are pair-wise matching between all views/images (***Note: this also works for Stitching, try it out***). Several point cloud matching methods and ways how views can be grouped are supported, which will be explained below. Importantly, matching & solving can be performed once or iteratively; typical workflows that match & solve more than once are 1) to first align each timepoint of a series using affine models individually followed by registration across time using translation models or 2) to first align using geometric descriptor matching to then subsequently refine the result using Iterative Closest Point (ICP) that only works once the current transformation is very good (***Note:*** ICP alignment creates many corresponding interest points that might be desirable for [Non-Rigid fusion](#nonrigid-fusion) where all corresponding interest points are perfectly matched on top of each other).
 
-Per timepoint alignment:
+A typical, simple command line call to register each timepoint alignment individually using [this example](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing) looks like:
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
+
+`-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
+
+`-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
+* `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other. 
+* `FAST_TRANSLATION` is a translation invariant method that uses geometric hashing and can find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
+* `PRECISE_TRANSLATION` is a translation invariant method that uses exhaustive search to find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
+* `ICP` is a method that iteratively assignes closest pairs of points between two images until convergence and can be used for fine alignment.
+
+All methods use RANSAC to robustly identify a set of corresponding points in the set or correspondence candidates. `-rit` defines the number of RANSAC iterations (increasing might help to find more correspondences), `-rme` the maximum error (epsilon) for RANSAC (increasing might help to find more correspondences), `-rmir` the minimum inlier ratio (setting to `0.0` might help to find more correspondences), and `-rmif` defines the minimum inlier factor for RANSAC (i.e. how many times the minimal number of inliers required by the transformation model need to be identified so a pair is valid).
 
 For timeseries alignment, grouping all views of a timepoint together:
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints</code>
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over pairs of images.
 
 ### Solver<a name="#solver">
 When using pairwise stitching:
