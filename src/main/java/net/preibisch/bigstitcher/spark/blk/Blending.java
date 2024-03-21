@@ -3,21 +3,16 @@ package net.preibisch.bigstitcher.spark.blk;
 import java.util.Arrays;
 
 import net.imglib2.Interval;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.numeric.real.FloatType;
 
 public class Blending
 {
-
 	private final AffineTransform3D t;
 
 	/**
 	 * constant partial differential vector of t in X.
 	 */
 	private final double[] d0;
-
 
 	private final int n = 3;
 
@@ -110,57 +105,50 @@ public class Blending
 		{
 			final float l0 = ( float ) pos[ d ];
 			final float dd = ( float ) d0[ d ];
+
+			final float blend;
+			final float b0d;
+			final float b1d;
+			final float b2d;
+			final float b3d;
 			if ( dd > EPSILON )
 			{
-				final float blend = blending[ d ] / dd;
-				final float b0d = ( b0[ d ] - l0 ) / dd;
-				final float b1d = ( b1[ d ] - l0 ) / dd;
-				final float b2d = ( b2[ d ] - l0 ) / dd;
-				final float b3d = ( b3[ d ] - l0 ) / dd;
-
-				final int b3di = Math.max( 0, Math.min( length, ( int ) b3d ) );
-				final int b2di = Math.max( 0, Math.min( b3di, ( int ) b2d ) );
-				final int b1di = Math.max( 0, Math.min( b2di, ( int ) b1d ) );
-				final int b0di = Math.max( 0, Math.min( b1di, ( int ) b0d ) );
-
-				for ( int x = 0; x < b0di; ++x )
-					weights[ offset + x ] = 0;
-				for ( int x = b0di; x < b1di; ++x )
-					weights[ offset + x ] *= Lookup.get( ( x - b0d ) / blend );
-				for ( int x = b2di; x < b3di; ++x )
-					weights[ offset + x ] *= Lookup.get( ( b3d - x ) / blend );
-				for ( int x = b3di; x < length; ++x )
-					weights[ offset + x ] = 0;
+				blend = blending[ d ] / dd;
+				b0d = ( b0[ d ] - l0 ) / dd;
+				b1d = ( b1[ d ] - l0 ) / dd;
+				b2d = ( b2[ d ] - l0 ) / dd;
+				b3d = ( b3[ d ] - l0 ) / dd;
 			}
 			else if ( dd < -EPSILON )
 			{
-				// TODO order of region transitions is reversed
-				throw new UnsupportedOperationException("IT'S HAPPENING!!!");
+				blend = blending[ d ] / -dd;
+				b0d = ( b3[ d ] - l0 ) / dd;
+				b1d = ( b2[ d ] - l0 ) / dd;
+				b2d = ( b1[ d ] - l0 ) / dd;
+				b3d = ( b0[ d ] - l0 ) / dd;
 			}
 			else
 			{
 				final float const_weight = computeWeight( l0, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] );
 				for ( int x = 0; x < length; ++x )
 					weights[ offset + x ] *= const_weight;
+				continue;
 			}
-		}
-	}
 
-	boolean is_range_inside(
-			final int length,
-			double[] transformed_start_pos )
-	{
-		final double[] pos = new double[ n ];
-		t.applyInverse( pos, transformed_start_pos );
-		for ( int d = 0; d < 3; ++d )
-		{
-			final float l0 = ( float ) pos[ d ];
-			final float l1 = ( float ) ( pos[ d ] + length * d0[ d ] );
-			if ( computeWeight( l0, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] ) != 1
-					|| computeWeight( l1, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] ) != 1 )
-				return false;
+			final int b3di = Math.max( 0, Math.min( length, ( int ) b3d ) );
+			final int b2di = Math.max( 0, Math.min( b3di, ( int ) b2d ) );
+			final int b1di = Math.max( 0, Math.min( b2di, ( int ) b1d ) );
+			final int b0di = Math.max( 0, Math.min( b1di, ( int ) b0d ) );
+
+			for ( int x = 0; x < b0di; ++x )
+				weights[ offset + x ] = 0;
+			for ( int x = b0di; x < b1di; ++x )
+				weights[ offset + x ] *= Lookup.get( ( x - b0d ) / blend );
+			for ( int x = b2di; x < b3di; ++x )
+				weights[ offset + x ] *= Lookup.get( ( b3d - x ) / blend );
+			for ( int x = b3di; x < length; ++x )
+				weights[ offset + x ] = 0;
 		}
-		return true;
 	}
 
 	private static float computeWeight(
