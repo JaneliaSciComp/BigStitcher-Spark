@@ -507,7 +507,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					model,
 					icpMaxDistance,
 					icpMaxIterations,
-					false,//icpUseRANSAC,
+					icpUseRANSAC,
+					rp.getMinInlierRatio(),
 					rp.getMaxEpsilon(),
 					rp.getNumIterations(),
 					Math.round( rp.getMinInlierFactor() * model.getMinNumMatches() ) );
