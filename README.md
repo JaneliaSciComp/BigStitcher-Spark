@@ -147,7 +147,7 @@ A typical, simple command line call to register each timepoint alignment individ
 
 `-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
 * `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other.
-  * test
+  * `-s` defines the significance during descriptor matching, to establish a correspondence the best matching descriptor has to be `s` times better than the second best matching descriptor. `-r` is the level of redundancy during descriptor matching, it adds extra neighbors to each descriptor and tests all combinations of neighboring points. 
   * test 
 * `FAST_TRANSLATION` is a translation invariant method that uses geometric hashing and can find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
 * `PRECISE_TRANSLATION` is a translation invariant method that uses exhaustive search to find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
