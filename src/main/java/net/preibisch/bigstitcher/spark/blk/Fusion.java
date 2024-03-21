@@ -6,7 +6,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import mpicbg.spim.data.generic.AbstractSpimData;
@@ -66,9 +65,6 @@ public class Fusion
 		return fuseVirtual( imgLoader, registrations, viewDescriptions, views, boundingBox, type, minIntensity, range );
 	}
 
-	public static AtomicInteger numBlocks = new AtomicInteger();
-	public static AtomicInteger numBlocksWithOneView = new AtomicInteger();
-
 	public static < T extends NativeType< T > > RandomAccessibleInterval< T > fuseVirtual(
 			final BasicImgLoader imgloader,
 			final Map< ViewId, ? extends AffineTransform3D > registrations, // now contain the downsampling already
@@ -82,15 +78,9 @@ public class Fusion
 //		System.out.println( "Fusion.fuseVirtual" );
 //		System.out.println( "  boundingBox = " + Intervals.toString(boundingBox) );
 
-		numBlocks.incrementAndGet();
-		if ( views.size() == 1 )
-		{
-			numBlocksWithOneView.incrementAndGet();
-		}
-
 		// SIMPLIFIED:
 		// assuming:
-		// 	final boolean is2d = true;
+		// 	final boolean is2d = false;
 
 		// SIMPLIFIED:
 		// we already filtered the overlapping views
@@ -184,8 +174,9 @@ public class Fusion
 				boundingBox.dimensionsAsLongArray(),
 				type,
 				cell -> fuserThreadLocal.get().load( cell ),
-				ReadOnlyCachedCellImgOptions.options().cellDimensions( 128, 32, 32 ) );
+				ReadOnlyCachedCellImgOptions.options().cellDimensions( 128, 64, 64 ) );
 //				ReadOnlyCachedCellImgOptions.options().cellDimensions( 32, 32, 32 ) );
+//				ReadOnlyCachedCellImgOptions.options().cellDimensions( 32, 128, 128 ) );
 //				ReadOnlyCachedCellImgOptions.options().cellDimensions( 64, 64, 64 ) );
 	}
 
@@ -234,97 +225,12 @@ public class Fusion
 			imgBuffers = new float[ numImages ][];
 			boundingBox_min = boundingBox.minAsLongArray();
 
-			fillOutputLine = FillOutputLine.of( type, minIntensity, range, false );
-		}
-
-
-
-		@FunctionalInterface
-		interface FillOutputLine {
-			void compute( float[] sumW, float[] sumI, Object output, int offset, int length );
-
-			static FillOutputLine of(
-					final Object type, // output type
-					final double minIntensity, // only used if output type is uint8 or uint16
-					final double range, // only used if output type is uint8 or uint16
-					final boolean single )
-			{
-				if ( type instanceof FloatType )
-				{
-					return (sumW, sumI, output, offset, length) -> {
-						final float[] out = ( float[] ) output;
-						normalize( sumW, sumI, offset, length, out );
-					};
-				}
-				else if ( type instanceof UnsignedByteType )
-				{
-					final float a = ( float ) ( 1 / range );
-					final float b = ( float ) ( 0.5 - minIntensity / range );
-					final byte[] tmp = new byte[ 256 ];
-					return single
-							? ( sumW, sumI, output, offset, length ) -> convert_uint8( sumI, offset, length, tmp, ( byte[] ) output, a, b )
-							: ( sumW, sumI, output, offset, length ) -> normalize_convert_uint8( sumW, sumI, offset, length, tmp, ( byte[] ) output, a, b );
-				}
-				else if ( type instanceof UnsignedShortType )
-				{
-					final float a = ( float ) ( 1 / range );
-					final float b = ( float ) ( 0.5 - minIntensity / range );
-					return (sumW, sumI, output, offset, length) -> {
-						normalize_convert_uint16( sumW, sumI, offset, length, ( short[] ) output, a, b );
-					};
-				}
-				else
-					throw new IllegalArgumentException();
-			}
-
-		}
-
-		private static void normalize( final float[] sumW, final float[] sumI, final int offset, final int length, final float[] out )
-		{
-			for ( int x = 0; x < length; ++x )
-			{
-				final float w = sumW[ x ];
-				final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-				out[ offset + x ] = value;
-			}
-		}
-
-		private static void normalize_convert_uint8( final float[] sumW, final float[] sumI, final int offset, final int length, final byte[] tmp, final byte[] out, final float a, final float b )
-		{
-			for ( int x = 0; x < length; ++x )
-			{
-				final float w = sumW[ x ];
-				final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-				tmp[ x ] = ( byte ) ( value * a + b );
-			}
-			System.arraycopy( tmp, 0, out, offset, length );
-		}
-
-		private static void convert_uint8( final float[] sumI, final int offset, final int length, final byte[] tmp, final byte[] out, final float a, final float b )
-		{
-			for ( int x = 0; x < length; ++x )
-				tmp[ x ] = ( byte ) ( sumI[ x ] * a + b );
-			System.arraycopy( tmp, 0, out, offset, length );
-		}
-
-		private static void normalize_convert_uint16( final float[] sumW, final float[] sumI, final int offset, final int length, final short[] out, final float a, final float b )
-		{
-			for ( int x = 0; x < length; ++x )
-			{
-				final float w = sumW[ x ];
-				final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-				out[ offset + x ] = ( short ) ( value * a + b );
-			}
+			fillOutputLine = FillOutputLine.of( type, minIntensity, range );
 		}
 
 		void load( SingleCellArrayImg< T, ? > cell ) throws Exception
 		{
 			final int numImages = imgBuffers.length;
-//			if ( numImages == 1 )
-//			{
-//				loadSingle( cell );
-//				return;
-//			}
 
 			Arrays.setAll( cell_min, cell::min );
 			Arrays.setAll( cell_dims, d -> ( int ) cell.dimension( d ) );
@@ -349,7 +255,6 @@ public class Fusion
 			final float[] sumI = sumIntensityTempArray.get( sx );
 
 			final Object output = cell.getStorageArray();
-
 			pos[ 0 ] = bb_min[ 0 ];
 			for ( int z = 0; z < sz; ++z )
 			{
@@ -383,62 +288,66 @@ public class Fusion
 			for ( int x = 0; x < sx; ++x )
 				sumI[ x ] += tmpW[ x ] * tmpI[ x ];
 		}
+	}
 
+	@FunctionalInterface
+	interface FillOutputLine {
+		void compute( float[] sumW, float[] sumI, Object output, int offset, int length );
 
-
-
-
-		void loadSingle( SingleCellArrayImg< T, ? > cell ) throws Exception
+		static FillOutputLine of(
+				final Object type, // output type
+				final double minIntensity, // only used if output type is uint8 or uint16
+				final double range ) // only used if output type is uint8 or uint16
 		{
-			Arrays.setAll( cell_min, cell::min );
-			Arrays.setAll( cell_dims, d -> ( int ) cell.dimension( d ) );
-			final int cell_size = ( int ) Intervals.numElements( cell_dims );
-
-			final float[] floats = imgTempArrays[ 0 ].get( cell_size );
-			views.get( 0 ).compute( floats, cell );
-			imgBuffers[ 0 ] = floats;
-
-			Arrays.setAll( bb_min, d -> cell_min[ d ] + boundingBox_min[ d ] );
-
-			final int sx = cell_dims[ 0 ];
-			final int sy = cell_dims[ 1 ];
-			final int sz = cell_dims[ 2 ];
-
-			final float[] tmpW = weightsTempArray.get( sx );
-			final float[] tmpI = intensitiesTempArray.get( sx );
-			final float[] sumW = sumWeightsTempArray.get( sx );
-			final float[] sumI = sumIntensityTempArray.get( sx );
-
-			final Object output = cell.getStorageArray();
-
-			pos[ 0 ] = bb_min[ 0 ];
-			for ( int z = 0; z < sz; ++z )
+			if ( type instanceof FloatType )
 			{
-				pos[ 2 ] = z + bb_min[ 2 ];
-				for ( int y = 0; y < sy; ++y )
-				{
-					pos[ 1 ] = y + bb_min[ 1 ];
-					final int offset = ( z * sy + y ) * sx;
-					System.arraycopy( imgBuffers[ 0 ], offset, sumI, 0, sx );
-					if ( blendings.get( 0 ).is_range_inside( sx, pos ) )
-					{
-						fillOutputLine.compute( sumW, sumI, output, offset, sx );
-					}
-					else
-					{
-						blendings.get( 0 ).fill_range( tmpW, 0, sx, pos );
-						accISingle( sx, tmpW, sumI );
-						fillOutputLine.compute( sumW, sumI, output, offset, sx );
-					}
-				}
+				return (sumW, sumI, output, offset, length) -> normalize( sumW, sumI, offset, length, ( float[] ) output );
 			}
+			else if ( type instanceof UnsignedByteType )
+			{
+				final float a = ( float ) ( 1 / range );
+				final float b = ( float ) ( 0.5 - minIntensity / range );
+				return ( sumW, sumI, output, offset, length ) -> normalize_convert_uint8( sumW, sumI, offset, length, ( byte[] ) output, a, b );
+			}
+			else if ( type instanceof UnsignedShortType )
+			{
+				final float a = ( float ) ( 1 / range );
+				final float b = ( float ) ( 0.5 - minIntensity / range );
+				return (sumW, sumI, output, offset, length) -> normalize_convert_uint16( sumW, sumI, offset, length, ( short[] ) output, a, b );
+			}
+			else
+				throw new IllegalArgumentException();
 		}
 
-		private static void accISingle( final int sx, final float[] tmpW, final float[] sumI )
+	}
+
+	private static void normalize( final float[] sumW, final float[] sumI, final int offset, final int length, final float[] out )
+	{
+		for ( int x = 0; x < length; ++x )
 		{
-			for ( int x = 0; x < sx; ++x )
-				if ( tmpW[ x ] <= 0 )
-					sumI[ x ] = 0;
+			final float w = sumW[ x ];
+			final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
+			out[ offset + x ] = value;
+		}
+	}
+
+	private static void normalize_convert_uint8( final float[] sumW, final float[] sumI, final int offset, final int length, final byte[] out, final float a, final float b )
+	{
+		for ( int x = 0; x < length; ++x )
+		{
+			final float w = sumW[ x ];
+			final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
+			out[ offset + x ] = ( byte ) ( value * a + b );
+		}
+	}
+
+	private static void normalize_convert_uint16( final float[] sumW, final float[] sumI, final int offset, final int length, final short[] out, final float a, final float b )
+	{
+		for ( int x = 0; x < length; ++x )
+		{
+			final float w = sumW[ x ];
+			final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
+			out[ offset + x ] = ( short ) ( value * a + b );
 		}
 	}
 }

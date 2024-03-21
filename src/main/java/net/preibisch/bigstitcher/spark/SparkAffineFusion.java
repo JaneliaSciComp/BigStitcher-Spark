@@ -1,7 +1,5 @@
 package net.preibisch.bigstitcher.spark;
 
-import static net.preibisch.bigstitcher.spark.blk.Fusion.fuseVirtual;
-
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -11,6 +9,17 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.function.VoidFunction;
+import org.janelia.saalfeldlab.n5.Compression;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
+
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -46,17 +55,6 @@ import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 import net.preibisch.mvrecon.process.export.ExportTools;
 import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
-
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.api.java.function.VoidFunction;
-import org.janelia.saalfeldlab.n5.Compression;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.N5Writer;
-
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -572,7 +570,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					else
 						type = new FloatType();
 
-					final RandomAccessibleInterval< NativeType > source = fuseVirtual(
+					final RandomAccessibleInterval< NativeType > source = Fusion.fuseVirtual(
 							dataLocal,
 							overlappingBlocks.overlappingViews(),
 							fusedBlock,
@@ -588,9 +586,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			// not HDF5
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
-
-			System.out.println( "numBlocks            = " + Fusion.numBlocks.get() );
-			System.out.println( "numBlocksWithOneView = " + Fusion.numBlocksWithOneView.get() );
 		}
 	}
 
