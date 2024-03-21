@@ -146,6 +146,23 @@ public class Blending
 		}
 	}
 
+	boolean is_range_inside(
+			final int length,
+			double[] transformed_start_pos )
+	{
+		final double[] pos = new double[ n ];
+		t.applyInverse( pos, transformed_start_pos );
+		for ( int d = 0; d < 3; ++d )
+		{
+			final float l0 = ( float ) pos[ d ];
+			final float l1 = ( float ) ( pos[ d ] + length * d0[ d ] );
+			if ( computeWeight( l0, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] ) != 1
+					|| computeWeight( l1, blending[ d ], b0[ d ], b1[ d ], b2[ d ], b3[ d ] ) != 1 )
+				return false;
+		}
+		return true;
+	}
+
 	private static float computeWeight(
 			final float l,
 			final float blending,

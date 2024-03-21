@@ -30,6 +30,7 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.blk.Fusion;
 import net.preibisch.bigstitcher.spark.blk.N5Helper;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
@@ -588,6 +589,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
 
+			System.out.println( "numBlocks            = " + Fusion.numBlocks.get() );
+			System.out.println( "numBlocksWithOneView = " + Fusion.numBlocksWithOneView.get() );
 		}
 	}
 
