@@ -163,7 +163,7 @@ By default, all views/images are matched individually. However, under certain co
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/grouping.png" alt="Grouping in BigStitcher">
 &nbsp;
 
-When performing timeseries alignment, grouping is often a good choice (`--splitTimepoints`) and further details regarding matching across time need to be specified. ***Important:*** if you are running a second (or third) round of matching, you always need to [solve](#solver) in between to bake in the resulting transformations. 
+When performing timeseries alignment, grouping is often a good choice (`--splitTimepoints`) and further details regarding matching across time need to be specified. ***Important:*** if you are running a second (or third) round of matching, you always need to [solve](#solver) in between to bake in the resulting transformations. `-rtp` defines the type of time series registration; `TIMEPOINTS_INDIVIDUALLY` (i.e. no registration across time), `TO_REFERENCE_TIMEPOINT`, `ALL_TO_ALL` or `ALL_TO_ALL_WITH_RANGE`. Depending on your choice you may need to define the range of timepoints `--rangeTP` or the reference timepoint `--referenceTP`. Below is an example command line call for aligning all views against all across time:
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints</code>
 
