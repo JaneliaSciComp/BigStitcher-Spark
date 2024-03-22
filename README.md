@@ -171,11 +171,11 @@ When performing timeseries alignment, grouping is often a good choice (`--splitT
 
 ### Solver<a name="#solver">
 
-The Solver computes a globally optimized result (one transformation per view/image) using all pairwise matches (interest points or stitching), specifically by minimizing the distance between all corresponding points (paiwise stitching is also expressed as a set of corresponding points) across all images/views. A typical call for running the solver on **stitching** results is:
+The Solver computes a globally optimized result (one transformation per view/image) using all pairwise matches (interest points or stitching), specifically by minimizing the distance between all corresponding points (paiwise stitching is also expressed as a set of corresponding points) across all images/views. A typical call for running the solver on **stitching** results is (e.g. [this dataset](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing):
 
 <code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
-and when using matched **interestpoints** (per timepoint) it is:
+and when using matched **interestpoints** (per timepoint) it is (e.g. [this dataset](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing):
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
