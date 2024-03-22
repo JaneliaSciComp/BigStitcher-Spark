@@ -175,7 +175,7 @@ The Solver computes a globally optimized result (one transformation per view/ima
 
 <code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
-and when using matched interestpoints (per timepoint) it is:
+and when using matched **interestpoints** (per timepoint) it is:
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
