@@ -54,12 +54,14 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
-Ask your sysadmin for help how to run it on your **cluster**. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
+***Important:*** if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.
 ```
 --conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
 ```
 
-#### Below are instructions/stories how people set it up on their respective clusters, which might be helpful to transfer the knowledge to your home institution:
+Please ask your sysadmin for help how to run it on your **cluster**, below are hopefully helpful tutorials for different kinds of clusters. They can be helpful to transfer the knowledge to your home institution.
+
+#### Instructions stories how people set up Spark/BigStitcher-Spark on their respective clusters:
 * HHMI Janelia: [Tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane)
 
 ### To run it on the cluster or the cloud<a name="installcloud">
