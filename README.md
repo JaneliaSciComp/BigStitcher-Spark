@@ -61,7 +61,7 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 
 Please ask your sysadmin for help how to run it on your **cluster**, below are hopefully helpful tutorials for different kinds of clusters. They can be helpful to transfer the knowledge to your home institution.
 
-#### Instructions stories how people set up Spark/BigStitcher-Spark on their respective clusters:
+#### Instructions/stories how people set up Spark/BigStitcher-Spark on their respective clusters:
 * HHMI Janelia: [Tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane)
 
 ### To run it on the cloud<a name="installcloud">
