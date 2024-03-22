@@ -23,7 +23,8 @@ Additonally there are some utility methods:
 
 * [**Install and Run**](#install)
   * [Local](#installlocal)
-  * [Cluster & Cloud](#installremote)
+  * [Cluster](#installcluster)
+  * [Cloud](#installcloud)
 * [**Example Datasets**](#examples)
 * [**Usage**](#usage)
   * [Resave Dataset](#resave)
