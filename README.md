@@ -50,7 +50,7 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 -Dspark.master=local[8] -Xmx50G
 ```
 
-### To run it on the cluster or the cloud<a name="installcluster">
+### To run it on a compute cluster<a name="installcluster">
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
@@ -64,7 +64,7 @@ Please ask your sysadmin for help how to run it on your **cluster**, below are h
 #### Instructions stories how people set up Spark/BigStitcher-Spark on their respective clusters:
 * HHMI Janelia: [Tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane)
 
-### To run it on the cluster or the cloud<a name="installcloud">
+### To run it on the cloud<a name="installcloud">
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
