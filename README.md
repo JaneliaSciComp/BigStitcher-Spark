@@ -170,13 +170,17 @@ When performing timeseries alignment, grouping is often a good choice (`--splitT
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over pairs of images.
 
 ### Solver<a name="#solver">
-When using pairwise stitching:
+
+The Solver computes a globally optimized result using all pairwise matches (interest points or stitching), specifically by minimizing the distance between all corresponding points (paiwise stitching is also expressed as a set of corresponding points) across all images/views. A typical call for running the solver on **stitching** results is:
 
 <code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
-When using interestpoints (per timepoint):
+and when using matched interestpoints (per timepoint) it is:
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
+
+
+
 
 When using interestpoints (for timeseries alignment with grouping all views of a timepoint together):
 
