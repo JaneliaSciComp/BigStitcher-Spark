@@ -190,7 +190,11 @@ and when using matched **interestpoints** individually per timepoint it is (e.g.
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
-`-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case.
+`-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case. By default the first view of each timepoint will be fixed, `-fv` allows to specify certain views to be fixed and `--disableFixedViews` will not fix any views (in this case make sure to not use plain affine models). `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
+
+`--maxError` sets the maximum allowed error for the solve (it will iterate at least until it is under that value), `--maxIterations` defines the maximum number of iterations, and `--maxPlateauwidth` defines the number of iterations that are used to estimate if the solve converged (and is thus also the minimal number of iterations). 
+
+There are several types of solvers available; `--method` allows to choose `ONE_ROUND_SIMPLE`, `ONE_ROUND_ITERATIVE`, `TWO_ROUND_SIMPLE` or `TWO_ROUND_ITERATIVE`. Two round handles unconnected tiles (it moves them into their approximate right location using metadata), while iterative tries to identify and remove wrong/inconsistent links between pairs of views. The iterative strategies are parameterized by `--relativeThreshold` (relative error threshold, how many times worse than the average error a link between a pair of views needs to be) and the `--absoluteThreshold` (absoluted error threshold to drop a link between a pair of views - in pixels). The error is computed as the difference between the pairwise alignment of two views and their alignment after running the solve.
 
 
 When using interestpoints (for timeseries alignment with grouping all views of a timepoint together):
