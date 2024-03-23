@@ -208,11 +208,11 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL_WITH_RANGE --splitTimepoints</code>
 
-***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over pairs of images.
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The solver currently only runs multi-threaded.
 
 ### Affine Fusion<a name="affine-fusion">
 
-`affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
+Performs **fusion using affine transformation models** computed by the [solve](#solver) (including translations of course) that are stored in the XML (*Warning: not tested on 2D yet*).
 
 Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
@@ -226,6 +226,8 @@ Calling it with `--multiRes` will create a multiresolution pyramid of the fused 
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
 You can open the N5 in Fiji (`File > Import > HDF5/N5/ZARR/OME-NGFF`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. 
 
 ### Non-Rigid Fusion<a name="nonrigid-fusion">
 
