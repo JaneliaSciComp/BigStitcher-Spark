@@ -169,7 +169,7 @@ A typical, simple command line call to register each timepoint alignment individ
 
 All methods use RANSAC to robustly identify a set of corresponding points in the set or correspondence candidates (optional for ICP). `-rit` defines the number of RANSAC iterations (increasing might help to find more correspondences), `-rme` the maximum error (epsilon) for RANSAC (increasing might help to find more correspondences), `-rmir` the minimum inlier ratio (setting to `0.0` might help to find more correspondences), and `-rmif` defines the minimum inlier factor for RANSAC (i.e. how many times the minimal number of inliers required by the transformation model need to be identified so a pair is valid).
 
-By default, all views/images are matched individually. However, under certain conditions it may be useful to group certain views together (see illustration below). `--splitTimepoints` groups all angles/channels/illums/tiles that belong to the same timepoint as one single View, e.g. for stabilization across time. `--groupChannels` groups all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to register all channels together as one. `--groupTiles` groups all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles. `--groupIllums` groups all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to register illumation directions together. Importantly, interest points in overlapping areas of grouped views need to be merged; `--interestPointMergeDistance` allows to set the merge distance.
+By default, all views/images are matched individually. However, under certain conditions it may be useful to group certain views together (see illustration below). `--splitTimepoints` groups all angles/channels/illums/tiles that belong to the same timepoint as one single View, e.g. for stabilization across time. `--groupChannels` groups all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to register all channels together as one. `--groupTiles` groups all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles. `--groupIllums` groups all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to register illumation directions together. Importantly, interest points in overlapping areas of grouped views need to be merged; `--interestPointMergeDistance` allows to set the merge distance. ***Note:*** You do not need to group views for interest point matching in order to group views during [solving](#solver), these are two independent operations. However, it (usually) is not advisable to only group during matching.
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/grouping.png" alt="Grouping in BigStitcher">
 &nbsp;
@@ -190,7 +190,7 @@ and when using matched **interestpoints** individually per timepoint it is (e.g.
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
-
+`-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case.
 
 
 When using interestpoints (for timeseries alignment with grouping all views of a timepoint together):
