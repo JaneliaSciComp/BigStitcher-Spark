@@ -107,11 +107,16 @@
             <artifactId>imglib2-cache</artifactId>
             <version>1.0.0-beta-17</version>
         </dependency>
-        <dependency>
-            <groupId>net.imglib2</groupId>
-            <artifactId>imglib2</artifactId>
-            <version>6.2.0</version>
-        </dependency>
+		<dependency>
+			<groupId>net.imglib2</groupId>
+			<artifactId>imglib2</artifactId>
+			<version>6.3.0</version>
+		</dependency>
+		<dependency>
+			<groupId>net.imglib2</groupId>
+			<artifactId>imglib2-algorithm</artifactId>
+			<version>0.15.0</version>
+		</dependency>
         <dependency>
             <groupId>sc.fiji</groupId>
             <artifactId>spim_data</artifactId>
@@ -346,7 +351,7 @@
                 </exclusion>
             </exclusions>
         </dependency>
-        
+
     </dependencies>
     <groupId>net.preibisch</groupId>
 

@@ -9,6 +9,17 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.function.VoidFunction;
+import org.janelia.saalfeldlab.n5.Compression;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
+
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -19,7 +30,6 @@ import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.Converters;
 import net.imglib2.img.cell.CellGrid;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
@@ -29,6 +39,8 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.blk.Fusion;
+import net.preibisch.bigstitcher.spark.blk.N5Helper;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -42,20 +54,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 import net.preibisch.mvrecon.process.export.ExportTools;
 import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
-import net.preibisch.mvrecon.process.fusion.FusionTools;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
-
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.api.java.function.VoidFunction;
-import org.janelia.saalfeldlab.n5.Compression;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -563,13 +562,23 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 				try ( AutoCloseable prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
 				{
-					// TODO (TP) Can we go lower-level here? This does redundant view filtering internally:
-					final RandomAccessibleInterval< FloatType > source = FusionTools.fuseVirtual(
+					NativeType type;
+					if ( uint8 )
+						type = new UnsignedByteType();
+					else if ( uint16 )
+						type = new UnsignedShortType();
+					else
+						type = new FloatType();
+
+					final RandomAccessibleInterval< NativeType > source = Fusion.fuseVirtual(
 							dataLocal,
 							overlappingBlocks.overlappingViews(),
-							fusedBlock );
+							fusedBlock,
+							type,
+							minIntensity,
+							range );
 
-					saveBlock( source, executorVolumeWriter, gridPos );
+					N5Helper.saveBlock( source, executorVolumeWriter, n5Dataset, gridPos );
 				}
 			}
 			prefetchExecutor.shutdown();
@@ -577,38 +586,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			// not HDF5
 			if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
 				executorVolumeWriter.close();
-
-		}
-
-		private < T extends NativeType< T > > void saveBlock(
-				final RandomAccessibleInterval< FloatType > source,
-				final N5Writer executorVolumeWriter,
-				final long[] gridPos ) throws IOException
-		{
-			final RandomAccessibleInterval< T > convertedSource = convertToOutputType( source );
-			N5Utils.saveBlock( convertedSource, executorVolumeWriter, n5Dataset, gridPos );
-		}
-
-		@SuppressWarnings( "unchecked" )
-		private < T extends NativeType< T > > RandomAccessibleInterval< T > convertToOutputType(
-				final RandomAccessibleInterval< FloatType > rai )
-		{
-			if ( uint8 )
-			{
-				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
-						new UnsignedByteType() );
-			}
-			else if ( uint16 )
-			{
-				return ( RandomAccessibleInterval< T > ) Converters.convert(
-						rai, ( i, o ) -> o.setReal( ( i.get() - minIntensity ) / range ),
-						new UnsignedShortType() );
-			}
-			else
-			{
-				return ( RandomAccessibleInterval< T > ) rai;
-			}
 		}
 	}
 
