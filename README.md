@@ -23,7 +23,8 @@ Additonally there are some utility methods:
 
 * [**Install and Run**](#install)
   * [Local](#installlocal)
-  * [Cluster & Cloud](#installremote)
+  * [Cluster](#installcluster)
+  * [Cloud](#installcloud)
 * [**Example Datasets**](#examples)
 * [**Usage**](#usage)
   * [Resave Dataset](#resave)
@@ -48,14 +49,24 @@ If you run the code directly from your IDE, you will need to add JVM paramters f
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
-### To run it on the cluster or the cloud<a name="installremote">
+
+### To run it on a compute cluster<a name="installcluster">
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
-Ask your sysadmin for help how to run it on your **cluster**. To get you started there is a [tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane) that explains how we run it on the Janelia cluster. ***Importantly, if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.***
+***Important:*** if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.
 ```
 --conf spark.executor.extraJavaOptions=-Dnative.libpath.jhdf5=/groups/spruston/home/moharb/libjhdf5.so
 ```
+
+Please ask your sysadmin for help how to run it on your **cluster**, below are hopefully helpful tutorials for different kinds of clusters. They can be helpful to transfer the knowledge to your home institution.
+
+#### Instructions/stories how people set up Spark/BigStitcher-Spark on their respective clusters:
+* HHMI Janelia (LSF cluster): [Tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane)
+
+### To run it on the cloud<a name="installcloud">
+
+`mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
 For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time. Note that some modules support prefetching `--prefetch`, which is important for cloud execution due to its delays as it pre-loads all image blocks in parallel before processing.
 
@@ -143,7 +154,7 @@ A typical, simple command line call to register each timepoint alignment individ
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences</code>
 
-`-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
+Please run `match-interestpoints` without parameters to get help for all command line arguments. `-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
 
 `-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
 * `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other.
@@ -158,32 +169,50 @@ A typical, simple command line call to register each timepoint alignment individ
 
 All methods use RANSAC to robustly identify a set of corresponding points in the set or correspondence candidates (optional for ICP). `-rit` defines the number of RANSAC iterations (increasing might help to find more correspondences), `-rme` the maximum error (epsilon) for RANSAC (increasing might help to find more correspondences), `-rmir` the minimum inlier ratio (setting to `0.0` might help to find more correspondences), and `-rmif` defines the minimum inlier factor for RANSAC (i.e. how many times the minimal number of inliers required by the transformation model need to be identified so a pair is valid).
 
-By default, all views/images are matched individually. However, under certain conditions it may be useful to group certain views together (see illustration below). `--splitTimepoints` groups all angles/channels/illums/tiles that belong to the same timepoint as one single View, e.g. for stabilization across time. `--groupChannels` groups all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to register all channels together as one. `--groupTiles` groups all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles. `--groupIllums` groups all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to register illumation directions together. Importantly, interest points in overlapping areas of grouped views need to be merged; `--interestPointMergeDistance` allows to set the merge distance.
+By default, all views/images are matched individually. However, under certain conditions it may be useful to group certain views together (see illustration below). `--splitTimepoints` groups all angles/channels/illums/tiles that belong to the same timepoint as one single View, e.g. for stabilization across time. `--groupChannels` groups all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to register all channels together as one. `--groupTiles` groups all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles. `--groupIllums` groups all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to register illumation directions together. Importantly, interest points in overlapping areas of grouped views need to be merged; `--interestPointMergeDistance` allows to set the merge distance. ***Note:*** You do not need to group views for interest point matching in order to group views during [solving](#solver), these are two independent operations. However, it (usually) is not advisable to only group during matching.
+
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/grouping.png" alt="Grouping in BigStitcher">
+&nbsp;
 
-For timeseries alignment, grouping all views of a timepoint together:
+When performing timeseries alignment, grouping is often a good choice (`--splitTimepoints`) and further details regarding matching across time need to be specified. ***Important:*** if you are running a second (or third) round of matching, you always need to [solve](#solver) in between to bake in the resulting transformations. `-rtp` defines the type of time series registration; `TIMEPOINTS_INDIVIDUALLY` (i.e. no registration across time), `TO_REFERENCE_TIMEPOINT`, `ALL_TO_ALL` or `ALL_TO_ALL_WITH_RANGE`. Depending on your choice you may need to define the range of timepoints `--rangeTP` or the reference timepoint `--referenceTP`. Below is an example command line call for aligning all views against all across time:
 
 <code>./match-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -m FAST_ROTATION --clearCorrespondences -rtp ALL_TO_ALL --splitTimepoints</code>
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over pairs of images.
 
 ### Solver<a name="#solver">
-When using pairwise stitching:
+
+The Solver computes a globally optimized result (one transformation per view/image) using all pairwise matches (interest points or stitching), specifically by minimizing the distance between all corresponding points (paiwise stitching is also expressed as a set of corresponding points) across all images/views. A typical call for running the solver on **stitching** results is (e.g. [this dataset](https://drive.google.com/file/d/1we4Iif17bdS4PiWsgRTi3TLNte8scG4u/view?usp=sharing)):
 
 <code>./solver -x ~/SparkTest/Stitching/dataset.xml -s STITCHING</code>
 
-When using interestpoints (per timepoint):
+and when using matched **interestpoints** individually per timepoint it is (e.g. [this dataset](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing)):
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
-When using interestpoints (for timeseries alignment with grouping all views of a timepoint together):
+Please run `solver` without parameters to get help for all command line arguments. `-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case. By default the first view of each timepoint will be fixed, `-fv` allows to specify certain views to be fixed and `--disableFixedViews` will not fix any views (in this case make sure to not use plain affine models). `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
 
-<code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL --splitTimepoints</code>
+`--maxError` sets the maximum allowed error for the solve (it will iterate at least until it is under that value), `--maxIterations` defines the maximum number of iterations, and `--maxPlateauwidth` defines the number of iterations that are used to estimate if the solve converged (and is thus also the minimal number of iterations). 
+
+There are several types of solvers available; `--method` allows to choose `ONE_ROUND_SIMPLE`, `ONE_ROUND_ITERATIVE`, `TWO_ROUND_SIMPLE` or `TWO_ROUND_ITERATIVE`. Two round handles unconnected tiles (it moves them into their approximate right location using metadata using a second solve where all views that are connected are grouped together), while iterative tries to identify and remove wrong/inconsistent links between pairs of views. The iterative strategies are parameterized by `--relativeThreshold` (relative error threshold, how many times worse than the average error a link between a pair of views needs to be) and the `--absoluteThreshold` (absoluted error threshold to drop a link between a pair of views - in pixels). The error is computed as the difference between the pairwise alignment of two views and their alignment after running the solve.
+
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
+
+By default, all views/images are matched individually. However, under certain conditions it may be useful to group certain views together (see illustration above). `--splitTimepoints` groups all angles/channels/illums/tiles that belong to the same timepoint as one single View, e.g. for stabilization across time. `--groupChannels` groups all channels that belong to the same angle/illumination/tile/timepoint together as one view, e.g. to register all channels together as one. `--groupTiles` groups all tiles that belong to the same angle/channel/illumination/timepoint together as one view, e.g. to align across angles. `--groupIllums` groups all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to register illumation directions together.
+
+When performing timeseries alignment, grouping is usually a good choice (`--splitTimepoints`) and further details regarding matching across time need to be specified. ***Important:*** if you are running a second (or third) round of matching, you usually need to [match interest points](#ip-match) again. `-rtp` defines the type of time series registration; `TIMEPOINTS_INDIVIDUALLY` (i.e. no registration across time), `TO_REFERENCE_TIMEPOINT`, `ALL_TO_ALL` or `ALL_TO_ALL_WITH_RANGE`. Depending on your choice you may need to define the range of timepoints `--rangeTP` or the reference timepoint `--referenceTP`. Below is an example command line call for aligning all views against all across time:
+
+When using interestpoints (for timeseries alignment with grouping all views of a timepoint together) a tyical call could look like that:
+
+<code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL_WITH_RANGE --splitTimepoints</code>
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The solver currently only runs multi-threaded.
 
 ### Affine Fusion<a name="affine-fusion">
 
-`affine-fusion` performs **fusion with affine transformation models** (including translations of course). It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. *Warning: not tested on 2D yet.*
+Performs **fusion using affine transformation models** computed by the [solve](#solver) (including translations of course) that are stored in the XML (*Warning: not tested on 2D yet*).
 
 Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
@@ -197,6 +226,8 @@ Calling it with `--multiRes` will create a multiresolution pyramid of the fused 
 The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
 You can open the N5 in Fiji (`File > Import > HDF5/N5/ZARR/OME-NGFF`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. 
 
 ### Non-Rigid Fusion<a name="nonrigid-fusion">
 
