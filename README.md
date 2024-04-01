@@ -222,6 +222,13 @@ A typical set of calls (because it is three channels) for affine fusion into a m
 
 <code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.zarr -d /ch2/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 2</code>
 
+The [dataset that was aligned using interest points](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) would be fused in a similar way, except that here we specify a bounding box `embryo` that was specified using BigStitcher and we choose to save as N5:
+
+<code>./affine-fusion -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -d /ch0/s0 -s N5 --bdv 0,0 --multiRes --UINT8 --minIntensity 0 --maxIntensity 255 --timepointId 18</code>
+
+<code>./affine-fusion -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -d /ch0/s0 -s N5 --bdv 0,0 --multiRes --UINT8 --minIntensity 0 --maxIntensity 255 --timepointId 18</code>
+
+
 Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
 <code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.n5 -d /ch0/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 1 --maxIntensity 254 --channelId 0</code>
