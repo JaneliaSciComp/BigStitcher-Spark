@@ -359,8 +359,10 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		// close HDF5 writer
 		if ( N5Util.hdf5DriverVolumeWriter != null )
 			N5Util.hdf5DriverVolumeWriter.close();
+		else if ( multiRes )
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
 		else
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset );
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset + "'" );
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
