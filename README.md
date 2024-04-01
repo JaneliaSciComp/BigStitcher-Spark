@@ -212,7 +212,9 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 
 ### Affine Fusion<a name="affine-fusion">
 
-Performs **fusion using affine transformation models** computed by the [solve](#solver) (including translations of course) that are stored in the XML (*Warning: not tested on 2D yet*).
+Performs **fusion using affine transformation models** computed by the [solve](#solver) (including translations) that are stored in the XML (*Warning: not tested on 2D*). By default the affine fusion will create an output image that contains all transformed input views/images. While this is good in some cases such as tiled stitching tasks, the output volume can be unnecessarily large for e.g. multi-view datasets. Thus, prior to running the fusion it might be useful to [**define a custom bounding box**](https://imagej.net/plugins/bigstitcher/boundingbox) in BigStitcher.
+
+
 
 Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
