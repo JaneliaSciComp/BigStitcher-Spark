@@ -138,6 +138,12 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			return null;
 		}
 
+		if ( this.bdvString != null && xmlOutPath == null )
+		{
+			System.out.println( "Please specify the output XML for the BDV dataset: -xo");
+			return null;
+		}
+
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
 
 		final SpimData2 dataGlobal = this.loadSpimData2();
