@@ -87,7 +87,7 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As N5/XML](https://drive.google.com/file/d/16V8RBYP3TNrDVToT9BoRxqclGE15TwKM/view?usp=sharing) (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/14hQAljavSNcpUOWwwUOm0Ev2HqcaqWtI/view?usp=sharing) containing interest points (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing) containing matched interest points (unaligned)
-  *  [As N5/XML](https://drive.google.com/file/d/1X6JW7WeHA7LR71kXgJV0tHlbY8EMrfRF/view?usp=sharing) (aligned)
+  *  [As N5/XML](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) (aligned)
 
 For this tutorial I extracted the Stitching dataset into `~/SparkTest/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`.
 
