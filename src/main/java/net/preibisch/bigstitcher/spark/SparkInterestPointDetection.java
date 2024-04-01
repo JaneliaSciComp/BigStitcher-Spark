@@ -234,6 +234,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				}
 
 				// TODO: some sort of intersections might be useful
+				// find the sum of intersections ...
 				allIntervals.forEach( interval -> toProcess.add( new ValuePair<>( viewId, interval ) ) );
 			}
 			else
