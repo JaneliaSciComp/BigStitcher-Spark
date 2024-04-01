@@ -71,6 +71,8 @@ public class Downsampling
 						blocksize,
 						datatype,
 						compression );
+
+				driverVolumeWriter.setAttribute( datasetDownsampling, "downsamplingFactors", downsamplings[ level ] );
 			}
 			catch ( Exception e )
 			{
