@@ -216,11 +216,11 @@ Performs **fusion using affine transformation models** computed by the [solve](#
 
 A typical set of calls (because it is three channels) for affine fusion using only translations on the **stitching** dataset is (e.g. [this dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing)):
 
-<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.n5 -d /ch0/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 0</code>
+<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.zarr -d /ch0/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 0</code>
 
-<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.n5 -d /ch1/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 1</code>
+<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.zarr -d /ch1/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 1</code>
 
-<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.n5 -d /ch2/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 2</code>
+<code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.zarr -d /ch2/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 2</code>
 
 Here is an example config for this [example dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing) for the main class `net.preibisch.bigstitcher.spark.SparkAffineFusion`:
 
