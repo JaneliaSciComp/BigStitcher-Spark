@@ -237,7 +237,6 @@ In additon to the opening methods mentioned above, you can also directly open th
 *Note: here I save it as UINT8 [0..255] and scale all intensities between `0` and `255` to that range (so it is more obvious what happens). If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
 
 
-
 Calling it with `--multiRes` will create a multiresolution pyramid of the fused image. The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed. For fusion  one normally chooses a specific timepoint and channel, e.g. `--timepointId 18 --channelId 0` to only fuse timepoint 18 and Channel 0 into a single volume. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1'` to process ViewId 0 & 1 of Timepoint 0. **By default, all images/views will be fused into a single volume, which is usually not desired.**
