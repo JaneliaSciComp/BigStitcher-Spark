@@ -238,10 +238,9 @@ In additon to the opening methods mentioned above, you can also directly open th
 
 
 
-Calling it with `--multiRes` will create a multiresolution pyramid of the fused image.
-The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
+Calling it with `--multiRes` will create a multiresolution pyramid of the fused image. The blocksize defaults to `128x128x128`, and can be changed with `--blockSize 64,64,64` for example.
 
-You can open the N5 in Fiji (`File > Import > HDF5/N5/ZARR/OME-NGFF`) or by using `n5-view` from the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed. For fusion  one normally chooses a specific timepoint and channel, e.g. `--timepointId 18 --channelId 0` to only fuse timepoint 18 and Channel 0 into a single volume. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1'` to process ViewId 0 & 1 of Timepoint 0. **By default, everything will be processed, which is often not desired for fusion.**
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. 
 
