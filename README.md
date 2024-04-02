@@ -222,6 +222,8 @@ A typical set of calls (because it is three channels) for affine fusion into a m
 
 <code>./affine-fusion -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/fused.zarr -d /ch2/s0 -s ZARR --multiRes --preserveAnisotropy --UINT8 --minIntensity 0 --maxIntensity 255 --channelId 2</code>
 
+You can open the ZARR in Fiji (`File > Import > HDF5/N5/ZARR/OME-NGFF`or `Plugins > BigDataViewer > HDF5/N5/ZARR/OME-NGFF`) or by using `n5-view` in the [n5-utils package](https://github.com/saalfeldlab/n5-utils).
+
 The [dataset that was aligned using interest points](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) can be fused in a similar way, except that here we use the bounding box `embryo` that was specified using BigStitcher and we choose to save as an BDV/BigStitcher project using N5 as data format:
 
 <code>./affine-fusion -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -xo ~/SparkTest/IP/dataset-fused.xml -s N5 -b embryo --bdv 18,0 --multiRes --UINT8 --minIntensity 0 --maxIntensity 255 --timepointId 18</code>
