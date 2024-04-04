@@ -234,6 +234,8 @@ In additon to the opening methods mentioned above, you can also directly open th
 
 ***Note: since both acquisitions have more than one channel or timepoint it is important to fuse these into seperate output volumes, respectively.***
 
+Please run `affine-fusion` without parameters to get help for all command line arguments. You can fuse the image using datatypes `--UINT8` `[0..255]`, `--UINT16` `[0..65535]` or by default `--FLOAT32`. UINT8 and UINT16 requires you to set `--minIntensity` and `--maxIntensity`, which define the range of intensities that will be mapped to [0..255] or [0..65535], respectively.
+
 *Note: here I save it as UINT8 [0..255] and scale all intensities between `0` and `255` to that range (so it is more obvious what happens). If you omit `UINT8`, it'll save as `FLOAT32` and no `minIntensity` and `maxIntensity` are required. `UINT16` [0..65535] is also supported.*
 
 
