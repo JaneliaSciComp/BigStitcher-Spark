@@ -77,7 +77,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	protected Integer numNeighbors = 3;
 
 	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewIds and label before adding new ones (default: false)")
-	private boolean clearCorrespondences = false;
+	protected boolean clearCorrespondences = false;
 
 	@Option(names = { "-ipfr", "--interestpointsForReg" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY or ALL points (default: ALL)")
 	protected InterestPointOverlapType interestpointsForReg = InterestPointOverlapType.ALL;
