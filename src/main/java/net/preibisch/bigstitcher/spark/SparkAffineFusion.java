@@ -509,7 +509,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			// --------------------------------------------------------
 
 			// custom serialization
-			final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+			final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath);
 			final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
 			// If requested, preserve the anisotropy of the data (such that
