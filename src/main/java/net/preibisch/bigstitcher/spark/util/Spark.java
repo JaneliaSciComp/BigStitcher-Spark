@@ -4,6 +4,7 @@ import static mpicbg.spim.data.XmlKeys.SPIMDATA_TAG;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +18,8 @@ import org.apache.spark.SparkEnv;
 import org.jdom2.Document;
 import org.jdom2.Element;
 import org.jdom2.input.SAXBuilder;
+import org.jdom2.output.Format;
+import org.jdom2.output.XMLOutputter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +35,7 @@ import net.imglib2.Interval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -39,9 +43,6 @@ import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingRes
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 public class Spark {
-
-	public static String aws_region= "us-east-1";
-	public static String aws_endpoint = "https://s3.amazonaws.com";
 
 	public static List< ViewId > deserializeViewIds( final int[][] serializedViewIds )
 	{
@@ -215,6 +216,60 @@ public class Spark {
 		return sparkEnv == null ? null : sparkEnv.executorId();
 	}
 
+	public static void saveSpimData2(final SpimData2 data, final String xmlPath) throws SpimDataException
+	{
+		if ( xmlPath.trim().startsWith( "s3:/" ) )
+		{
+			//
+			// saving the XML to s3
+			//
+			final Pair< Map<String, String>, String > info = CloudUtil.parseAWSS3Details( xmlPath );
+
+			final Operator op = Operator.of( "s3", info.getA() );
+
+			// fist make a copy of the XML and save it to not loose it
+			if ( CloudUtil.exists( op, info.getB() ) )
+			{
+				int maxExistingBackup = 0;
+				for ( int i = 1; i < XmlIoSpimData2.numBackups; ++i )
+					if ( CloudUtil.exists( op, info.getB() + "~" + i ) )
+						maxExistingBackup = i;
+					else
+						break;
+
+				// copy the backups
+				try
+				{
+					for ( int i = maxExistingBackup; i >= 1; --i )
+						op.copy( info.getB() + "~" + i,  info.getB() + "~" + (i + 1) );
+
+					op.copy( info.getB() ,  info.getB() + "~1" );
+				}
+				catch ( final Exception e )
+				{
+					IOFunctions.println( "Could not save backup of XML file: " + e );
+					e.printStackTrace();
+				}
+			}
+
+			final XmlIoSpimData2 io = new XmlIoSpimData2( null );
+
+			final Document doc = new Document( io.toXml( data, new File( ".") ) );
+			final XMLOutputter xout = new XMLOutputter( Format.getPrettyFormat() );
+			final String xmlString = xout.outputString( doc );
+			//System.out.println( xmlString );
+
+			op.write( info.getB(), xmlString ).join();
+			op.close();
+
+			// TODO: interest points are missing ...
+		}
+		else
+		{
+			new XmlIoSpimData2( null ).save( data, xmlPath );
+		}
+	}
+	
 	/**
 	 * @return a new data instance optimized for use within single-threaded Spark tasks.
 	 */
@@ -225,42 +280,10 @@ public class Spark {
 
 		if ( xmlPath.trim().startsWith( "s3:/" ) )
 		{
-			final File f = new File( xmlPath );
-			String parent = f.getParent().replace( "//", "/" ); // new File cuts // already, but just to make sure
-			parent = parent.substring(4, parent.length() );
+			final Pair< Map<String, String>, String > info = CloudUtil.parseAWSS3Details( xmlPath );
 
-			final String bucket, root;
-
-			if (parent.contains( "/" ) )
-			{
-				// there is an extra path
-				bucket = parent.substring(0,parent.indexOf( "/" ) );
-				root = parent.substring(parent.indexOf( "/" ) + 1, parent.length() );
-			}
-			else
-			{
-				bucket = parent;
-				root = "/";
-			}
-
-			final String xmlFile = f.getName();
-
-			System.out.println( "Loading XML from s3:" );
-			System.out.println( "bucket: '" + bucket + "'" );
-			System.out.println( "root dir: '" + root + "'" );
-			System.out.println( "xmlFile: '" + xmlFile + "'" );
-			System.out.println( "region: '" + aws_region + "'" );
-			System.out.println( "endpoint: '" + aws_endpoint + "'" );
-
-			final Map<String, String> builder = new HashMap<>();
-
-			builder.put("bucket", bucket );
-			builder.put("root", root );
-			builder.put("region", aws_region);
-			builder.put("endpoint", aws_endpoint);
-
-			final Operator op = Operator.of( "s3", builder );
-			final byte[] decodedBytes = op.read( xmlFile ).join();
+			final Operator op = Operator.of( "s3", info.getA() );
+			final byte[] decodedBytes = op.read( info.getB() ).join();
 			op.close();
 
 			final SAXBuilder sax = new SAXBuilder();
