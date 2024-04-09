@@ -1,5 +1,7 @@
 package net.preibisch.bigstitcher.spark.cloud;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
@@ -62,6 +64,14 @@ public class TestDAL
 
 	public static void main( String[] args ) throws SpimDataException
 	{
+		try {
+			URI uri = new URI( "s3:/tmp" );
+			System.out.println( uri );
+		} catch (URISyntaxException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.exit(0);
 		fileSystem();
 		awsS3();
 

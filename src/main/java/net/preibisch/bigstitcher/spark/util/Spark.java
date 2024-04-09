@@ -304,7 +304,7 @@ public class Spark {
 			if ( docRoot.getName() != SPIMDATA_TAG )
 				throw new RuntimeException( "expected <" + SPIMDATA_TAG + "> root element. wrong file?" );
 
-			data = new XmlIoSpimData2("").fromXml( docRoot, new File( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" ) );
+			data = new XmlIoSpimData2("").fromXml( docRoot, new File( xmlPath ) );
 		}
 		else
 		{
