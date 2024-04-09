@@ -1,4 +1,4 @@
-package net.preibisch.bigstitcher.spark;
+package net.preibisch.bigstitcher.spark.cloud;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -9,7 +9,6 @@ import org.apache.opendal.Entry;
 import org.apache.opendal.Operator;
 
 import mpicbg.spim.data.SpimDataException;
-import net.preibisch.bigstitcher.spark.util.CloudUtil;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 

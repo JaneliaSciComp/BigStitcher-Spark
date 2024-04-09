@@ -1,4 +1,4 @@
-package net.preibisch.bigstitcher.spark.util;
+package net.preibisch.bigstitcher.spark.cloud;
 
 import java.io.File;
 import java.util.HashMap;
