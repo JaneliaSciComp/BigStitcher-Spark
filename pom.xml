@@ -144,7 +144,7 @@
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
-            <version>4.0.0</version>
+            <version>4.1.1</version>
         </dependency>
 <!--        Scala is sensitive to fasterxml version -->
         <dependency>
@@ -354,8 +354,20 @@
 
 		<dependency>
 			<groupId>org.janelia.saalfeldlab</groupId>
+			<artifactId>n5-google-cloud</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>javax.annotation</groupId>
+					<artifactId>javax.annotation-api</artifactId>
+				</exclusion>
+			</exclusions>
+			<version>4.1.0</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.janelia.saalfeldlab</groupId>
 			<artifactId>n5-universe</artifactId>
-			<version>1.1.0</version>
+			<version>1.4.1</version>
 			<exclusions>
 				<exclusion>
 					<groupId>javax.annotation</groupId>
