@@ -44,7 +44,7 @@ public class TestN5Loading
 		String[] l = n5.list( "/" );
 
 		for ( final String s : l )
-			System.out.println(s);
+			System.out.println( s );
 
 		final RandomAccessibleInterval< S > id = N5Utils.open(n5, l[0] + "/points/interestpoints/id" );
 		final RandomAccessibleInterval< T > loc = N5Utils.open(n5, l[0] + "/points/interestpoints/loc" );

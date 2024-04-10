@@ -1,5 +1,6 @@
 package net.preibisch.bigstitcher.spark.cloud;
 
+import java.io.File;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -11,8 +12,14 @@ import org.apache.opendal.Entry;
 import org.apache.opendal.Operator;
 
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 
 /**
  * How to read/write: https://opendal.apache.org/docs/quickstart
@@ -62,22 +69,30 @@ public class TestDAL
 		//System.out.println( data.getSequenceDescription().getViewSetupsOrdered().size() );
 	}
 
+	public static void testLoadInterestPoints() throws SpimDataException
+	{
+		final SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+
+		System.out.println( "num viewsetups: " + data.getSequenceDescription().getViewSetupsOrdered().size() );
+
+		final Map<ViewId, ViewInterestPointLists> ips = data.getViewInterestPoints().getViewInterestPoints();
+		final ViewInterestPointLists ipl = ips.values().iterator().next();
+		final InterestPoints ip = ipl.getHashMap().values().iterator().next();
+		
+		System.out.println("base dir: " + ip.getBaseDir() );
+		System.out.println("base dir modified: " + InterestPointsN5.assembleURI( ip.getBaseDir(), InterestPointsN5.baseN5 ) );
+
+		List<InterestPoint> ipList = ip.getInterestPointsCopy();
+
+		System.out.println( "Loaded " + ipList.size() + " interest points.");
+
+		//Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
+	}
+
 	public static void main( String[] args ) throws SpimDataException
 	{
-		try {
-			URI uri = new URI( "s3:/tmp" );
-			System.out.println( uri );
-		} catch (URISyntaxException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		System.exit(0);
 		fileSystem();
 		awsS3();
-
-		SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
-		System.out.println( data.getSequenceDescription().getViewSetupsOrdered().size() );
-
-		Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
+		testLoadInterestPoints();
 	}
 }
