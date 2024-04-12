@@ -16,7 +16,6 @@ import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -55,7 +54,7 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	protected RegularizationModel regularizationModel = RegularizationModel.RIGID;
 
 	@Option(names = { "--lambda" }, description = "lamdba to use for regularization model (default: 0.1)")
-	protected Double lambda = 0.1;
+	protected Double regularizationLambda = 0.1;
 
 	protected SpimData2 dataGlobal;
 	protected ArrayList< ViewId > viewIdsGlobal;
