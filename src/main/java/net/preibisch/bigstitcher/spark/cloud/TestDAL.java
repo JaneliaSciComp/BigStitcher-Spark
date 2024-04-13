@@ -1,8 +1,5 @@
 package net.preibisch.bigstitcher.spark.cloud;
 
-import java.io.File;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
@@ -11,15 +8,19 @@ import java.util.Map;
 import org.apache.opendal.Entry;
 import org.apache.opendal.Operator;
 
+import bdv.ViewerImgLoader;
+import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 
 /**
  * How to read/write: https://opendal.apache.org/docs/quickstart
@@ -89,10 +90,28 @@ public class TestDAL
 		//Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
 	}
 
+	public static void testBigStitcherGUI() throws SpimDataException
+	{
+		new ImageJ();
+
+		final String xml = "s3://janelia-bigstitcher-spark/Stitching/dataset.xml";
+
+		final SpimData2 data = Spark.getSparkJobSpimData2( xml );
+
+		final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
+		if (imgLoader instanceof ViewerImgLoader)
+			((ViewerImgLoader) imgLoader).setNumFetcherThreads(-1);
+
+		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, new XmlIoSpimData2("") );
+
+		explorer.getFrame().toFront();
+	}
+
 	public static void main( String[] args ) throws SpimDataException
 	{
 		fileSystem();
 		awsS3();
 		testLoadInterestPoints();
+		testBigStitcherGUI();
 	}
 }
