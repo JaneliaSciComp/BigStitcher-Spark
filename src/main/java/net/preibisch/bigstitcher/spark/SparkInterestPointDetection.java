@@ -86,45 +86,45 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	public enum Localization { NONE, QUADRATIC };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label for the interest points (e.g. beads)")
-	private String label = null;
+	protected String label = null;
 
 	@Option(names = { "-s", "--sigma" }, required = true, description = "sigma for segmentation, e.g. 1.8")
-	private Double sigma = null;
+	protected Double sigma = null;
 
 	@Option(names = { "-t", "--threshold" }, required = true, description = "threshold for segmentation, e.g. 0.008")
-	private Double threshold = null;
+	protected Double threshold = null;
 
 	@Option(names = { "--type" }, description = "the type of interestpoints to find, MIN, MAX or BOTH (default: MAX)")
-	private IP type = IP.MAX;
+	protected IP type = IP.MAX;
 
 	@Option(names = { "--localization" }, description = "Subpixel localization method, NONE or QUADRATIC (default: QUADRATIC)")
-	private Localization localization = Localization.QUADRATIC;
+	protected Localization localization = Localization.QUADRATIC;
 
 	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view (default: false)")
-	private boolean overlappingOnly = false;
+	protected boolean overlappingOnly = false;
 
 	@Option(names = { "--storeIntensities" }, description = "creates an additional N5 dataset with the intensities of each detection, linearly interpolated (default: false)")
-	private boolean storeIntensities = false;
+	protected boolean storeIntensities = false;
 
 	@Option(names = { "-i0", "--minIntensity" }, required = true, description = "min intensity for segmentation, e.g. 0.0")
-	private Double minIntensity = null;
+	protected Double minIntensity = null;
 
 	@Option(names = { "-i1", "--maxIntensity" }, required = true, description = "max intensity for segmentation, e.g. 2048.0")
-	private Double maxIntensity = null;
+	protected Double maxIntensity = null;
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using " + SparkAffineFusion.N_PREFETCH_THREADS + " threads, useful in cloud environments (default: false)")
-	private boolean prefetch = false;
+	protected boolean prefetch = false;
 
 
 	@Option(names = "--blockSize", description = "blockSize for running the interest point detection - at the scale of detection (default: 512,512,128)")
-	private String blockSizeString = "512,512,128";
+	protected String blockSizeString = "512,512,128";
 
 
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
-	private Integer dsxy = 2;
+	protected Integer dsxy = 2;
 
 	@Option(names = { "-dsz", "--downsampleZ" }, description = "downsampling in Z to use for segmentation, e.g. 2 (default: 1)")
-	private Integer dsz = 1;
+	protected Integer dsz = 1;
 
 	@Override
 	public Void call() throws Exception
