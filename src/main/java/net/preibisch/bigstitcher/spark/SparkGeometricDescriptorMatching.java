@@ -77,7 +77,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	protected Integer numNeighbors = 3;
 
 	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewIds and label before adding new ones (default: false)")
-	private boolean clearCorrespondences = false;
+	protected boolean clearCorrespondences = false;
 
 	@Option(names = { "-ipfr", "--interestpointsForReg" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY or ALL points (default: ALL)")
 	protected InterestPointOverlapType interestpointsForReg = InterestPointOverlapType.ALL;
@@ -167,7 +167,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		// if we group, we will have less pairs, since certain views are combined into one big view
 		//final InterestpointGroupingType groupingType = InterestpointGroupingType.DO_NOT_GROUP; -- this is always ADD_ALL - either group or not (was only necessary in the GUI, because one could group for interest points and/or global opt
 
-		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, lambda).getClass().getSimpleName() );
+		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, regularizationLambda).getClass().getSimpleName() );
 
 		final HashMap< ViewId, String > labelMapGlobal = new HashMap<>();
 		viewIdsGlobal.forEach( viewId ->
@@ -206,7 +206,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel = this.regularizationModel;
-		final double lambda = this.lambda;
+		final double lambda = this.regularizationLambda;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
 		final JavaSparkContext sc = new JavaSparkContext(conf);
