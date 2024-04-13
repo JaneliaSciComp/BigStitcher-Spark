@@ -95,7 +95,7 @@
         <dependency>
             <groupId>sc.fiji</groupId>
             <artifactId>bigdataviewer-core</artifactId>
-            <version>10.4.15-SNAPSHOT</version>
+            <version>10.4.15-cloud</version>
         </dependency>
         <dependency>
             <groupId>sc.fiji</groupId>
@@ -221,7 +221,7 @@
         <dependency>
             <groupId>net.preibisch</groupId>
             <artifactId>multiview-reconstruction</artifactId>
-            <version>3.2.13-SNAPSHOT</version>
+            <version>3.2.13-cloud</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.epfl.biop</groupId>
