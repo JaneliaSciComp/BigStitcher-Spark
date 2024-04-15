@@ -87,7 +87,11 @@ public class TestDAL
 
 		System.out.println( "Loaded " + ipList.size() + " interest points.");
 
-		//Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
+		System.out.println( "Saving s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml ...");
+
+		Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
+
+		System.out.println( "Done.");
 	}
 
 	public static void testBigStitcherGUI() throws SpimDataException
@@ -109,9 +113,9 @@ public class TestDAL
 
 	public static void main( String[] args ) throws SpimDataException
 	{
-		fileSystem();
+		//fileSystem();
 		awsS3();
 		testLoadInterestPoints();
-		testBigStitcherGUI();
+		//testBigStitcherGUI();
 	}
 }
