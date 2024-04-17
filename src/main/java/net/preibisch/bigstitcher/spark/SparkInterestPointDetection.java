@@ -530,12 +530,18 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( myIps.size() > 0 )
 			{
-				interestPoints.put(viewId, myIps);
-	
+				// we need to sort and assign new ids since order is assumed when loading corresponding interest points, and we will have duplicate ids
+				final ArrayList< InterestPoint > myIpsNewId = new ArrayList<>();
+
+				for ( int id = 0; id < myIps.size(); ++id )
+					myIpsNewId.add( new InterestPoint( id, myIps.get( id ).getL() ) );
+
+				interestPoints.put(viewId, myIpsNewId);
+
 				if ( storeIntensities )
 					intensitiesIPs.put(viewId, myIntensities );
-	
-				System.out.println( Group.pvid( viewId ) + ": " + myIps.size() );
+
+				System.out.println( Group.pvid( viewId ) + ": " + myIpsNewId.size() );
 			}
 			else
 			{
