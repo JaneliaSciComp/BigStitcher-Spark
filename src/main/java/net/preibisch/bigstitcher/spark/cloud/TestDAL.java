@@ -122,7 +122,7 @@ public class TestDAL
 	{
 		final Map<String, String> builder = new HashMap<>();
 		builder.put("root", "spark-logs");
-		builder.put("bucket", "janelia-bigstitcher-spark" );
+		builder.put("bucket", "bigstitcher-spark-test" );
 		builder.put("region", "us-east-1");
 		builder.put("endpoint", "https://s3.amazonaws.com");
 
@@ -135,7 +135,7 @@ public class TestDAL
 	{
 		System.out.println( "Starting AWS test ... ");
 
-		testS3Write( "test_" );
+		//testS3Write( "test_" );
 
 		System.out.println( "Starting AWS-Spark test ... ");
 
@@ -143,25 +143,28 @@ public class TestDAL
 		//conf.set("spark.sql.broadcastTimeout", "300000ms" );
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
-		//sc.setLogLevel("ERROR");
+		sc.setLogLevel("ERROR");
 
 		final ArrayList< long[] > input = new ArrayList<>();
-		for ( int i = 0; i < 5; ++i )
+		for ( int i = 0; i < 1000; ++i )
 			input.add( new long[] { i } );
 
 		final JavaRDD<long[]> rdd = sc.parallelize( input );
 
+
 		final JavaRDD< int[] > result =  rdd.map( i -> {
 			System.out.println( "Processing: " + i[0] );
-			testS3Write( "worker_"+ i[0] );
-			//SimpleMultiThreading.threadWait( 5000 );
-			System.out.println( "Done with: " + i[0] );
+			//testS3Write( "worker_"+ i[0] );
+			SimpleMultiThreading.threadWait( 1000 );
+			//System.out.println( "Done with: " + i[0] );
 
 			return new int[] { (int)i[0] + 17 };
 		});
 
-		rdd.cache();
-		rdd.count();
+		result.cache();
+		result.count();
+		//rdd.cache();
+		//rdd.count();
 		List<int[]> r = result.collect();
 
 		for ( final int[] i : r )
