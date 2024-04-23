@@ -1,18 +1,25 @@
 package net.preibisch.bigstitcher.spark.cloud;
 
+import java.io.File;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.opendal.Entry;
 import org.apache.opendal.Operator;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 
 import bdv.ViewerImgLoader;
 import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -111,11 +118,64 @@ public class TestDAL
 		explorer.getFrame().toFront();
 	}
 
+	public static void testS3Write( String fn )
+	{
+		final Map<String, String> builder = new HashMap<>();
+		builder.put("root", "spark-logs");
+		builder.put("bucket", "janelia-bigstitcher-spark" );
+		builder.put("region", "us-east-1");
+		builder.put("endpoint", "https://s3.amazonaws.com");
+
+		final Operator op = Operator.of("s3", builder );
+		op.write( fn + System.currentTimeMillis() + ".txt", "This is just a test" ).join();
+		op.close();
+	}
+
 	public static void main( String[] args ) throws SpimDataException
 	{
+		System.out.println( "Starting AWS test ... ");
+
+		testS3Write( "test_" );
+
+		System.out.println( "Starting AWS-Spark test ... ");
+
+		final SparkConf conf = new SparkConf().setAppName("TestDAL");
+		//conf.set("spark.sql.broadcastTimeout", "300000ms" );
+
+		final JavaSparkContext sc = new JavaSparkContext(conf);
+		//sc.setLogLevel("ERROR");
+
+		final ArrayList< long[] > input = new ArrayList<>();
+		for ( int i = 0; i < 5; ++i )
+			input.add( new long[] { i } );
+
+		final JavaRDD<long[]> rdd = sc.parallelize( input );
+
+		final JavaRDD< int[] > result =  rdd.map( i -> {
+			System.out.println( "Processing: " + i[0] );
+			testS3Write( "worker_"+ i[0] );
+			//SimpleMultiThreading.threadWait( 5000 );
+			System.out.println( "Done with: " + i[0] );
+
+			return new int[] { (int)i[0] + 17 };
+		});
+
+		rdd.cache();
+		rdd.count();
+		List<int[]> r = result.collect();
+
+		for ( final int[] i : r )
+			System.out.println( i[0] );
+
+		sc.close();
+
+		System.out.println( "Done ... ");
+
+		System.exit( 0 );
+		//rdd.c
 		//fileSystem();
-		awsS3();
-		testLoadInterestPoints();
+		//awsS3();
+		//testLoadInterestPoints();
 		//testBigStitcherGUI();
 	}
 }
