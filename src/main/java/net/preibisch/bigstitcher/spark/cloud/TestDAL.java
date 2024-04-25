@@ -4,6 +4,7 @@ import java.io.File;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -142,6 +143,8 @@ public class TestDAL
 		final SparkConf conf = new SparkConf().setAppName("TestDAL");
 		//conf.set("spark.sql.broadcastTimeout", "300000ms" );
 
+		System.out.println( conf.get( "spark.master" ) );
+
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
@@ -153,10 +156,11 @@ public class TestDAL
 
 
 		final JavaRDD< int[] > result =  rdd.map( i -> {
-			System.out.println( "Processing: " + i[0] );
+			System.out.println( "Processing: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
 			//testS3Write( "worker_"+ i[0] );
 			SimpleMultiThreading.threadWait( 1000 );
-			//System.out.println( "Done with: " + i[0] );
+
+			System.out.println( "Done: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
 
 			return new int[] { (int)i[0] + 17 };
 		});
@@ -168,7 +172,7 @@ public class TestDAL
 		List<int[]> r = result.collect();
 
 		for ( final int[] i : r )
-			System.out.println( i[0] );
+			System.out.println( i[0] + " @ " + new Date( System.currentTimeMillis() ) );
 
 		sc.close();
 
