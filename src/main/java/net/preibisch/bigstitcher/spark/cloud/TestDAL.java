@@ -41,7 +41,7 @@ import picocli.CommandLine.Option;
  */
 public class TestDAL implements Callable<Void>
 {
-	@Option(names = "--repartition", description = "specify number of Spark partitions (note to set spark.dynamicAllocation.enabled=false on AWS)")
+	@Option(names = "--repartition", description = "specify number of Spark partitions (note to set spark.dynamicAllocation.enabled=false on AWS), if set to 0 as many partitions as jobs will be created.")
 	private Integer repartition = null;
 
 	@Option(names = "--localSparkBindAddress", description = "specify Spark bind address as localhost")
@@ -174,8 +174,13 @@ public class TestDAL implements Callable<Void>
 
 		JavaRDD<long[]> rdd = sc.parallelize( input );
 
-		if ( repartition != null && repartition > 0 )
-			rdd = rdd.repartition( repartition );
+		if ( repartition != null )
+		{
+			if ( repartition > 0 )
+				rdd = rdd.repartition( repartition );
+			else if ( repartition == 0 )
+				rdd = rdd.repartition( input.size() );
+		}
 
 		System.out.println("RDD Number of Partitions: " + rdd.partitions().size());
 
