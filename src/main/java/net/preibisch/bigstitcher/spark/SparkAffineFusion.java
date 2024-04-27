@@ -333,8 +333,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		}
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
-		// TODO: REMOVE
-		//conf.set("spark.driver.bindAddress", "127.0.0.1");
+
+		if (localSparkBindAddress)
+			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
