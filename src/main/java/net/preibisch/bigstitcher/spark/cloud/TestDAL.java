@@ -1,17 +1,18 @@
 package net.preibisch.bigstitcher.spark.cloud;
 
-import java.io.File;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 import org.apache.opendal.Entry;
 import org.apache.opendal.Operator;
 import org.apache.spark.SparkConf;
+import org.apache.spark.SparkEnv;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
@@ -29,6 +30,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import picocli.CommandLine;
+import picocli.CommandLine.Option;
 
 /**
  * How to read/write: https://opendal.apache.org/docs/quickstart
@@ -36,8 +39,14 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists
  * GitHub: https://github.com/apache/opendal
  * Supported architectures: https://repo1.maven.org/maven2/org/apache/opendal/opendal-java/0.45.1/
  */
-public class TestDAL
+public class TestDAL implements Callable<Void>
 {
+	@Option(names = "--repartition", description = "specify number of Spark partitions (note to set spark.dynamicAllocation.enabled=false on AWS)")
+	private Integer repartition = null;
+
+	@Option(names = "--localSparkBindAddress", description = "specify Spark bind address as localhost")
+	private boolean localSparkBindAddress = false;
+
 	public static void fileSystem()
 	{
 		final Map<String, String> conf = new HashMap<>();
@@ -132,16 +141,19 @@ public class TestDAL
 		op.close();
 	}
 
-	public static void main( String[] args ) throws SpimDataException
+	@Override
+	public Void call() throws SpimDataException
 	{
-		System.out.println( "Starting AWS test ... ");
+		System.out.println( "Starting AWS test  @ " + new Date( System.currentTimeMillis() ) );
 
 		//testS3Write( "test_" );
 
-		System.out.println( "Starting AWS-Spark test ... ");
+		System.out.println( "Starting AWS-Spark test @ " + new Date( System.currentTimeMillis() ) );
 
 		final SparkConf conf = new SparkConf().setAppName("TestDAL");
-		//conf.set("spark.sql.broadcastTimeout", "300000ms" );
+
+		if (localSparkBindAddress)
+			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		System.out.println( conf.get( "spark.master" ) );
 
@@ -149,40 +161,68 @@ public class TestDAL
 		sc.setLogLevel("ERROR");
 
 		final ArrayList< long[] > input = new ArrayList<>();
-		for ( int i = 0; i < 1000; ++i )
+		for ( int i = 0; i < 10; ++i )
 			input.add( new long[] { i } );
 
-		final JavaRDD<long[]> rdd = sc.parallelize( input );
+		// EMR will try to optimize the partitions based on estimating what it'll take to process 
+		// the data along with the cluster configuration.  In this case with 1000 items, it will
+		// estimate that it will take 2 minutes to process each item.  So it will try to process
+		// 1000 items in 2 minutes. For that reason it created 313 executors and made each 
+		// executor process about 3 items. To override this behavior, you can set the number
+		// of partitions to the number of executor by repartitioning the RDD.
+		// I added the repartition for this purpose.
 
+		JavaRDD<long[]> rdd = sc.parallelize( input ).repartition( 10 );
 
-		final JavaRDD< int[] > result =  rdd.map( i -> {
-			System.out.println( "Processing: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
+		System.out.println("RDD Number of Partitions: " + rdd.partitions().size());
+
+		final JavaRDD< HashMap<String,Long> > result =  rdd.map( i ->
+		{
+			String executorId = SparkEnv.get().executorId();
+
+			System.out.println("Executor ID: " + executorId);
+			System.out.println("Processing: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
+
 			//testS3Write( "worker_"+ i[0] );
-			SimpleMultiThreading.threadWait( 1000 );
+			try { Thread.sleep( 20 * 1000 ); }
+			catch (InterruptedException e) { e.printStackTrace(); }
 
 			System.out.println( "Done: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
 
-			return new int[] { (int)i[0] + 17 };
+			HashMap<String,Long> map = new HashMap<>();
+			map.put(executorId, i[0]);
+			return map;
 		});
 
 		result.cache();
 		result.count();
-		//rdd.cache();
-		//rdd.count();
-		List<int[]> r = result.collect();
+		List<HashMap<String, Long>> r = result.collect();
 
-		for ( final int[] i : r )
-			System.out.println( i[0] + " @ " + new Date( System.currentTimeMillis() ) );
+		Integer mapSize = r.size();
+		System.out.println("Map size: " + mapSize);
+		System.out.println("Map content: ");
+		System.out.println("------------------");
+
+		for (final HashMap<String, Long> i : r)
+			System.out.println(i);
 
 		sc.close();
 
 		System.out.println( "Done ... ");
 
-		System.exit( 0 );
-		//rdd.c
+		
 		//fileSystem();
 		//awsS3();
 		//testLoadInterestPoints();
 		//testBigStitcherGUI();
+
+		return null;
+	}
+
+	public static void main( String[] args )
+	{
+		System.out.println(Arrays.toString(args));
+
+		System.exit(new CommandLine(new TestDAL()).execute(args));
 	}
 }
