@@ -18,6 +18,9 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 	@Option(names = { "--dryRun" }, description = "perform a 'dry run', i.e. do not save any results (default: false)")
 	protected boolean dryRun = false;
 
+	@Option(names = "--localSparkBindAddress", description = "specify Spark bind address as localhost")
+	protected boolean localSparkBindAddress = false;
+
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
 		System.out.println( "xml: " + xmlPath);
