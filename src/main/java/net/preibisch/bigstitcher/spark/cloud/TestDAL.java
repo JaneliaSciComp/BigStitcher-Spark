@@ -161,7 +161,7 @@ public class TestDAL implements Callable<Void>
 		sc.setLogLevel("ERROR");
 
 		final ArrayList< long[] > input = new ArrayList<>();
-		for ( int i = 0; i < 10; ++i )
+		for ( int i = 0; i < 1000; ++i )
 			input.add( new long[] { i } );
 
 		// EMR will try to optimize the partitions based on estimating what it'll take to process 
@@ -172,7 +172,10 @@ public class TestDAL implements Callable<Void>
 		// of partitions to the number of executor by repartitioning the RDD.
 		// I added the repartition for this purpose.
 
-		JavaRDD<long[]> rdd = sc.parallelize( input ).repartition( 10 );
+		JavaRDD<long[]> rdd = sc.parallelize( input );
+
+		if ( repartition != null && repartition > 0 )
+			rdd = rdd.repartition( repartition );
 
 		System.out.println("RDD Number of Partitions: " + rdd.partitions().size());
 
@@ -184,7 +187,7 @@ public class TestDAL implements Callable<Void>
 			System.out.println("Processing: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
 
 			//testS3Write( "worker_"+ i[0] );
-			try { Thread.sleep( 20 * 1000 ); }
+			try { Thread.sleep( 2 * 1000 ); }
 			catch (InterruptedException e) { e.printStackTrace(); }
 
 			System.out.println( "Done: " + i[0] + " @ " + new Date( System.currentTimeMillis() ) );
