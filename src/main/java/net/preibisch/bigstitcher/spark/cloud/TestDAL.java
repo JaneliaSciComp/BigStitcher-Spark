@@ -211,7 +211,7 @@ public class TestDAL implements Callable<Void>
 
 		sc.close();
 
-		System.out.println( "Done ... ");
+		System.out.println( "Done @ " + new Date( System.currentTimeMillis() ) );
 
 		
 		//fileSystem();
