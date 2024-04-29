@@ -7,15 +7,23 @@ import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 
+import bdv.ViewerImgLoader;
 import bdv.util.BdvFunctions;
 import bdv.util.BdvOptions;
 import bdv.util.volatiles.VolatileViews;
+import ij.ImageJ;
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Util;
+import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 
 public class TestN5Loading
 {
@@ -39,15 +47,15 @@ public class TestN5Loading
 
 	public static <S extends NativeType<S> & IntegerType<S>, T extends NativeType<T> & RealType<T>> void testInterestPoints() throws IOException
 	{
-		final N5Reader n5 = new N5Factory().openReader("s3://janelia-bigstitcher-spark/Stitching/interestpoints.n5");
+		final N5Reader n5 = new N5Factory().openReader("/Users/preibischs/Downloads/public-archivedwl-747/interestpoints.n5");
 
 		String[] l = n5.list( "/" );
 
 		for ( final String s : l )
 			System.out.println( s );
 
-		final RandomAccessibleInterval< S > id = N5Utils.open(n5, l[0] + "/points/interestpoints/id" );
-		final RandomAccessibleInterval< T > loc = N5Utils.open(n5, l[0] + "/points/interestpoints/loc" );
+		final RandomAccessibleInterval< S > id = N5Utils.open(n5, l[2] + "/beads/interestpoints/id" );
+		final RandomAccessibleInterval< T > loc = N5Utils.open(n5, l[2] + "/beads/interestpoints/loc" );
 
 		System.out.println( "id: " + Util.printInterval( id ));
 		System.out.println( "loc: " + Util.printInterval( loc ));
@@ -69,9 +77,29 @@ public class TestN5Loading
 		}
 	}
 
-	public static void main( String[] args ) throws IOException, URISyntaxException
+	public static void testBigStitcherGUI() throws SpimDataException
 	{
-		testBDV();
+		new ImageJ();
+
+		//final String xml = "s3://janelia-bigstitcher-spark/Stitching/dataset.xml";
+		final String xml = "/Users/preibischs/Downloads/public-archivedwl-747/dataset.xml~1";
+
+		final SpimData2 data = Spark.getSparkJobSpimData2( xml );
+
+		final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
+		if (imgLoader instanceof ViewerImgLoader)
+			((ViewerImgLoader) imgLoader).setNumFetcherThreads(-1);
+
+		
+		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, new XmlIoSpimData2("") );
+
+		explorer.getFrame().toFront();
+	}
+
+	public static void main( String[] args ) throws IOException, URISyntaxException, SpimDataException
+	{
+		//testBigStitcherGUI();
+		//testBDV();
 		testInterestPoints();
 	}
 }
