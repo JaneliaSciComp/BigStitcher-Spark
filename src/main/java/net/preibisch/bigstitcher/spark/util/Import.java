@@ -217,6 +217,10 @@ public class Import {
 		return Arrays.stream(csvString.split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
 	}
 
+	public static double[] csvStringToDoubleArray(final String csvString) {
+		return Arrays.stream(csvString.split(",")).map( st -> st.trim() ).mapToDouble(Double::parseDouble).toArray();
+	}
+
 	/**
 	 * converts a String like '1,1,1; 2,2,1; 4,4,1; 8,8,2' to downsampling levels in int[][]
 	 * @param csvString

@@ -23,6 +23,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
+import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -91,6 +92,12 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
+
+	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
+	private boolean masks = false;
+
+	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off) (default: 0.0,0.0,0.0)")
+	private String maskOffset = "0.0,0.0,0.0";
 
 	// TODO: support create custom downsampling pyramids, null is fine for now (used by multiRes later)
 	private int[][] downsamplings;
@@ -162,6 +169,10 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			System.out.println( "Fusing to FLOAT32" );
 			dataType = DataType.FLOAT32;
 		}
+
+		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
+		if ( masks )
+			System.out.println( "Fusing ONLY MASKS! Mask offset: " + Util.printCoordinates( maskOff ) );
 
 		//
 		// final variables for Spark
@@ -307,7 +318,23 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
 		final long time = System.currentTimeMillis();
-		rdd.foreach( new WriteSuperBlock(
+
+		if ( masks )
+			rdd.foreach( new WriteSuperBlockMasks(
+					xmlPath,
+					preserveAnisotropy,
+					anisotropyFactor,
+					minBB,
+					n5Path,
+					n5Dataset,
+					storageType,
+					serializedViewIds,
+					uint8,
+					uint16,
+					maskOff,
+					blockSize ) );
+		else
+			rdd.foreach( new WriteSuperBlock(
 				xmlPath,
 				preserveAnisotropy,
 				anisotropyFactor,
