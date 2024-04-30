@@ -108,7 +108,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 	 * @param interval interval in world coordinates
 	 * @return views that overlap {@code interval}
 	 */
-	private static List<ViewId> findOverlappingViews(
+	public static List<ViewId> findOverlappingViews(
 			final SpimData spimData,
 			final List<ViewId> viewIds,
 			final Interval interval )
