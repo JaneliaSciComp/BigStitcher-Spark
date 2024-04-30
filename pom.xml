@@ -375,26 +375,6 @@
 				</exclusion>
 			</exclusions>
 		</dependency>
-
-		<!-- https://mvnrepository.com/artifact/org.apache.opendal/opendal-java -->
-		<dependency>
-		    <groupId>org.apache.opendal</groupId>
-		    <artifactId>opendal-java</artifactId>
-		    <version>0.45.1</version>
-		</dependency>
-		<dependency>
-		    <groupId>org.apache.opendal</groupId>
-		    <artifactId>opendal-java</artifactId>
-		    <version>0.45.1</version>
-		    <classifier>linux-x86_64</classifier>
-		</dependency>
-		<dependency>
-		    <groupId>org.apache.opendal</groupId>
-		    <artifactId>opendal-java</artifactId>
-		    <version>0.45.1</version>
-		    <classifier>osx-aarch_64</classifier>
-		</dependency>
-
     </dependencies>
     <groupId>net.preibisch</groupId>
 
