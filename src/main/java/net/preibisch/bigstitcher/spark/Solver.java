@@ -410,8 +410,14 @@ public class Solver extends AbstractRegistration
 				{
 					if ( p.getCorrespodingLabel().equals( label ) && p.getCorrespondingViewId().equals( vB ) )
 					{
-						final InterestPoint ipA = ipListA.get( p.getDetectionId() );
-						final InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
+						InterestPoint ipA = ipListA.get( p.getDetectionId() );
+						InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
+
+						// we need to copy the array because it might not be bijective
+						// (some points in one list might correspond with the same point in the other list)
+						// which leads to the SpimData model being applied twice
+						ipA = new InterestPoint( ipA.getId(), ipA.getL().clone() );
+						ipB = new InterestPoint( ipB.getId(), ipB.getL().clone() );
 
 						// transform the points
 						mA.apply( ipA.getL(), ipA.getL() );
