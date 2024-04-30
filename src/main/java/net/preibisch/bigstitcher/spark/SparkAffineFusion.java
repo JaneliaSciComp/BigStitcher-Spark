@@ -96,7 +96,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
 	private boolean masks = false;
 
-	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off) (default: 0.0,0.0,0.0)")
+	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
 	// TODO: support create custom downsampling pyramids, null is fine for now (used by multiRes later)
