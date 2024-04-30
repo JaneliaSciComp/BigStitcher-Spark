@@ -53,30 +53,6 @@ public class TestCloudFunctions implements Callable<Void>
 	@Option(names = "--testAWSBucketAccess", description = "location for testing s3 reading/writing")
 	private String testAWSBucketAccess = null;
 
-	public static void testLoadInterestPoints() throws SpimDataException, IOException
-	{
-		final SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
-
-		System.out.println( "num viewsetups: " + data.getSequenceDescription().getViewSetupsOrdered().size() );
-
-		final Map<ViewId, ViewInterestPointLists> ips = data.getViewInterestPoints().getViewInterestPoints();
-		final ViewInterestPointLists ipl = ips.values().iterator().next();
-		final InterestPoints ip = ipl.getHashMap().values().iterator().next();
-		
-		System.out.println("base dir: " + ip.getBaseDir() );
-		System.out.println("base dir modified: " + InterestPointsN5.assembleURI( ip.getBaseDir(), InterestPointsN5.baseN5 ) );
-
-		List<InterestPoint> ipList = ip.getInterestPointsCopy();
-
-		System.out.println( "Loaded " + ipList.size() + " interest points.");
-
-		System.out.println( "Saving s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml ...");
-
-		Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
-
-		System.out.println( "Done.");
-	}
-
 	@Override
 	public Void call() throws SpimDataException, IOException
 	{
@@ -107,7 +83,7 @@ public class TestCloudFunctions implements Callable<Void>
 		writer.println( "test " + new Date( System.currentTimeMillis() ) );
 		writer.close();
 
-		System.exit( 0 );
+		//System.exit( 0 );
 
 		System.out.println( "Creating N5 container @ " + new Date( System.currentTimeMillis() ) );
 		N5Writer w = new N5Factory().createWriter( "s3://janelia-bigstitcher-spark/testcontainer_"+ System.currentTimeMillis() +".n5" );
@@ -117,7 +93,7 @@ public class TestCloudFunctions implements Callable<Void>
 				DataType.FLOAT32,
 				new GzipCompression( 1 ) );
 
-		System.exit( 0 );
+		//System.exit( 0 );
 
 		System.out.println( "Starting AWS-Spark test @ " + new Date( System.currentTimeMillis() ) );
 
@@ -188,12 +164,6 @@ public class TestCloudFunctions implements Callable<Void>
 		sc.close();
 
 		System.out.println( "Done @ " + new Date( System.currentTimeMillis() ) );
-
-		
-		//fileSystem();
-		//awsS3();
-		//testLoadInterestPoints();
-		//testBigStitcherGUI();
 
 		return null;
 	}

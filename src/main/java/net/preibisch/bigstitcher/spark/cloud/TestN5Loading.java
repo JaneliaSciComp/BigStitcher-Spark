@@ -2,6 +2,8 @@ package net.preibisch.bigstitcher.spark.cloud;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.List;
+import java.util.Map;
 
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
@@ -14,6 +16,7 @@ import bdv.util.volatiles.VolatileViews;
 import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.type.NativeType;
@@ -24,6 +27,10 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 
 public class TestN5Loading
 {
@@ -77,6 +84,30 @@ public class TestN5Loading
 		}
 	}
 
+	public static void testLoadInterestPoints() throws SpimDataException, IOException
+	{
+		final SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+
+		System.out.println( "num viewsetups: " + data.getSequenceDescription().getViewSetupsOrdered().size() );
+
+		final Map<ViewId, ViewInterestPointLists> ips = data.getViewInterestPoints().getViewInterestPoints();
+		final ViewInterestPointLists ipl = ips.values().iterator().next();
+		final InterestPoints ip = ipl.getHashMap().values().iterator().next();
+		
+		System.out.println("base dir: " + ip.getBaseDir() );
+		System.out.println("base dir modified: " + InterestPointsN5.assembleURI( ip.getBaseDir(), InterestPointsN5.baseN5 ) );
+
+		List<InterestPoint> ipList = ip.getInterestPointsCopy();
+
+		System.out.println( "Loaded " + ipList.size() + " interest points.");
+
+		System.out.println( "Saving s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml ...");
+
+		Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
+
+		System.out.println( "Done.");
+	}
+
 	public static void testBigStitcherGUI() throws SpimDataException
 	{
 		new ImageJ();
@@ -99,7 +130,8 @@ public class TestN5Loading
 	{
 		CloudUtil.parseCloudLink( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
 
-		testBigStitcherGUI();
+		testLoadInterestPoints();
+		//testBigStitcherGUI();
 		//testBDV();
 		//testInterestPoints();
 	}
