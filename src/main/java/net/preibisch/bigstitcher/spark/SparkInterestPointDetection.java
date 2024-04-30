@@ -112,7 +112,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "-i1", "--maxIntensity" }, required = true, description = "max intensity for segmentation, e.g. 2048.0")
 	protected Double maxIntensity = null;
 
-	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using " + SparkAffineFusion.N_PREFETCH_THREADS + " threads, useful in cloud environments (default: false)")
+	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
 
@@ -166,7 +166,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "downsampleXY: " + downsampleXY );
 		System.out.println( "downsampleZ: " + downsampleZ );
 		System.out.println( "overlappingOnly: " + onlyOverlappingRegions );
-		System.out.println( "prefetching with " + SparkAffineFusion.N_PREFETCH_THREADS + " threads: " + prefetch );
+		System.out.println( "prefetching: " + prefetch );
 		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
 
 		//
@@ -357,8 +357,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
 
-				// TODO: use newCachedThreadPool?
-				final ExecutorService prefetchExecutor = Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
+				final ExecutorService prefetchExecutor = Executors.newCachedThreadPool(); //Executors.newFixedThreadPool( SparkAffineFusion.N_PREFETCH_THREADS );
 				prefetchExecutor.invokeAll( prefetchBlocks );
 				prefetchExecutor.shutdown();
 			}
