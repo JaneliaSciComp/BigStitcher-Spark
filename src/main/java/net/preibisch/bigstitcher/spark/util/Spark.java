@@ -2,19 +2,18 @@ package net.preibisch.bigstitcher.spark.util;
 
 import static mpicbg.spim.data.XmlKeys.SPIMDATA_TAG;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintWriter;
 import java.io.Serializable;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.opendal.Operator;
 import org.apache.spark.SparkEnv;
+import org.janelia.saalfeldlab.n5.KeyValueAccess;
 import org.jdom2.Document;
 import org.jdom2.Element;
 import org.jdom2.input.SAXBuilder;
@@ -36,6 +35,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.cloud.CloudUtil;
+import net.preibisch.bigstitcher.spark.cloud.CloudUtil.ParsedBucket;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -217,23 +217,22 @@ public class Spark {
 		return sparkEnv == null ? null : sparkEnv.executorId();
 	}
 
-	public static void saveSpimData2(final SpimData2 data, final String xmlPath) throws SpimDataException
+	public static void saveSpimData2(final SpimData2 data, final String xmlPath) throws SpimDataException, IOException
 	{
-		if ( xmlPath.trim().startsWith( "s3:/" ) )
+		if ( xmlPath.trim().contains( ":/" ) )
 		{
 			//
 			// saving the XML to s3
 			//
-			final Pair< Map<String, String>, String > info = CloudUtil.parseAWSS3Details( xmlPath );
-
-			final Operator op = Operator.of( "s3", info.getA() );
+			final ParsedBucket pb = CloudUtil.parseCloudLink( xmlPath );
+			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( pb );
 
 			// fist make a copy of the XML and save it to not loose it
-			if ( CloudUtil.exists( op, info.getB() ) )
+			if ( kva.exists( pb.rootDir + "/" + pb.file ) )
 			{
 				int maxExistingBackup = 0;
 				for ( int i = 1; i < XmlIoSpimData2.numBackups; ++i )
-					if ( CloudUtil.exists( op, info.getB() + "~" + i ) )
+					if ( kva.exists( pb.rootDir + "/" + pb.file + "~" + i ) )
 						maxExistingBackup = i;
 					else
 						break;
@@ -242,9 +241,9 @@ public class Spark {
 				try
 				{
 					for ( int i = maxExistingBackup; i >= 1; --i )
-						op.copy( info.getB() + "~" + i,  info.getB() + "~" + (i + 1) );
+						CloudUtil.copy(kva, pb.rootDir + "/" + pb.file + "~" + i, pb.rootDir + "/" + pb.file + "~" + (i + 1) );
 
-					op.copy( info.getB() ,  info.getB() + "~1" );
+					CloudUtil.copy(kva, pb.rootDir + "/" + pb.file, pb.rootDir + "/" + pb.file + "~1" );
 				}
 				catch ( final Exception e )
 				{
@@ -260,8 +259,11 @@ public class Spark {
 			final String xmlString = xout.outputString( doc );
 			//System.out.println( xmlString );
 
-			op.write( info.getB(), xmlString ).join();
-			op.close();
+			final OutputStream os = kva.lockForWriting( pb.rootDir + "/" + pb.file ).newOutputStream();
+			final PrintWriter pw = new PrintWriter( os );
+			pw.println( xmlString );
+			pw.close();
+			os.close();
 
 			// TODO: interest points are missing ...
 		}
@@ -279,19 +281,16 @@ public class Spark {
 
 		final SpimData2 data;
 
-		if ( xmlPath.trim().startsWith( "s3:/" ) )
+		if ( xmlPath.contains( ":/" ) )
 		{
-			final Pair< Map<String, String>, String > info = CloudUtil.parseAWSS3Details( xmlPath );
-
-			final Operator op = Operator.of( "s3", info.getA() );
-			final byte[] decodedBytes = op.read( info.getB() ).join();
-			op.close();
+			final ParsedBucket pb = CloudUtil.parseCloudLink( xmlPath );
+			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( pb );
 
 			final SAXBuilder sax = new SAXBuilder();
 			Document doc;
 			try
 			{
-				final InputStream is = new ByteArrayInputStream(decodedBytes);
+				final InputStream is = kva.lockForReading( pb.rootDir + "/" + pb.file ).newInputStream();
 				doc = sax.build( is );
 			}
 			catch ( final Exception e )

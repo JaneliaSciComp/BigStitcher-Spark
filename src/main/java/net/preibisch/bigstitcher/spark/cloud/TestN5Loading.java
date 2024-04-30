@@ -47,7 +47,7 @@ public class TestN5Loading
 
 	public static <S extends NativeType<S> & IntegerType<S>, T extends NativeType<T> & RealType<T>> void testInterestPoints() throws IOException
 	{
-		final N5Reader n5 = new N5Factory().openReader("/Users/preibischs/Downloads/public-archivedwl-747/interestpoints.n5");
+		final N5Reader n5 = new N5Factory().openReader("s3://janelia-bigstitcher-spark/Stitching/interestpoints.n5");
 
 		String[] l = n5.list( "/" );
 
@@ -81,8 +81,7 @@ public class TestN5Loading
 	{
 		new ImageJ();
 
-		//final String xml = "s3://janelia-bigstitcher-spark/Stitching/dataset.xml";
-		final String xml = "/Users/preibischs/Downloads/public-archivedwl-747/dataset.xml~1";
+		final String xml = "s3://janelia-bigstitcher-spark/Stitching/dataset.xml";
 
 		final SpimData2 data = Spark.getSparkJobSpimData2( xml );
 
@@ -98,8 +97,10 @@ public class TestN5Loading
 
 	public static void main( String[] args ) throws IOException, URISyntaxException, SpimDataException
 	{
-		//testBigStitcherGUI();
+		CloudUtil.parseCloudLink( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+
+		testBigStitcherGUI();
 		//testBDV();
-		testInterestPoints();
+		//testInterestPoints();
 	}
 }

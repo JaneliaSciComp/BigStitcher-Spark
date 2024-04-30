@@ -6,8 +6,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -17,34 +15,20 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
-import org.apache.opendal.Entry;
-import org.apache.opendal.Operator;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkEnv;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
-import bdv.ViewerImgLoader;
-import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
-import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.preibisch.bigstitcher.spark.util.Spark;
-import net.preibisch.legacy.io.TextFileAccess;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
@@ -58,7 +42,7 @@ import picocli.CommandLine.Option;
  * GitHub: https://github.com/apache/opendal
  * Supported architectures: https://repo1.maven.org/maven2/org/apache/opendal/opendal-java/0.45.1/
  */
-public class TestDAL implements Callable<Void>
+public class TestCloudFunctions implements Callable<Void>
 {
 	@Option(names = "--repartition", description = "specify number of Spark partitions (note to set spark.dynamicAllocation.enabled=false on AWS), if set to 0 as many partitions as jobs will be created.")
 	private Integer repartition = null;
@@ -69,47 +53,7 @@ public class TestDAL implements Callable<Void>
 	@Option(names = "--testAWSBucketAccess", description = "location for testing s3 reading/writing")
 	private String testAWSBucketAccess = null;
 
-	public static void fileSystem()
-	{
-		final Map<String, String> conf = new HashMap<>();
-		conf.put("root", "/tmp");
-
-		final Operator op = Operator.of("fs", conf );
-		op.write( "hello2.txt", "hi" ).join();
-		byte[] b = op.read( "hello2.txt" ).join();
-		System.out.println( new String(b, StandardCharsets.UTF_8));
-		
-		op.close();
-		
-	}
-
-	public static void awsS3() throws SpimDataException
-	{
-		final Map<String, String> builder = new HashMap<>();
-		builder.put("root", "Stitching");
-		builder.put("bucket", "janelia-bigstitcher-spark" );
-		builder.put("region", "us-east-1");
-		builder.put("endpoint", "https://s3.amazonaws.com");
-
-		final Operator op = Operator.of("s3", builder );
-
-		byte[] decodedBytes = op.read( "dataset.xml" ).join();
-		System.out.println( new String(decodedBytes, StandardCharsets.UTF_8).substring( 0, 200 ) );
-
-		System.out.println( "\ndataset.xml exists = " + CloudUtil.exists(op, "dataset.xml"));
-		System.out.println( "dataset_2.xml exists = " + CloudUtil.exists(op, "dataset_2.xml"));
-
-		System.out.println( "\nList of '" + builder.get( "root" ) + "'" );
-		List<Entry> entries = op.list( "" ).join();
-		entries.forEach( e -> System.out.println( e.getPath() + "\t" + e.metadata.getContentLength() ) );
-
-		op.close();
-
-		//SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
-		//System.out.println( data.getSequenceDescription().getViewSetupsOrdered().size() );
-	}
-
-	public static void testLoadInterestPoints() throws SpimDataException
+	public static void testLoadInterestPoints() throws SpimDataException, IOException
 	{
 		final SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
 
@@ -133,43 +77,6 @@ public class TestDAL implements Callable<Void>
 		System.out.println( "Done.");
 	}
 
-
-	public static String testS3Write( String fn )
-	{
-		final String file = fn + System.currentTimeMillis() + ".txt";
-		System.out.println( "writing: " + file );
-
-		final Map<String, String> builder = new HashMap<>();
-		builder.put("root", "");
-		builder.put("bucket", "bigstitcher-spark-test" );
-		builder.put("region", "us-east-1");
-		builder.put("endpoint", "https://s3.amazonaws.com");
-
-		final Operator op = Operator.of("s3", builder );
-		op.write( file, "This is just a test" ).join();
-		op.close();
-
-		System.out.println( "done writing: " + file );
-
-		return file;
-	}
-
-	public static void testS3Read( String fn )
-	{
-		System.out.println( "reading: " + fn );
-
-		final Map<String, String> builder = new HashMap<>();
-		builder.put("root", "");
-		builder.put("bucket", "bigstitcher-spark-test" );
-		builder.put("region", "us-east-1");
-		builder.put("endpoint", "https://s3.amazonaws.com");
-
-		final Operator op = Operator.of("s3", builder );
-		byte[] b = op.read( fn ).join();
-		System.out.println( "read: " + new String(b, StandardCharsets.UTF_8));
-		op.close();
-	}
-
 	@Override
 	public Void call() throws SpimDataException, IOException
 	{
@@ -184,40 +91,33 @@ public class TestDAL implements Callable<Void>
 		//Operating system architecture
 		System.out.println("Your OS Architecture -> " + System.getProperty("os.arch"));
 
-
-		N5Reader n5r = new N5Factory().openReader(StorageFormat.N5,"s3://janelia-bigstitcher-spark/" );
-		KeyValueAccess kva = ((GsonKeyValueN5Reader)n5r).getKeyValueAccess();
+		final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( "s3://janelia-bigstitcher-spark/" );
 
 		System.out.println( kva.exists( "/Stitching/dataset.xml" ) );
+		CloudUtil.copy(kva, "/Stitching/dataset.xml", "/Stitching/dataset-2.xml" );
 
-		InputStream is = kva.lockForReading( "/Stitching/dataset.xml" ).newInputStream();
-		BufferedReader br = new BufferedReader(new InputStreamReader(is));
-		System.out.println( br.lines().collect(Collectors.joining("\n") ) );
+		final BufferedReader reader = CloudUtil.openFileReadCloud(kva, "/Stitching/dataset.xml" );
+		System.out.println( reader.lines().collect(Collectors.joining("\n") ).substring(0, 200) + " ... " );
+		reader.close();
 
 		if ( kva.exists( "dataset-test.txt" ) )
 			kva.delete( "dataset-test.txt" );
 
-		OutputStream os = kva.lockForWriting( "dataset-test.txt" ).newOutputStream();
-		PrintWriter pw = new PrintWriter( os );
-		pw.println( "test " + new Date( System.currentTimeMillis() ) );
-		pw.close();
-		os.close();
-		n5r.close();
+		final PrintWriter writer = CloudUtil.openFileWriteCloud( kva, "dataset-test.txt" );
+		writer.println( "test " + new Date( System.currentTimeMillis() ) );
+		writer.close();
 
 		System.exit( 0 );
+
 		System.out.println( "Creating N5 container @ " + new Date( System.currentTimeMillis() ) );
-		N5Writer w = new N5Factory().createWriter( "s3://bigstitcher-spark-test/testcontainer_"+ System.currentTimeMillis() +".n5" );
+		N5Writer w = new N5Factory().createWriter( "s3://janelia-bigstitcher-spark/testcontainer_"+ System.currentTimeMillis() +".n5" );
 		w.createDataset( "test",
 				new long[] { 128, 128, 128 },
 				new int[] { 64,64,32},
 				DataType.FLOAT32,
 				new GzipCompression( 1 ) );
 
-		N5FSWriter n52 = new N5FSWriter("/home/john/tmp/mr.ome.zarr" );	
-		n52.getKeyValueAccess().lockForWriting("spreadsheed.xls").newOutputStream();
-	
-		if ( testAWSBucketAccess != null )
-			testS3Read( testS3Write( testAWSBucketAccess ) );
+		System.exit( 0 );
 
 		System.out.println( "Starting AWS-Spark test @ " + new Date( System.currentTimeMillis() ) );
 
@@ -302,6 +202,6 @@ public class TestDAL implements Callable<Void>
 	{
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new TestDAL()).execute(args));
+		System.exit(new CommandLine(new TestCloudFunctions()).execute(args));
 	}
 }
