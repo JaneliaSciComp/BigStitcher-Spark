@@ -99,10 +99,10 @@ public class Solver extends AbstractRegistration
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers, how many times worse than the average error a link needs to be (default: 3.5)")
-	protected double relativeThreshold;
+	protected double relativeThreshold = 3.5;
 
 	@Option(names = { "--absoluteThreshold" }, description = "absoluted error threshold for iterative solver to drop a link in pixels (default: 7.0)")
-	protected double absoluteThreshold;
+	protected double absoluteThreshold = 7.0;
 
 	@Option(names = { "--maxError" }, description = "max error for the solve (default: 5.0)")
 	protected Double maxError = 5.0;
