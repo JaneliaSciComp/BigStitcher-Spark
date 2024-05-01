@@ -108,11 +108,9 @@ public class TestN5Loading
 		System.out.println( "Done.");
 	}
 
-	public static void testBigStitcherGUI() throws SpimDataException
+	public static void testBigStitcherGUI( final String xml ) throws SpimDataException
 	{
 		new ImageJ();
-
-		final String xml = "s3://janelia-bigstitcher-spark/Stitching/dataset.xml";
 
 		final SpimData2 data = Spark.getSparkJobSpimData2( xml );
 
@@ -130,8 +128,9 @@ public class TestN5Loading
 	{
 		CloudUtil.parseCloudLink( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
 
-		testLoadInterestPoints();
-		//testBigStitcherGUI();
+		//testLoadInterestPoints();
+		//testBigStitcherGUI( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+		testBigStitcherGUI( "/Users/preibischs/Documents/Janelia/Projects/BigStitcher/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" );
 		//testBDV();
 		//testInterestPoints();
 	}
