@@ -21,6 +21,7 @@ import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransformAffine;
@@ -38,7 +39,9 @@ import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.converter.Converters;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
 import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -50,6 +53,7 @@ import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -119,6 +123,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = "--blockSize", description = "blockSize for running the interest point detection - at the scale of detection (default: 512,512,128)")
 	protected String blockSizeString = "512,512,128";
 
+	@Option(names = { "--medianFilter" }, description = "divide by the median filtered image of the given radius prior to interest point detection, e.g. --medianFilter 10")
+	protected Integer medianFilter = null;
+
 
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
 	protected Integer dsxy = 2;
@@ -155,6 +162,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final double combineDistance = SparkInterestPointDetection.combineDistance;
 		final Localization localization = this.localization;
 		final boolean prefetch = this.prefetch;
+		final Integer medianFilter = this.medianFilter;
 
 		System.out.println( "label: " + label );
 		System.out.println( "sigma: " + sigma );
@@ -168,6 +176,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "overlappingOnly: " + onlyOverlappingRegions );
 		System.out.println( "prefetching: " + prefetch );
 		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
+		System.out.println( "medianFilter: " + medianFilter );
 
 		//
 		// assemble all intervals that need to be processed
@@ -362,11 +371,26 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				prefetchExecutor.shutdown();
 			}
 
+			final RandomAccessibleInterval inputImage;
+
+			if ( medianFilter != null && medianFilter > 0 )
+			{
+				inputImage = LazyBackgroundSubtract.init(
+						Views.extendMirrorDouble( input.getA() ),
+						new FinalInterval(input.getA()),
+						medianFilter,
+						new int[] {512, 512, 128} );
+			}
+			else
+			{
+				inputImage = input.getA();
+			}
+
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
 			@SuppressWarnings("unchecked")
 			final ArrayList< InterestPoint > ips = DoGImgLib2.computeDoG(
-					(RandomAccessible)Views.extendMirrorDouble( input.getA() ), // the entire image, extended to infinity
+					(RandomAccessible)Views.extendMirrorDouble( inputImage ), // the entire image, extended to infinity
 					null, // mask
 					processInterval,
 					dog.sigma,
