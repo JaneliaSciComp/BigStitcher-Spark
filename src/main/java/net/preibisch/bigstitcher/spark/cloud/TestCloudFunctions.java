@@ -67,33 +67,36 @@ public class TestCloudFunctions implements Callable<Void>
 		//Operating system architecture
 		System.out.println("Your OS Architecture -> " + System.getProperty("os.arch"));
 
-		final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( "s3://janelia-bigstitcher-spark/" );
-
-		System.out.println( kva.exists( "/Stitching/dataset.xml" ) );
-		CloudUtil.copy(kva, "/Stitching/dataset.xml", "/Stitching/dataset-2.xml" );
-
-		final BufferedReader reader = CloudUtil.openFileReadCloud(kva, "/Stitching/dataset.xml" );
-		System.out.println( reader.lines().collect(Collectors.joining("\n") ).substring(0, 200) + " ... " );
-		reader.close();
-
-		if ( kva.exists( "dataset-test.txt" ) )
-			kva.delete( "dataset-test.txt" );
-
-		final PrintWriter writer = CloudUtil.openFileWriteCloud( kva, "dataset-test.txt" );
-		writer.println( "test " + new Date( System.currentTimeMillis() ) );
-		writer.close();
-
-		//System.exit( 0 );
-
-		System.out.println( "Creating N5 container @ " + new Date( System.currentTimeMillis() ) );
-		N5Writer w = new N5Factory().createWriter( "s3://janelia-bigstitcher-spark/testcontainer_"+ System.currentTimeMillis() +".n5" );
-		w.createDataset( "test",
-				new long[] { 128, 128, 128 },
-				new int[] { 64,64,32},
-				DataType.FLOAT32,
-				new GzipCompression( 1 ) );
-
-		//System.exit( 0 );
+		if ( testAWSBucketAccess != null )
+		{
+			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( "s3://janelia-bigstitcher-spark/" );
+	
+			System.out.println( kva.exists( "/Stitching/dataset.xml" ) );
+			CloudUtil.copy(kva, "/Stitching/dataset.xml", "/Stitching/dataset-2.xml" );
+	
+			final BufferedReader reader = CloudUtil.openFileReadCloud(kva, "/Stitching/dataset.xml" );
+			System.out.println( reader.lines().collect(Collectors.joining("\n") ).substring(0, 200) + " ... " );
+			reader.close();
+	
+			if ( kva.exists( "dataset-test.txt" ) )
+				kva.delete( "dataset-test.txt" );
+	
+			final PrintWriter writer = CloudUtil.openFileWriteCloud( kva, "dataset-test.txt" );
+			writer.println( "test " + new Date( System.currentTimeMillis() ) );
+			writer.close();
+	
+			//System.exit( 0 );
+	
+			System.out.println( "Creating N5 container @ " + new Date( System.currentTimeMillis() ) );
+			N5Writer w = new N5Factory().createWriter( "s3://janelia-bigstitcher-spark/testcontainer_"+ System.currentTimeMillis() +".n5" );
+			w.createDataset( "test",
+					new long[] { 128, 128, 128 },
+					new int[] { 64,64,32},
+					DataType.FLOAT32,
+					new GzipCompression( 1 ) );
+	
+			//System.exit( 0 );
+		}
 
 		System.out.println( "Starting AWS-Spark test @ " + new Date( System.currentTimeMillis() ) );
 
