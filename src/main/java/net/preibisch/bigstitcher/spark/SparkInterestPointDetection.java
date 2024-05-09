@@ -376,7 +376,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			if ( medianFilter != null && medianFilter > 0 )
 			{
 				inputImage = LazyBackgroundSubtract.init(
-						Views.extendMirrorDouble( input.getA() ),
+						(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
 						new FinalInterval(input.getA()),
 						medianFilter,
 						new int[] {512, 512, 128} );
