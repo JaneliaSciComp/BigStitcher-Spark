@@ -2,8 +2,6 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <artifactId>BigStitcher-Spark</artifactId>
-    <version>0.0.2-SNAPSHOT</version>
 
     <parent>
         <groupId>org.scijava</groupId>
@@ -12,19 +10,22 @@
         <relativePath/>
     </parent>
 
+    <groupId>net.preibisch</groupId>
+    <artifactId>BigStitcher-Spark</artifactId>
+    <version>0.0.2-SNAPSHOT</version>
+
     <name>BigStitcher Spark</name>
     <description>Spark-based parallel BigStitcher project.</description>
-    <url>https://</url>
+    <url>https://github.com/JaneliaSciComp/BigStitcher-Spark</url>
     <inceptionYear>2021</inceptionYear>
     <organization>
         <name>Fiji</name>
-        <url>http://fiji.sc/</url>
+        <url>https://fiji.sc/</url>
     </organization>
-
     <licenses>
         <license>
             <name>GNU General Public License v2+</name>
-            <url>http://www.gnu.org/licenses/gpl.html</url>
+            <url>https://www.gnu.org/licenses/gpl.html</url>
             <distribution>repo</distribution>
         </license>
     </licenses>
@@ -47,10 +48,9 @@
     </developers>
 
     <contributors>
-        <contributor>
-            <name>Marwan Zouinkhi</name>
-            <url>https://</url>
-        </contributor>
+		<contributor>
+			<name>Marwan Zouinkhi</name>
+		</contributor>
     </contributors>
 
     <mailingLists>
@@ -61,21 +61,23 @@
     </mailingLists>
 
     <scm>
-        <connection>scm:git:https://github.com/PreibischLab/BigStitcher-Spark</connection>
-        <developerConnection>scm:git:git@github.com:PreibischLab/BigStitcher-Spark</developerConnection>
+        <connection>scm:git:https://github.com/JaneliaSciComp/BigStitcher-Spark</connection>
+        <developerConnection>scm:git:git@github.com:JaneliaSciComp/BigStitcher-Spark</developerConnection>
         <tag>HEAD</tag>
-        <url>https://github.com/PreibischLab/BigStitcher-Spark</url>
+        <url>https://github.com/JaneliaSciComp/BigStitcher-Spark</url>
     </scm>
     <issueManagement>
         <system>GitHub Issues</system>
-        <url>https://github.com/PreibischLab/BigStitcher-Spark/issues</url>
+        <url>https://github.com/JaneliaSciComp/BigStitcher-Spark/issues</url>
     </issueManagement>
     <ciManagement>
         <system>GitHub Actions</system>
-        <url>https://github.com/PreibischLab/BigStitcher-Spark/actions</url>
+        <url>https://github.com/JaneliaSciComp/BigStitcher-Spark/actions</url>
     </ciManagement>
 
     <properties>
+		<package-name>net.preibisch.bigstitcher.spark</package-name>
+
         <!-- <scijava.jvm.version>1.8</scijava.jvm.version> -->
         <license.licenseName>gpl_v2</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
@@ -353,7 +355,6 @@
         </dependency>
 
     </dependencies>
-    <groupId>net.preibisch</groupId>
 
     <profiles>
         <profile>
