@@ -1,3 +1,5 @@
+[![Build Status](https://github.com/PreibischLab/BigStitcher-Spark/actions/workflows/build.yml/badge.svg)](https://github.com/PreibischLab/BigStitcher-Spark/actions/workflows/build.yml)
+
 # BigStitcher-Spark
 
 *Supported by the [HHMI Janelia Open Science Software Initative](https://www.janelia.org/open-science/overview/open-science-software-initiative-ossi)*
