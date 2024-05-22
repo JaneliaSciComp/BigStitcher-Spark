@@ -86,7 +86,7 @@ public class TestN5Loading
 
 	public static void testLoadInterestPoints() throws SpimDataException, IOException
 	{
-		final SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+		final SpimData2 data = Spark.getSparkJobSpimData2( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" , false );
 
 		System.out.println( "num viewsetups: " + data.getSequenceDescription().getViewSetupsOrdered().size() );
 
@@ -103,7 +103,7 @@ public class TestN5Loading
 
 		System.out.println( "Saving s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml ...");
 
-		Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" );
+		Spark.saveSpimData2( data, "s3://janelia-bigstitcher-spark/Stitching/dataset-save.xml" , false );
 
 		System.out.println( "Done.");
 	}
@@ -112,7 +112,7 @@ public class TestN5Loading
 	{
 		new ImageJ();
 
-		final SpimData2 data = Spark.getSparkJobSpimData2( xml );
+		final SpimData2 data = Spark.getSparkJobSpimData2( xml , false );
 
 		final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
 		if (imgLoader instanceof ViewerImgLoader)

@@ -15,14 +15,12 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
+import com.amazonaws.regions.DefaultAwsRegionProviderChain;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkEnv;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
-import org.janelia.saalfeldlab.n5.KeyValueAccess;
-import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.*;
 import org.janelia.saalfeldlab.n5.universe.N5Factory;
 
 import mpicbg.spim.data.SpimDataException;
@@ -69,26 +67,34 @@ public class TestCloudFunctions implements Callable<Void>
 
 		if ( testAWSBucketAccess != null )
 		{
-			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( "s3://janelia-bigstitcher-spark/" );
+			final String s3Region = new DefaultAwsRegionProviderChain().getRegion();
+//			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( "s3://aind-scratch-data/" );
+//			http://s3-us-west-2.amazonaws.com/aind-scratch-data
+//			final N5Reader n5r = new N5Factory().s3UseCredentials().s3Region(s3Region).openReader( N5Factory.StorageFormat.N5,  "s3://aind-scratch-data/" );
+			final N5Reader n5r = new N5Factory().s3UseCredentials().openReader( N5Factory.StorageFormat.N5,  "https://s3-us-west-2.amazonaws.com/aind-scratch-data" );
+			final KeyValueAccess kva = ((GsonKeyValueN5Reader)n5r).getKeyValueAccess();
 	
-			System.out.println( kva.exists( "/Stitching/dataset.xml" ) );
-			CloudUtil.copy(kva, "/Stitching/dataset.xml", "/Stitching/dataset-2.xml" );
-	
-			final BufferedReader reader = CloudUtil.openFileReadCloud(kva, "/Stitching/dataset.xml" );
-			System.out.println( reader.lines().collect(Collectors.joining("\n") ).substring(0, 200) + " ... " );
-			reader.close();
+			System.out.println( kva.exists( "/gabor.kovacs/Stitching/dataset.xml" ) );
+//			CloudUtil.copy(kva, "/gabor.kovacs/Stitching/dataset.xml", "/gabor.kovacs/Stitching/dataset-2.xml" );
+//
+//			final BufferedReader reader = CloudUtil.openFileReadCloud(kva, "/gabor.kovacs/Stitching/dataset.xml" );
+//			System.out.println( reader.lines().collect(Collectors.joining("\n") ).substring(0, 200) + " ... " );
+//			reader.close();
 	
 			if ( kva.exists( "dataset-test.txt" ) )
 				kva.delete( "dataset-test.txt" );
 	
-			final PrintWriter writer = CloudUtil.openFileWriteCloud( kva, "dataset-test.txt" );
+			final PrintWriter writer = CloudUtil.openFileWriteCloud( kva, "gabor.kovacs/dataset-test.txt" );
 			writer.println( "test " + new Date( System.currentTimeMillis() ) );
 			writer.close();
 	
 			//System.exit( 0 );
 	
 			System.out.println( "Creating N5 container @ " + new Date( System.currentTimeMillis() ) );
-			N5Writer w = new N5Factory().createWriter( "s3://janelia-bigstitcher-spark/testcontainer_"+ System.currentTimeMillis() +".n5" );
+//			System.out.println( "Using s3Region " + s3Region );
+			N5Writer w = new N5Factory().s3Region(s3Region).s3UseCredentials().createWriter( "s3://aind-scratch-data/gabor.kovacs/testcontainer_"+ System.currentTimeMillis() +".n5" );
+//			N5Writer w = new N5Factory().createWriter( "https://s3-us-west-2.amazonaws.com/aind-scratch-data/gabor.kovacs/testcontainer_"+ System.currentTimeMillis() +".n5" );
+//			N5Writer w = new N5Factory().openWriter( N5Factory.StorageFormat.ZARR, kva, "gabor.kovacs/testcontainer_"+ System.currentTimeMillis() +".n5" );
 			w.createDataset( "test",
 					new long[] { 128, 128, 128 },
 					new int[] { 64,64,32},
@@ -111,7 +117,7 @@ public class TestCloudFunctions implements Callable<Void>
 		sc.setLogLevel("ERROR");
 
 		final ArrayList< long[] > input = new ArrayList<>();
-		for ( int i = 0; i < 1000; ++i )
+		for ( int i = 0; i < 10; ++i )
 			input.add( new long[] { i } );
 
 		// EMR will try to optimize the partitions based on estimating what it'll take to process 

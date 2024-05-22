@@ -286,7 +286,7 @@ public class Import {
 		}
 		else
 		{
-			new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
+			throw new RuntimeException( "BDV-compatible dataset cannot be written for " + storageType + " (yet).");
 		}
 
 		System.out.println( "Saving BDV-compatible " + storageType + " using ViewSetupId=" + viewId.getViewSetupId() + ", TimepointId=" + viewId.getTimePointId()  );

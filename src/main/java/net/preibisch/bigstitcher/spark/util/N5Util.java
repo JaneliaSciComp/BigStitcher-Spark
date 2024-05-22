@@ -18,19 +18,34 @@ public class N5Util
 
 	public static N5Writer createWriter(
 			final String path,
-			final StorageType storageType ) throws IOException // can be null if N5 or ZARR is written 
+			final StorageType storageType ) throws IOException // can be null if N5 or ZARR is written
+	{
+		return createWriter( path, storageType, false );
+	}
+
+	public static N5Writer createWriter(
+			final String path,
+			final StorageType storageType, final boolean authenticate ) throws IOException // can be null if N5 or ZARR is written
 	{
 		if ( StorageType.N5.equals(storageType) )
 		{
-			if ( path.contains( ":/" ) )
-				return new N5Factory().openWriter(StorageFormat.N5, path );
+			if ( path.contains( ":/" ) ) {
+				final N5Factory n5f = new N5Factory();
+				if ( authenticate )
+					n5f.s3UseCredentials();
+				return n5f.openWriter(StorageFormat.N5, path);
+			}
 			else
 				return new N5FSWriter(path);
 		}
 		else if ( StorageType.ZARR.equals(storageType) )
 		{
-			if ( path.contains( ":/" ) )
-				return new N5Factory().openWriter(StorageFormat.ZARR, path );
+			if ( path.contains( ":/" ) ) {
+				final N5Factory n5f = new N5Factory().zarrDimensionSeparator("/");
+				if ( authenticate )
+					n5f.s3UseCredentials();
+				return n5f.openWriter(StorageFormat.ZARR, path);
+			}
 			else
 				return new N5ZarrWriter(path);
 		}

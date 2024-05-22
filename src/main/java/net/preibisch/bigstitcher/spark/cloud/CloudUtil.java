@@ -9,6 +9,7 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 
+import com.amazonaws.services.s3.AmazonS3URI;
 import org.janelia.saalfeldlab.n5.GsonKeyValueN5Reader;
 import org.janelia.saalfeldlab.n5.KeyValueAccess;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -20,17 +21,25 @@ public class CloudUtil
 	//public static String aws_region= "us-east-1";
 	//public static String aws_endpoint = "https://s3.amazonaws.com";
 
-	public static KeyValueAccess getKeyValueAccessForBucket( String bucketUri )
+	public static KeyValueAccess getKeyValueAccessForBucket( String bucketUri, final boolean authenticate)
 	{
-		final N5Reader n5r = new N5Factory().openReader( StorageFormat.N5, bucketUri );
+		final N5Reader n5r;
+		if ( authenticate )
+			n5r = new N5Factory().s3UseCredentials().openReader(StorageFormat.N5, bucketUri);
+		else
+			n5r = new N5Factory().openReader( StorageFormat.N5, bucketUri );
 		final KeyValueAccess kva = ((GsonKeyValueN5Reader)n5r).getKeyValueAccess();
 
 		return kva;
 	}
 
-	public static KeyValueAccess getKeyValueAccessForBucket( ParsedBucket pb )
+	public static KeyValueAccess getKeyValueAccessForBucket( ParsedBucket pb, final boolean authenticate)
 	{
-		final N5Reader n5r = new N5Factory().openReader( StorageFormat.N5, pb.protocol + pb.bucket );
+		final N5Reader n5r;
+		if ( authenticate )
+			n5r = new N5Factory().s3UseCredentials().openReader(StorageFormat.N5, pb.protocol + pb.bucket);
+		else
+			n5r = new N5Factory().openReader( StorageFormat.N5, pb.protocol + pb.bucket );
 		final KeyValueAccess kva = ((GsonKeyValueN5Reader)n5r).getKeyValueAccess();
 
 		return kva;
@@ -60,6 +69,12 @@ public class CloudUtil
 		{
 			// there is an extra path
 			pb.bucket = parent.substring(0,parent.indexOf( "/" ) );
+			if (pb.protocol.startsWith("http") && pb.bucket.endsWith("amazonaws.com") )  // path style amazon s3 uri
+			{   // TODO: It'd be more robust to use the AmazonS3URI class to parse S3 URI-s
+				pb.protocol = pb.protocol + pb.bucket + "/";
+				parent = parent.substring(parent.indexOf( "/" ) + 1, parent.length() );
+				pb.bucket = parent.substring(0,parent.indexOf( "/" ) );
+			}
 			pb.rootDir = parent.substring(parent.indexOf( "/" ) + 1, parent.length() );
 		}
 		else
