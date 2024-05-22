@@ -92,6 +92,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
 
+
 	// TODO: support create custom downsampling pyramids, null is fine for now (used by multiRes later)
 	private int[][] downsamplings;
 
@@ -237,10 +238,11 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		}
 		catch (Exception e ) {}
 
-		final N5Writer driverVolumeWriter = N5Util.createWriter( n5Path, storageType );
+		System.out.println( "Path: " + n5Path );
+		final N5Writer driverVolumeWriter = N5Util.createWriter( n5Path, storageType, cloudAuthenticate );
 
 		System.out.println( "Format being written: " + storageType );
-
+		System.out.println( "n5Dataset: " + n5Dataset );
 		driverVolumeWriter.createDataset(
 				n5Dataset,
 				dimensions,
@@ -314,6 +316,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				anisotropyFactor,
 				minBB,
 				n5Path,
+				cloudAuthenticate,
 				n5Dataset,
 				bdvString,
 				storageType,

@@ -217,7 +217,7 @@ public class Spark {
 		return sparkEnv == null ? null : sparkEnv.executorId();
 	}
 
-	public static void saveSpimData2(final SpimData2 data, final String xmlPath) throws SpimDataException, IOException
+	public static void saveSpimData2(final SpimData2 data, final String xmlPath, final boolean authenticate) throws SpimDataException, IOException
 	{
 		if ( xmlPath.trim().contains( ":/" ) )
 		{
@@ -225,7 +225,7 @@ public class Spark {
 			// saving the XML to s3
 			//
 			final ParsedBucket pb = CloudUtil.parseCloudLink( xmlPath );
-			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( pb );
+			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( pb, authenticate );
 
 			// fist make a copy of the XML and save it to not loose it
 			if ( kva.exists( pb.rootDir + "/" + pb.file ) )
@@ -276,7 +276,7 @@ public class Spark {
 	/**
 	 * @return a new data instance optimized for use within single-threaded Spark tasks.
 	 */
-	public static SpimData2 getSparkJobSpimData2(final String xmlPath)
+	public static SpimData2 getSparkJobSpimData2(final String xmlPath, final boolean authenticate)
 			throws SpimDataException {
 
 		final SpimData2 data;
@@ -284,7 +284,7 @@ public class Spark {
 		if ( xmlPath.contains( ":/" ) )
 		{
 			final ParsedBucket pb = CloudUtil.parseCloudLink( xmlPath );
-			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( pb );
+			final KeyValueAccess kva = CloudUtil.getKeyValueAccessForBucket( pb, authenticate);
 
 			final SAXBuilder sax = new SAXBuilder();
 			Document doc;

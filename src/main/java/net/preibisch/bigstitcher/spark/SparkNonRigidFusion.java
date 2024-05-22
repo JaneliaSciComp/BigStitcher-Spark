@@ -294,7 +294,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		rdd.foreach(
 				gridBlock -> {
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath);
+					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath, cloudAuthenticate);
 
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
 					final Interval fusedBlock =

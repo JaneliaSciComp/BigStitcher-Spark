@@ -47,6 +47,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final String n5Path;
 
+	private final boolean authenticate;
+
 	private final String n5Dataset;
 
 	private final String bdvString;
@@ -71,6 +73,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 			final double anisotropyFactor,
 			final long[] minBB,
 			final String n5Path,
+			final boolean authenticate,
 			final String n5Dataset,
 			final String bdvString,
 			final StorageType storageType,
@@ -86,6 +89,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		this.anisotropyFactor = anisotropyFactor;
 		this.minBB = minBB;
 		this.n5Path = n5Path;
+		this.authenticate = authenticate;
 		this.n5Dataset = n5Dataset;
 		this.bdvString = bdvString;
 		this.storageType = storageType;
@@ -155,7 +159,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		// --------------------------------------------------------
 
 		// custom serialization
-		final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath);
+		final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath, authenticate);
 		final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
 		// If requested, preserve the anisotropy of the data (such that
@@ -190,7 +194,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 		final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
-		final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
+		final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType, authenticate );
 		final ExecutorService prefetchExecutor = Executors.newCachedThreadPool(); //Executors.newFixedThreadPool( N_PREFETCH_THREADS );
 
 		final CellGrid blockGrid = new CellGrid( superBlockSize, blockSize );

@@ -148,7 +148,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 		final JavaRDD<Tuple2<int[][][], Spark.SerializablePairwiseStitchingResult>> rddResults = rdd.map( serializedGroupPair ->
 		{
-			final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath );
+			final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath , cloudAuthenticate);
 			final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
 			final ViewRegistrations vrs = data.getViewRegistrations();
 

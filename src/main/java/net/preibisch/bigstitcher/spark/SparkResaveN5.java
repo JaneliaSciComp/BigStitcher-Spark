@@ -253,7 +253,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 		rdds0.foreach(
 				gridBlock -> {
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath);
+					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath , cloudAuthenticate);
 					final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
 
 					final SetupImgLoader< ? > imgLoader = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );

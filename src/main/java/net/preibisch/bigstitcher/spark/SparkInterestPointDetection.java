@@ -281,7 +281,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// return ViewId, interval, locations, intensities
 		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
 		{
-			final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath );
+			final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath, cloudAuthenticate );
 			final ViewId viewId = Spark.deserializeViewId( serializedInput._1() );
 			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
 

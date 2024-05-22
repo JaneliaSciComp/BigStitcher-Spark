@@ -18,13 +18,16 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 	@Option(names = { "--dryRun" }, description = "perform a 'dry run', i.e. do not save any results (default: false)")
 	protected boolean dryRun = false;
 
+	@Option(names = { "--cloudAuthenticate" }, description = "look for authentication credentials with the cloud backend (default: false)")
+	protected boolean cloudAuthenticate = false;
+
 	@Option(names = "--localSparkBindAddress", description = "specify Spark bind address as localhost")
 	protected boolean localSparkBindAddress = false;
 
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
 		System.out.println( "xml: " + xmlPath);
-		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2(xmlPath);
+		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2(xmlPath, cloudAuthenticate);
 
 		return dataGlobal;
 	}

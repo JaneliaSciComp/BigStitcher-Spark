@@ -224,7 +224,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 			rddResults = rdd.map( serializedPair ->
 			{
-				final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath );
+				final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath , cloudAuthenticate);
 				final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( serializedPair );
 
 				//System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) );
@@ -301,7 +301,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 			rddResults = rdd.map( serializedGroupPair ->
 			{
-				final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath );
+				final SpimData2 data = Spark.getSparkJobSpimData2( xmlPath, cloudAuthenticate );
 				final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
 
 				final ArrayList< ViewId > views = new ArrayList<>();
