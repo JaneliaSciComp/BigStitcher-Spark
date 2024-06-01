@@ -111,14 +111,14 @@ public class Masking
 	private static final float EPSILON = 0.0001f;
 
 	void fill_range(
-			float[] weights,
+			byte[] weights,
 			final int offset,
 			final int length,
 			double[] transformed_start_pos )
 	{
 		final double[] pos = new double[ n ];
 		t.applyInverse( pos, transformed_start_pos );
-		Arrays.fill( weights, offset, offset + length, 1 );
+		Arrays.fill( weights, offset, offset + length, ( byte ) 1 );
 		for ( int d = 0; d < 3; ++d )
 		{
 			final float l0 = ( float ) pos[ d ];
@@ -173,7 +173,7 @@ public class Masking
 	 * @param transform
 	 * @param boundingBox
 	 */
-	static RandomAccessibleInterval< FloatType > transformBlendingRender(
+	static RandomAccessibleInterval< UnsignedByteType > transformBlendingRender(
 			final Interval interval,
 			final float[] border,
 			final AffineTransform3D transform,
@@ -192,7 +192,7 @@ public class Masking
 		final int sy = ( int ) boundingBox.dimension( 1 );
 		final int sz = ( int ) boundingBox.dimension( 2 );
 
-		final float[] weights = new float[ sx * sy * sz ];
+		final byte[] weights = new byte[ sx * sy * sz ];
 		for ( int z = 0; z < sz; ++z )
 		{
 			p[ 2 ] = z;
@@ -204,7 +204,7 @@ public class Masking
 			}
 		}
 
-		return ArrayImgs.floats( weights, sx, sy, sz );
+		return ArrayImgs.unsignedBytes( weights, sx, sy, sz );
 	}
 
 	public static void main( String[] args )
@@ -217,7 +217,7 @@ public class Masking
 		transform.rotate( 1, -0.3 );
 		final Interval boundingBox = Intervals.createMinMax( -20, -20, -20, 30, 30, 30 );
 
-		final RandomAccessibleInterval< FloatType > blend = transformBlendingRender( interval, border, transform, boundingBox );
+		final RandomAccessibleInterval< UnsignedByteType > blend = transformBlendingRender( interval, border, transform, boundingBox );
 		BdvSource s = BdvFunctions.show( blend, "blend" );
 		s.setDisplayRangeBounds( -1, 1 );
 		s.setDisplayRange( 0, 1 );

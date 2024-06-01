@@ -47,6 +47,7 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.blk.Fusion;
+import net.preibisch.bigstitcher.spark.blk.FusionFirstWins;
 import net.preibisch.bigstitcher.spark.blk.N5Helper;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -245,7 +246,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 				else
 					type = new FloatType();
 
-				final RandomAccessibleInterval< NativeType > source = Fusion.fuseVirtual(
+//				final RandomAccessibleInterval< NativeType > source = Fusion.fuseVirtual(
+				final RandomAccessibleInterval< NativeType > source = FusionFirstWins.fuseVirtual(
 						dataLocal,
 						overlappingBlocks.overlappingViews(),
 						fusedBlock,
