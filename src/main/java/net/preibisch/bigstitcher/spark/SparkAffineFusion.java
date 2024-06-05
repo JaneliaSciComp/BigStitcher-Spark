@@ -117,6 +117,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
 	private boolean masks = false;
 
+	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
+	private boolean firstTileWins = false;
+
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
@@ -369,7 +372,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				uint16,
 				minIntensity,
 				range,
-				blockSize ) );
+				blockSize,
+				firstTileWins ) );
 
 		if ( this.downsamplings != null )
 		{

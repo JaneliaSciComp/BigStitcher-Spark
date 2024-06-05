@@ -87,6 +87,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final int[] blockSize;
 
+	private final boolean firstTileWins;
+
 	public WriteSuperBlock(
 			final String xmlPath,
 			final boolean preserveAnisotropy,
@@ -101,7 +103,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 			final boolean uint16,
 			final double minIntensity,
 			final double range,
-			final int[] blockSize )
+			final int[] blockSize,
+			final boolean firstTileWins )
 	{
 		this.xmlPath = xmlPath;
 		this.preserveAnisotropy = preserveAnisotropy;
@@ -117,6 +120,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		this.minIntensity = minIntensity;
 		this.range = range;
 		this.blockSize = blockSize;
+		this.firstTileWins = firstTileWins;
 	}
 
 	/**
@@ -246,14 +250,28 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 				else
 					type = new FloatType();
 
-//				final RandomAccessibleInterval< NativeType > source = Fusion.fuseVirtual(
-				final RandomAccessibleInterval< NativeType > source = FusionFirstWins.fuseVirtual(
-						dataLocal,
-						overlappingBlocks.overlappingViews(),
-						fusedBlock,
-						type,
-						minIntensity,
-						range );
+				final RandomAccessibleInterval< NativeType > source;
+
+				if ( firstTileWins )
+				{
+					source = FusionFirstWins.fuseVirtual(
+							dataLocal,
+							overlappingBlocks.overlappingViews(),
+							fusedBlock,
+							type,
+							minIntensity,
+							range );
+				}
+				else
+				{
+					source = Fusion.fuseVirtual(
+							dataLocal,
+							overlappingBlocks.overlappingViews(),
+							fusedBlock,
+							type,
+							minIntensity,
+							range );
+				}
 
 				N5Helper.saveBlock( source, executorVolumeWriter, n5Dataset, gridPos );
 			}
