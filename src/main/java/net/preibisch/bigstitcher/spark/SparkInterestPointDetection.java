@@ -141,7 +141,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	protected boolean prefetch = false;
 
 
-	@Option(names = {"--maxSpots" }, required = true, description = "limit the number of spots per view (choose the brightest ones), e.g. --maxSpots 10000 (default: NO LIMIT)")
+	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones), e.g. --maxSpots 10000 (default: NO LIMIT)")
 	protected int maxSpots = -1;
 
 	@Option(names = "--blockSize", description = "blockSize for running the interest point detection - at the scale of detection (default: 512,512,128)")
@@ -592,7 +592,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				System.out.println( Group.pvid( viewId ) + ": " + myIpsNewId.size() );
 
-				if ( maxSpots > 0 )
+				if ( maxSpots > 0 && maxSpots < myIpsNewId.size() )
 				{
 					// filter for the brightnest N spots
 					final ArrayList< Pair< Double, InterestPoint > > combinedList = new ArrayList<>();
@@ -609,11 +609,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					for ( int i = 0; i < maxSpots; ++i )
 					{
 						myIntensities.add( combinedList.get( i ).getA() );
-						myIpsNewId.add( combinedList.get( i ).getB() );
+						myIpsNewId.add( new InterestPoint( i, combinedList.get( i ).getB().getL() ) ); // new id's again ...
 					}
-				}
 
-				System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
+					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
+				}
 
 				interestPoints.put(viewId, myIpsNewId);
 
