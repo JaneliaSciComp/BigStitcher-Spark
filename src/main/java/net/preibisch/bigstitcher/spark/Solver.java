@@ -1,3 +1,24 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark;
 
 import java.util.ArrayList;
@@ -99,10 +120,10 @@ public class Solver extends AbstractRegistration
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers, how many times worse than the average error a link needs to be (default: 3.5)")
-	protected double relativeThreshold;
+	protected double relativeThreshold = 3.5;
 
 	@Option(names = { "--absoluteThreshold" }, description = "absoluted error threshold for iterative solver to drop a link in pixels (default: 7.0)")
-	protected double absoluteThreshold;
+	protected double absoluteThreshold = 7.0;
 
 	@Option(names = { "--maxError" }, description = "max error for the solve (default: 5.0)")
 	protected Double maxError = 5.0;

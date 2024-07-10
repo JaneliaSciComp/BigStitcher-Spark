@@ -1,3 +1,24 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark.fusion;
 
 import java.util.ArrayList;
@@ -26,6 +47,7 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.blk.Fusion;
+import net.preibisch.bigstitcher.spark.blk.FusionFirstWins;
 import net.preibisch.bigstitcher.spark.blk.N5Helper;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -65,6 +87,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final int[] blockSize;
 
+	private final boolean firstTileWins;
+
 	public WriteSuperBlock(
 			final String xmlPath,
 			final boolean preserveAnisotropy,
@@ -79,7 +103,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 			final boolean uint16,
 			final double minIntensity,
 			final double range,
-			final int[] blockSize )
+			final int[] blockSize,
+			final boolean firstTileWins )
 	{
 		this.xmlPath = xmlPath;
 		this.preserveAnisotropy = preserveAnisotropy;
@@ -95,6 +120,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		this.minIntensity = minIntensity;
 		this.range = range;
 		this.blockSize = blockSize;
+		this.firstTileWins = firstTileWins;
 	}
 
 	/**
@@ -224,13 +250,28 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 				else
 					type = new FloatType();
 
-				final RandomAccessibleInterval< NativeType > source = Fusion.fuseVirtual(
-						dataLocal,
-						overlappingBlocks.overlappingViews(),
-						fusedBlock,
-						type,
-						minIntensity,
-						range );
+				final RandomAccessibleInterval< NativeType > source;
+
+				if ( firstTileWins )
+				{
+					source = FusionFirstWins.fuseVirtual(
+							dataLocal,
+							overlappingBlocks.overlappingViews(),
+							fusedBlock,
+							type,
+							minIntensity,
+							range );
+				}
+				else
+				{
+					source = Fusion.fuseVirtual(
+							dataLocal,
+							overlappingBlocks.overlappingViews(),
+							fusedBlock,
+							type,
+							minIntensity,
+							range );
+				}
 
 				N5Helper.saveBlock( source, executorVolumeWriter, n5Dataset, gridPos );
 			}

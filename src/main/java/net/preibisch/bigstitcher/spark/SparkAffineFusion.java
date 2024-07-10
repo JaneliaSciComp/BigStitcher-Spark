@@ -1,3 +1,24 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark;
 
 import java.io.IOException;
@@ -95,6 +116,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
 	private boolean masks = false;
+
+	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
+	private boolean firstTileWins = false;
 
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
@@ -309,8 +333,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		}
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
-		// TODO: REMOVE
-		//conf.set("spark.driver.bindAddress", "127.0.0.1");
+
+		if (localSparkBindAddress)
+			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
@@ -348,7 +373,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				uint16,
 				minIntensity,
 				range,
-				blockSize ) );
+				blockSize,
+				firstTileWins ) );
 
 		if ( this.downsamplings != null )
 		{

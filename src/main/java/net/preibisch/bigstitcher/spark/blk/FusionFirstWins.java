@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -60,7 +60,7 @@ import net.imglib2.view.Views;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.fusion.FusionTools;
 
-public class Fusion
+public class FusionFirstWins
 {
 	public static < T extends NativeType< T > > RandomAccessibleInterval< T > fuseVirtual(
 			final AbstractSpimData< ? > spimData,
@@ -107,10 +107,11 @@ public class Fusion
 		// we already filtered the overlapping views
 		// which views to process (use un-altered bounding box and registrations)
 		// (sorted to be able to use the "lowest ViewId" wins strategy)
+		// TODO: make sorted(Comparator) configurable
 		final List< ViewId > viewIdsToProcess = views.stream().sorted().collect( Collectors.toList() );
 
 		final List< TransformedViewBlocks< ? > > images = new ArrayList<>();
-		final List< Blending > blendings = new ArrayList<>();
+		final List< Masking > maskings = new ArrayList<>();
 
 		for ( final ViewId viewId : viewIdsToProcess )
 		{
@@ -135,16 +136,16 @@ public class Fusion
 			// 	final boolean useContentBased = false;
 
 			// instantiate blending if necessary
-			final float[] blending = Util.getArrayFromValue( FusionTools.defaultBlendingRange, 3 );
 			final float[] border = Util.getArrayFromValue( FusionTools.defaultBlendingBorder, 3 );
 
 			// adjust both for z-scaling (anisotropy), downsampling, and registrations itself
-			FusionTools.adjustBlending( viewDescriptions.get( viewId ), blending, border, model );
+			final float[] dummyBlending = new float[ 3 ];
+			FusionTools.adjustBlending( viewDescriptions.get( viewId ), dummyBlending, border, model );
 
-			blendings.add( new Blending( inputImg, border, blending, model ) );
+			maskings.add( new Masking( inputImg, border, model ) );
 		}
 
-		return getFusedRandomAccessibleInterval( boundingBox, images, blendings, type, minIntensity, range );
+		return getFusedRandomAccessibleInterval( boundingBox, images, maskings, type, minIntensity, range );
 	}
 
 	private static class TransformedViewBlocks< T extends NativeType< T > >
@@ -185,12 +186,12 @@ public class Fusion
 	private static < T extends NativeType< T > > RandomAccessibleInterval< T > getFusedRandomAccessibleInterval(
 			final Interval boundingBox,
 			final List< TransformedViewBlocks< ? > > images,
-			final List< Blending > blendings,
+			final List< Masking > maskings,
 			final T type,
 			final double minIntensity,
 			final double range )
 	{
-		final CloseableThreadLocal< FuserConverter< T > > fuserThreadLocal = CloseableThreadLocal.withInitial( () -> new FuserConverter<>( boundingBox, images, blendings, type, minIntensity, range ) );
+		final CloseableThreadLocal< FuserConverter< T > > fuserThreadLocal = CloseableThreadLocal.withInitial( () -> new FuserConverter<>( boundingBox, images, maskings, type, minIntensity, range ) );
 		return new ReadOnlyCachedCellImgFactory().create(
 				boundingBox.dimensionsAsLongArray(),
 				type,
@@ -205,21 +206,28 @@ public class Fusion
 	{
 		// TODO: use arrays instead of lists?
 		private final List< TransformedViewBlocks< ? > > views;
+
 		private final TempArray< float[] >[] imgTempArrays;
+
 		private final float[][] imgBuffers;
 
 		private final long[] boundingBox_min;
-		private final List< Blending > blendings;
+
+		private final List< Masking > maskings;
 
 		private final long[] cell_min;
 
 		private int[] cell_dims;
+
 		private final long[] bb_min;
 
-		private final TempArray< float[] > weightsTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
+		private final TempArray< byte[] > maskTempArray = TempArray.forPrimitiveType( PrimitiveType.BYTE );
+
 		private final TempArray< float[] > intensitiesTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
-		private final TempArray< float[] > sumWeightsTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
-		private final TempArray< float[] > sumIntensityTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
+
+		private final TempArray< byte[] > accMaskTempArray = TempArray.forPrimitiveType( PrimitiveType.BYTE );
+
+		private final TempArray< float[] > accIntensityTempArray = TempArray.forPrimitiveType( PrimitiveType.FLOAT );
 
 		private final double[] pos = new double[ 3 ];
 
@@ -228,7 +236,7 @@ public class Fusion
 		FuserConverter(
 				final Interval boundingBox,
 				final List< TransformedViewBlocks< ? > > views,
-				final List< Blending > blendings,
+				final List< Masking > maskings,
 				final T type, // output type
 				final double minIntensity, // only used if output type is uint8 or uint16
 				final double range ) // only used if output type is uint8 or uint16
@@ -239,8 +247,8 @@ public class Fusion
 			bb_min = new long[ n ];
 
 			this.views = views;
-			this.blendings = blendings;
-			final int numImages = blendings.size();
+			this.maskings = maskings;
+			final int numImages = maskings.size();
 			imgTempArrays = new TempArray[ numImages ];
 			Arrays.setAll( imgTempArrays, i -> TempArray.forPrimitiveType( PrimitiveType.FLOAT ) );
 			imgBuffers = new float[ numImages ][];
@@ -270,10 +278,10 @@ public class Fusion
 			final int sy = cell_dims[ 1 ];
 			final int sz = cell_dims[ 2 ];
 
-			final float[] tmpW = weightsTempArray.get( sx );
+			final byte[] tmpW = maskTempArray.get( sx );
 			final float[] tmpI = intensitiesTempArray.get( sx );
-			final float[] sumW = sumWeightsTempArray.get( sx );
-			final float[] sumI = sumIntensityTempArray.get( sx );
+			final byte[] accW = accMaskTempArray.get( sx );
+			final float[] accI = accIntensityTempArray.get( sx );
 
 			final Object output = cell.getStorageArray();
 			pos[ 0 ] = bb_min[ 0 ];
@@ -284,36 +292,48 @@ public class Fusion
 				{
 					pos[ 1 ] = y + bb_min[ 1 ];
 					final int offset = ( z * sy + y ) * sx;
-					Arrays.fill( sumW, 0 );
-					Arrays.fill( sumI, 0 );
+					Arrays.fill( accW, ( byte ) 0 );
+					Arrays.fill( accI, 0 );
 					for ( int i = 0; i < numImages; i++ )
 					{
 						System.arraycopy( imgBuffers[ i ], offset, tmpI, 0, sx );
-						blendings.get( i ).fill_range( tmpW, 0, sx, pos );
-						accW( sx, tmpW, sumW );
-						accI( sx, tmpW, tmpI, sumI );
+						maskings.get( i ).fill_range( tmpW, 0, sx, pos );
+						if ( acc( sx, tmpW, accW, tmpI, accI ) )
+							break;
 					}
-					fillOutputLine.compute( sumW, sumI, output, offset, sx );
+					fillOutputLine.compute( accI, output, offset, sx );
 				}
 			}
 		}
 
-		private static void accW( final int sx, final float[] tmpW, final float[] sumW )
+		// TODO
+		//   if true is returned we don't have to go on to the next image
+		private static boolean acc(
+				final int sx,
+				final byte[] tmpM,
+				final byte[] accM,
+				final float[] tmpI,
+				final float[] accI )
 		{
+			boolean done = true;
 			for ( int x = 0; x < sx; ++x )
-				sumW[ x ] += tmpW[ x ];
+				if ( accM[ x ] == 0 )
+					if ( tmpM[ x ] == 1 )
+					{
+						accM[ x ] = 1;
+						accI[ x ] = tmpI[ x ];
+					}
+					else
+						done = false;
+			return done;
 		}
 
-		private static void accI( final int sx, final float[] tmpW, final float[] tmpI, final float[] sumI )
-		{
-			for ( int x = 0; x < sx; ++x )
-				sumI[ x ] += tmpW[ x ] * tmpI[ x ];
-		}
 	}
 
 	@FunctionalInterface
-	interface FillOutputLine {
-		void compute( float[] sumW, float[] sumI, Object output, int offset, int length );
+	interface FillOutputLine
+	{
+		void compute( float[] sumI, Object output, int offset, int length );
 
 		static FillOutputLine of(
 				final Object type, // output type
@@ -322,19 +342,19 @@ public class Fusion
 		{
 			if ( type instanceof FloatType )
 			{
-				return (sumW, sumI, output, offset, length) -> normalize( sumW, sumI, offset, length, ( float[] ) output );
+				return ( sumI, output, offset, length ) -> copy( sumI, offset, length, ( float[] ) output );
 			}
 			else if ( type instanceof UnsignedByteType )
 			{
 				final float a = ( float ) ( 1 / range );
 				final float b = ( float ) ( 0.5 - minIntensity / range );
-				return ( sumW, sumI, output, offset, length ) -> normalize_convert_uint8( sumW, sumI, offset, length, ( byte[] ) output, a, b );
+				return ( sumI, output, offset, length ) -> convert_uint8( sumI, offset, length, ( byte[] ) output, a, b );
 			}
 			else if ( type instanceof UnsignedShortType )
 			{
 				final float a = ( float ) ( 1 / range );
 				final float b = ( float ) ( 0.5 - minIntensity / range );
-				return (sumW, sumI, output, offset, length) -> normalize_convert_uint16( sumW, sumI, offset, length, ( short[] ) output, a, b );
+				return ( sumI, output, offset, length ) -> convert_uint16( sumI, offset, length, ( short[] ) output, a, b );
 			}
 			else
 				throw new IllegalArgumentException();
@@ -342,33 +362,22 @@ public class Fusion
 
 	}
 
-	private static void normalize( final float[] sumW, final float[] sumI, final int offset, final int length, final float[] out )
+	//
+	private static void copy( final float[] sumI, final int offset, final int length, final float[] out )
 	{
 		for ( int x = 0; x < length; ++x )
-		{
-			final float w = sumW[ x ];
-			final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-			out[ offset + x ] = value;
-		}
+			out[ offset + x ] = sumI[ x ];
 	}
 
-	private static void normalize_convert_uint8( final float[] sumW, final float[] sumI, final int offset, final int length, final byte[] out, final float a, final float b )
+	private static void convert_uint8( final float[] sumI, final int offset, final int length, final byte[] out, final float a, final float b )
 	{
 		for ( int x = 0; x < length; ++x )
-		{
-			final float w = sumW[ x ];
-			final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-			out[ offset + x ] = ( byte ) ( value * a + b );
-		}
+			out[ offset + x ] = ( byte ) ( sumI[ x ] * a + b );
 	}
 
-	private static void normalize_convert_uint16( final float[] sumW, final float[] sumI, final int offset, final int length, final short[] out, final float a, final float b )
+	private static void convert_uint16( final float[] sumI, final int offset, final int length, final short[] out, final float a, final float b )
 	{
 		for ( int x = 0; x < length; ++x )
-		{
-			final float w = sumW[ x ];
-			final float value = ( w > 0 ) ? sumI[ x ] / w : 0;
-			out[ offset + x ] = ( short ) ( value * a + b );
-		}
+			out[ offset + x ] = ( short ) ( sumI[ x ] * a + b );
 	}
 }

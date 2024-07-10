@@ -132,6 +132,7 @@ echo 'Installing utils ...'
 install_command downsample "net.preibisch.bigstitcher.spark.SparkDownsample"
 install_command clear-interestpoints "net.preibisch.bigstitcher.spark.ClearInterestPoints"
 install_command clear-registrations "net.preibisch.bigstitcher.spark.ClearRegistrations"
+install_command transform-points "net.preibisch.bigstitcher.spark.TransformPoints"
 
 
 if [ $(pwd) == "$INSTALL_DIR" ]; then
