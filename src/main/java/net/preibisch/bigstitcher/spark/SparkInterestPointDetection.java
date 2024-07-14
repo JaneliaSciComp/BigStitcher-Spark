@@ -601,7 +601,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					{
 						final int oldSize = tuple._2().size();
 						filterPoints( tuple._2(), tuple._3(), myMaxSpots );
-						System.out.println( "Filtered interval " + Util.printInterval( tuple._1() ) + " (" + Group.pvid( viewId ) + "): " + oldSize + " >>> " + tuple._2().size() );
+						System.out.println( "Filtered interval (limit=" + myMaxSpots + ") " + Util.printInterval( tuple._1() ) + " (" + Group.pvid( viewId ) + "): " + oldSize + " >>> " + tuple._2().size() );
+					}
+					else
+					{
+						System.out.println( "NOT filtered interval (limit=" + myMaxSpots + ") " + Util.printInterval( tuple._1() ) + " (" + Group.pvid( viewId ) + "): " + tuple._2().size() );
 					}
 
 					interestPointsPerViewId.get( viewId ).add( tuple._2() );
