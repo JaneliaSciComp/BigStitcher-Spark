@@ -25,11 +25,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.generic.sequence.BasicMultiResolutionSetupImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicSetupImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -53,6 +53,18 @@ import net.imglib2.view.MixedTransformView;
 
 public class ViewUtil
 {
+	public static long size( final Interval interval )
+	{
+		if ( interval == null || interval.numDimensions() == 0 )
+			return 0;
+
+		long size = interval.dimension( 0 );
+
+		for ( int d = 1; d < interval.numDimensions(); ++d )
+			size *= interval.dimension( d );
+
+		return size;
+	}
 
 	public static boolean overlaps( final Interval interval1, final Interval interval2 )
 	{
