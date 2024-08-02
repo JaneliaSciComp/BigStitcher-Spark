@@ -156,8 +156,8 @@ public class TestN5Loading
 		//CloudUtil.parseCloudLink( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
 
 		//testLoadInterestPoints();
-		//testBigStitcherGUI( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
-		testBigStitcherGUI( "/Users/preibischs/Documents/Janelia/Projects/BigStitcher/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" );
+		testBigStitcherGUI( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+		//testBigStitcherGUI( "/Users/preibischs/Documents/Janelia/Projects/BigStitcher/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" );
 		//s3://aind-open-data/exaSPIM_708369_2024-04-08_15-20-36_flatfield-correction_2024-04-16_20-33-12/SPIM.ome.zarr
 		//testBDV();
 		//testInterestPoints();
