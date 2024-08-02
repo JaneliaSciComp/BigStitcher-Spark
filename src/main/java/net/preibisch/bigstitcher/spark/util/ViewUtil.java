@@ -1,14 +1,35 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark.util;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.generic.sequence.BasicMultiResolutionSetupImgLoader;
 import mpicbg.spim.data.generic.sequence.BasicSetupImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SetupImgLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -32,6 +53,18 @@ import net.imglib2.view.MixedTransformView;
 
 public class ViewUtil
 {
+	public static long size( final Interval interval )
+	{
+		if ( interval == null || interval.numDimensions() == 0 )
+			return 0;
+
+		long size = interval.dimension( 0 );
+
+		for ( int d = 1; d < interval.numDimensions(); ++d )
+			size *= interval.dimension( d );
+
+		return size;
+	}
 
 	public static boolean overlaps( final Interval interval1, final Interval interval2 )
 	{

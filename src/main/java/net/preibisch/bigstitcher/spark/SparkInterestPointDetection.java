@@ -1,3 +1,24 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark;
 
 import java.io.File;
@@ -21,6 +42,7 @@ import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
+import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransformAffine;
@@ -38,7 +60,9 @@ import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.converter.Converters;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
 import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -50,6 +74,7 @@ import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract;
 import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -116,8 +141,17 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	protected boolean prefetch = false;
 
 
+	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones), e.g. --maxSpots 10000 (default: NO LIMIT)")
+	protected int maxSpots = -1;
+
+	@Option(names = { "--maxSpotsPerOverlap" }, description = "apply the maximum number of spots individually to every overlapping area, needs --overlappingOnly & --maxSpots to be set to work (default: false)")
+	protected boolean maxSpotsPerOverlap = false;
+
 	@Option(names = "--blockSize", description = "blockSize for running the interest point detection - at the scale of detection (default: 512,512,128)")
 	protected String blockSizeString = "512,512,128";
+
+	@Option(names = { "--medianFilter" }, description = "divide by the median filtered image of the given radius prior to interest point detection, e.g. --medianFilter 10")
+	protected Integer medianFilter = null;
 
 
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
@@ -129,6 +163,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Override
 	public Void call() throws Exception
 	{
+		if ( maxSpotsPerOverlap && ( !overlappingOnly || maxSpots <= 0 ) )
+		{
+			System.out.println( "--maxSpotsPerOverlap only works when --overlappingOnly AND --maxSpots is set.");
+			System.exit( 0 );
+		}
+
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
@@ -154,7 +194,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final boolean onlyOverlappingRegions = overlappingOnly;
 		final double combineDistance = SparkInterestPointDetection.combineDistance;
 		final Localization localization = this.localization;
+		final int maxSpots = this.maxSpots;
+		final boolean maxSpotsPerOverlap = this.maxSpotsPerOverlap;
 		final boolean prefetch = this.prefetch;
+		final boolean storeIntensities = this.storeIntensities;
+		final Integer medianFilter = this.medianFilter;
 
 		System.out.println( "label: " + label );
 		System.out.println( "sigma: " + sigma );
@@ -167,12 +211,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "downsampleZ: " + downsampleZ );
 		System.out.println( "overlappingOnly: " + onlyOverlappingRegions );
 		System.out.println( "prefetching: " + prefetch );
+		if ( maxSpots > 0 ) {
+			System.out.println( "maxSpots: " + maxSpots );
+			System.out.println( "maxSpotsPerOverlap: " + maxSpotsPerOverlap );
+		}
 		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
+		System.out.println( "medianFilter: " + medianFilter );
+		System.out.println( "storeIntensities: " + storeIntensities );
 
 		//
 		// assemble all intervals that need to be processed
 		//
 		final ArrayList< Pair< ViewId, Interval > > toProcess = new ArrayList<>();
+
+		long maxIntervalSize = 0;
 
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
@@ -226,8 +278,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						final Interval intersectionBoxes = Intervals.intersect( boundingBox, boundingBoxOther );
 						final Interval intersection = Intervals.intersect( input.getA(), intersectionBoxes ); // make sure it fits (e.g. rounding errors)
 
-						System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
-						System.out.println( "intersection=" + Util.printInterval( intersection ) );
+						final long size = ViewUtil.size( intersection );
+
+						//System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
+						System.out.println( "intersection=" + Util.printInterval( intersection ) + ", size (#px)=" + size );
+
+						maxIntervalSize = Math.max( maxIntervalSize, size );
 
 						allIntervals.add( intersection );
 					}
@@ -244,7 +300,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		}
 
 		//
-		// turn all areas into grids and serializable objects
+		// turn all areas into grids and serializable objects (ViewId, intervalOffset, gridEntry)
 		//
 		final ArrayList< Tuple3<int[], long[], long[][] > > sparkProcess = new ArrayList<>();
 
@@ -272,6 +328,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "Total number of jobs: " + sparkProcess.size() );
 		
 		final SparkConf conf = new SparkConf().setAppName("SparkInterestPointDetection");
+
+		if ( localSparkBindAddress )
+			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
@@ -362,11 +421,26 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				prefetchExecutor.shutdown();
 			}
 
+			final RandomAccessibleInterval inputImage;
+
+			if ( medianFilter != null && medianFilter > 0 )
+			{
+				inputImage = LazyBackgroundSubtract.init(
+						(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
+						new FinalInterval(input.getA()),
+						medianFilter,
+						new int[] {512, 512, 128} );
+			}
+			else
+			{
+				inputImage = input.getA();
+			}
+
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
 
 			@SuppressWarnings("unchecked")
 			final ArrayList< InterestPoint > ips = DoGImgLib2.computeDoG(
-					(RandomAccessible)Views.extendMirrorDouble( input.getA() ), // the entire image, extended to infinity
+					(RandomAccessible)Views.extendMirrorDouble( inputImage ), // the entire image, extended to infinity
 					null, // mask
 					processInterval,
 					dog.sigma,
@@ -393,7 +467,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			final double[] intensities;
 
-			if ( storeIntensities )
+			if ( storeIntensities || maxSpots > 0 )
 			{
 				System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
 
@@ -446,12 +520,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Computed all interest points, statistics:" );
 
-		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap<>();
-		final HashMap< ViewId, List< Double > > intensitiesIPs = new HashMap<>();
-
 		// assemble all interest point intervals per ViewId
 		final HashMap< ViewId, List< List< InterestPoint > > > interestPointsPerViewId = new HashMap<>();
 		final HashMap< ViewId, List< List< Double > > > intensitiesPerViewId = new HashMap<>();
+		final HashMap< ViewId, List< Interval > > intervalsPerViewId = new HashMap<>();
 
 		for ( final Tuple4<int[], long[][], double[][], double[]> tuple : results )
 		{
@@ -463,7 +535,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				interestPointsPerViewId.putIfAbsent(viewId, new ArrayList<>() );
 				interestPointsPerViewId.get( viewId ).add( Spark.deserializeInterestPoints(points) );
 
-				if ( storeIntensities )
+				intervalsPerViewId.putIfAbsent(viewId, new ArrayList<>() );
+				intervalsPerViewId.get( viewId ).add( Spark.deserializeInterval( tuple._2() ) );
+
+				if ( storeIntensities || maxSpots > 0 )
 				{
 					intensitiesPerViewId.putIfAbsent(viewId, new ArrayList<>() );
 					intensitiesPerViewId.get( viewId ).add( DoubleStream.of(tuple._4()).boxed().collect(Collectors.toList() ) );
@@ -471,9 +546,77 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			}
 		}
 
-		// now combine all jobs and fix potential overlap (overlappingOnly)
+		// assemble all ViewIds
 		final ArrayList< ViewId > viewIds = new ArrayList<>( interestPointsPerViewId.keySet() );
 		Collections.sort( viewIds );
+
+		// we need to filter per overlap before combining
+		if ( maxSpotsPerOverlap && maxSpots > 0 )
+		{
+			for ( final ViewId viewId : viewIds )
+			{
+				final List< List< InterestPoint > > ipsList = interestPointsPerViewId.get( viewId );
+				final List< List< Double > > intensitiesList = intensitiesPerViewId.get( viewId );
+				final List< Interval > intervalsList = intervalsPerViewId.get( viewId ); // note: in downsampled coordinates(!)
+
+				// find all intervals of this view, then assign points to it
+				final List< Tuple3< Interval, List< InterestPoint >, List< Double > > > intervalData = new ArrayList<>();
+
+				// for each toProcess block do
+				for ( final Pair< ViewId, Interval > p : toProcess )
+				{
+					if ( p.getA().equals( viewId ) )
+					{
+						final Interval toProcessInterval = p.getB();
+
+						final List< InterestPoint > ipsBlock = new ArrayList<>();
+						final List< Double > intensitiesBlock = new ArrayList<>();
+
+						// figure out which computed blockIntervals fall into this toProcessInterval
+						for ( int l = 0; l < ipsList.size(); ++l )
+						{
+							final Interval blockInterval = intervalsList.get( l );
+
+							if ( Intervals.contains( toProcessInterval, blockInterval ) )
+							{
+								ipsBlock.addAll( ipsList.get( l ) );
+								intensitiesBlock.addAll( intensitiesList.get( l ) );
+							}
+						}
+
+						intervalData.add( new Tuple3<>( toProcessInterval, ipsBlock, intensitiesBlock ) );
+					}
+				}
+
+				// to later put back into interestPointsPerViewId and intensitiesPerViewId
+				interestPointsPerViewId.get( viewId ).clear();
+				intensitiesPerViewId.get( viewId ).clear();
+
+				// now filter each interval of each view
+				for ( final Tuple3< Interval, List< InterestPoint >, List< Double > > tuple : intervalData )
+				{
+					final int myMaxSpots = (int)Math.round( maxSpots * ( (double)ViewUtil.size( tuple._1() ) /(double)maxIntervalSize ) );
+
+					if ( myMaxSpots > 0 && myMaxSpots < tuple._2().size() )
+					{
+						final int oldSize = tuple._2().size();
+						filterPoints( tuple._2(), tuple._3(), myMaxSpots );
+						System.out.println( "Filtered interval (limit=" + myMaxSpots + ") " + Util.printInterval( tuple._1() ) + " (" + Group.pvid( viewId ) + "): " + oldSize + " >>> " + tuple._2().size() );
+					}
+					else
+					{
+						System.out.println( "NOT filtered interval (limit=" + myMaxSpots + ") " + Util.printInterval( tuple._1() ) + " (" + Group.pvid( viewId ) + "): " + tuple._2().size() );
+					}
+
+					interestPointsPerViewId.get( viewId ).add( tuple._2() );
+					intensitiesPerViewId.get( viewId ).add( tuple._3() );
+				}
+			}
+		}
+
+		// now combine all jobs and fix potential overlap (overlappingOnly)
+		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap<>();
+		final HashMap< ViewId, List< Double > > intensitiesIPs = new HashMap<>();
 
 		for ( final ViewId viewId : viewIds )
 		{
@@ -483,7 +626,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final List< List< InterestPoint > > ipsList = interestPointsPerViewId.get( viewId );
 			final List< List< Double > > intensitiesList;
 
-			if ( storeIntensities )
+			if ( storeIntensities || maxSpots > 0 )
 				intensitiesList = intensitiesPerViewId.get( viewId );
 			else
 				intensitiesList = null;
@@ -494,7 +637,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				final List< InterestPoint > ips = ipsList.get( l );
 				final List< Double > intensities;
 
-				if ( storeIntensities )
+				if ( storeIntensities || maxSpots > 0 )
 					intensities = intensitiesList.get( l );
 				else
 					intensities = null;
@@ -503,7 +646,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				{
 					myIps.addAll( ips );
 
-					if ( storeIntensities )
+					if ( storeIntensities || maxSpots > 0 )
 						myIntensities.addAll( intensities );
 				}
 				else
@@ -520,7 +663,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						{
 							myIps.add( ip );
 
-							if ( storeIntensities )
+							if ( storeIntensities || maxSpots > 0 )
 								myIntensities.add( intensities.get( i ) );
 						}
 					}
@@ -529,18 +672,43 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( myIps.size() > 0 )
 			{
-				// we need to sort and assign new ids since order is assumed when loading corresponding interest points, and we will have duplicate ids
+				// we need to sort and assign new ids since order is assumed when loading corresponding interest points, and we will have duplicate ids otherwise
 				final ArrayList< InterestPoint > myIpsNewId = new ArrayList<>();
 
 				for ( int id = 0; id < myIps.size(); ++id )
 					myIpsNewId.add( new InterestPoint( id, myIps.get( id ).getL() ) );
 
+				System.out.println( Group.pvid( viewId ) + ": " + myIpsNewId.size() );
+
+				if ( !maxSpotsPerOverlap && maxSpots > 0 && maxSpots < myIpsNewId.size() )
+				{
+					filterPoints( myIpsNewId, myIntensities, maxSpots );
+					/*
+					// filter for the brightnest N spots
+					final ArrayList< Pair< Double, InterestPoint > > combinedList = new ArrayList<>();
+
+					for ( int i = 0; i < myIps.size(); ++i )
+						combinedList.add( new ValuePair<Double, InterestPoint>(myIntensities.get( i ), myIpsNewId.get( i )));
+
+					// sort from large to small
+					Collections.sort(combinedList, (a,b) -> b.getA().compareTo( a.getA() ) );
+
+					myIpsNewId.clear();
+					myIntensities.clear();
+
+					for ( int i = 0; i < maxSpots; ++i )
+					{
+						myIntensities.add( combinedList.get( i ).getA() );
+						myIpsNewId.add( new InterestPoint( i, combinedList.get( i ).getB().getL() ) ); // new id's again ...
+					}
+					*/
+					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
+				}
+
 				interestPoints.put(viewId, myIpsNewId);
 
 				if ( storeIntensities )
 					intensitiesIPs.put(viewId, myIntensities );
-
-				System.out.println( Group.pvid( viewId ) + ": " + myIpsNewId.size() );
 			}
 			else
 			{
@@ -623,6 +791,30 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "Done ..." );
 
 		return null;
+	}
+
+	public static void filterPoints(
+			final List< InterestPoint > myIps,
+			final List< Double > myIntensities,
+			final int maxSpots )
+	{
+		// filter for the brightnest N spots
+		final ArrayList< Pair< Double, InterestPoint > > combinedList = new ArrayList<>();
+
+		for ( int i = 0; i < myIps.size(); ++i )
+			combinedList.add( new ValuePair<Double, InterestPoint>(myIntensities.get( i ), myIps.get( i )));
+
+		// sort from large to small
+		Collections.sort(combinedList, (a,b) -> b.getA().compareTo( a.getA() ) );
+
+		myIps.clear();
+		myIntensities.clear();
+
+		for ( int i = 0; i < maxSpots; ++i )
+		{
+			myIntensities.add( combinedList.get( i ).getA() );
+			myIps.add( new InterestPoint( i, combinedList.get( i ).getB().getL() ) ); // new id's again ...
+		}
 	}
 
 	// TODO: this has been pushed up to the multiview-reconstruction code, use new version

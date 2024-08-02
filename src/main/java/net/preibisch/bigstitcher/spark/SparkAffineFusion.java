@@ -1,3 +1,24 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark;
 
 import java.io.IOException;
@@ -23,6 +44,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
+import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Grid;
@@ -91,6 +113,15 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
+
+	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
+	private boolean masks = false;
+
+	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
+	private boolean firstTileWins = false;
+
+	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
+	private String maskOffset = "0.0,0.0,0.0";
 
 	// TODO: support create custom downsampling pyramids, null is fine for now (used by multiRes later)
 	private int[][] downsamplings;
@@ -162,6 +193,10 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			System.out.println( "Fusing to FLOAT32" );
 			dataType = DataType.FLOAT32;
 		}
+
+		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
+		if ( masks )
+			System.out.println( "Fusing ONLY MASKS! Mask offset: " + Util.printCoordinates( maskOff ) );
 
 		//
 		// final variables for Spark
@@ -308,7 +343,23 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
 		final long time = System.currentTimeMillis();
-		rdd.foreach( new WriteSuperBlock(
+
+		if ( masks )
+			rdd.foreach( new WriteSuperBlockMasks(
+					xmlPath,
+					preserveAnisotropy,
+					anisotropyFactor,
+					minBB,
+					n5Path,
+					n5Dataset,
+					storageType,
+					serializedViewIds,
+					uint8,
+					uint16,
+					maskOff,
+					blockSize ) );
+		else
+			rdd.foreach( new WriteSuperBlock(
 				xmlPath,
 				preserveAnisotropy,
 				anisotropyFactor,
@@ -322,7 +373,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				uint16,
 				minIntensity,
 				range,
-				blockSize ) );
+				blockSize,
+				firstTileWins ) );
 
 		if ( this.downsamplings != null )
 		{

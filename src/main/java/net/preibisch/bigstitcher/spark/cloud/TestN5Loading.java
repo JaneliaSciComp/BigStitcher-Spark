@@ -1,3 +1,24 @@
+/*-
+ * #%L
+ * Spark-based parallel BigStitcher project.
+ * %%
+ * Copyright (C) 2021 - 2024 Developers.
+ * %%
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, either version 2 of the
+ * License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public
+ * License along with this program.  If not, see
+ * <http://www.gnu.org/licenses/gpl-2.0.html>.
+ * #L%
+ */
 package net.preibisch.bigstitcher.spark.cloud;
 
 import java.io.IOException;
@@ -23,6 +44,11 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Util;
+
+import bdv.ViewerImgLoader;
+import ij.ImageJ;
+import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -34,6 +60,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists
 
 public class TestN5Loading
 {
+	/*
 	public static <T extends NativeType<T> & RealType<T>> void testBDV() throws IOException, URISyntaxException
 	{
 		final N5Reader n5 = new N5Factory().openReader("s3://janelia-bigstitcher-spark/Stitching/dataset.n5");
@@ -107,7 +134,7 @@ public class TestN5Loading
 
 		System.out.println( "Done.");
 	}
-
+	*/
 	public static void testBigStitcherGUI( final String xml ) throws SpimDataException
 	{
 		new ImageJ();
@@ -126,7 +153,7 @@ public class TestN5Loading
 
 	public static void main( String[] args ) throws IOException, URISyntaxException, SpimDataException
 	{
-		CloudUtil.parseCloudLink( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
+		//CloudUtil.parseCloudLink( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
 
 		//testLoadInterestPoints();
 		//testBigStitcherGUI( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );

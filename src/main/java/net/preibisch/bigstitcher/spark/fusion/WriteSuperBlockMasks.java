@@ -21,33 +21,32 @@
  */
 package net.preibisch.bigstitcher.spark.fusion;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import org.apache.spark.api.java.function.VoidFunction;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 
-import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.Cursor;
+import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.img.cell.CellGrid;
+import net.imglib2.converter.Converters;
+import net.imglib2.img.Img;
+import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
-import net.preibisch.bigstitcher.spark.blk.Fusion;
-import net.preibisch.bigstitcher.spark.blk.FusionFirstWins;
+import net.imglib2.view.IntervalView;
+import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.blk.N5Helper;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -55,9 +54,10 @@ import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 
-public class WriteSuperBlock implements VoidFunction< long[][] >
+public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 {
-	private static final long serialVersionUID = 4185504467908084954L;
+
+	private static final long serialVersionUID = 1346166310488822467L;
 
 	private final String xmlPath;
 
@@ -71,8 +71,6 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final String n5Dataset;
 
-	private final String bdvString;
-
 	private final StorageType storageType;
 
 	private final int[][] serializedViewIds;
@@ -81,30 +79,23 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final boolean uint16;
 
-	private final double minIntensity;
-
-	private final double range;
+	private final double[] maskOffset;
 
 	private final int[] blockSize;
 
-	private final boolean firstTileWins;
-
-	public WriteSuperBlock(
+	public WriteSuperBlockMasks(
 			final String xmlPath,
 			final boolean preserveAnisotropy,
 			final double anisotropyFactor,
 			final long[] minBB,
 			final String n5Path,
 			final String n5Dataset,
-			final String bdvString,
 			final StorageType storageType,
 			final int[][] serializedViewIds,
 			final boolean uint8,
 			final boolean uint16,
-			final double minIntensity,
-			final double range,
-			final int[] blockSize,
-			final boolean firstTileWins )
+			final double[] maskOffset,
+			final int[] blockSize )
 	{
 		this.xmlPath = xmlPath;
 		this.preserveAnisotropy = preserveAnisotropy;
@@ -112,46 +103,12 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		this.minBB = minBB;
 		this.n5Path = n5Path;
 		this.n5Dataset = n5Dataset;
-		this.bdvString = bdvString;
 		this.storageType = storageType;
 		this.serializedViewIds = serializedViewIds;
 		this.uint8 = uint8;
 		this.uint16 = uint16;
-		this.minIntensity = minIntensity;
-		this.range = range;
+		this.maskOffset = maskOffset;
 		this.blockSize = blockSize;
-		this.firstTileWins = firstTileWins;
-	}
-
-	/**
-	 * Find all views among the given {@code viewIds} that overlap the given {@code interval}.
-	 * The image interval of each view is transformed into world coordinates
-	 * and checked for overlap with {@code interval}, with a conservative
-	 * extension of 2 pixels in each direction.
-	 *
-	 * @param spimData contains bounds and registrations for all views
-	 * @param viewIds which views to check
-	 * @param interval interval in world coordinates
-	 * @return views that overlap {@code interval}
-	 */
-	public static List<ViewId> findOverlappingViews(
-			final SpimData spimData,
-			final List<ViewId> viewIds,
-			final Interval interval )
-	{
-		final List< ViewId > overlapping = new ArrayList<>();
-
-		// expand to be conservative ...
-		final Interval expandedInterval = Intervals.expand( interval, 2 );
-
-		for ( final ViewId viewId : viewIds )
-		{
-			final Interval bounds = ViewUtil.getTransformedBoundingBox( spimData, viewId );
-			if ( ViewUtil.overlaps( expandedInterval, bounds ) )
-				overlapping.add( viewId );
-		}
-
-		return overlapping;
 	}
 
 	@Override
@@ -172,16 +129,13 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		// Note, that the block that is rendered may cover multiple output grid cells.
 		final long[] outputGridOffset = gridBlock[ 2 ];
 
-
-
-
 		// --------------------------------------------------------
 		// initialization work that is happening in every job,
 		// independent of gridBlock parameters
 		// --------------------------------------------------------
 
 		// custom serialization
-		final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlPath);
+		final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlPath);
 		final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
 		// If requested, preserve the anisotropy of the data (such that
@@ -205,8 +159,6 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 			}
 		}
 
-
-		final long[] gridPos = new long[ n ];
 		final long[] fusedBlockMin = new long[ n ];
 		final long[] fusedBlockMax = new long[ n ];
 		final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
@@ -214,72 +166,70 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		// pre-filter views that overlap the superBlock
 		Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
 		Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
-		final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
+
+		final List< ViewId > overlappingViews = WriteSuperBlock.findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
 		final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
-		final ExecutorService prefetchExecutor = Executors.newCachedThreadPool(); //Executors.newFixedThreadPool( N_PREFETCH_THREADS );
 
-		final CellGrid blockGrid = new CellGrid( superBlockSize, blockSize );
-		final int numCells = ( int ) Intervals.numElements( blockGrid.getGridDimensions() );
-		for ( int gridIndex = 0; gridIndex < numCells; ++gridIndex )
+		final Img<UnsignedByteType> img = ArrayImgs.unsignedBytes( fusedBlock.dimensionsAsLongArray() );
+		final RandomAccessibleInterval<UnsignedByteType> block = Views.translate( img, fusedBlockMin );
+
+		for ( final ViewId viewId : overlappingViews )
 		{
-			blockGrid.getCellGridPositionFlat( gridIndex, gridPos );
-			blockGrid.getCellInterval( gridPos, fusedBlockMin, fusedBlockMax );
+			final Cursor<UnsignedByteType> c = Views.iterable( block ).localizingCursor();
+			final double[] l = new double[ 3 ];
 
-			for ( int d = 0; d < n; ++d )
+			final Interval dim = new FinalInterval( ViewUtil.getDimensions( dataLocal, viewId ) );
+			final ViewRegistration vr = ViewUtil.getViewRegistration( dataLocal, viewId );
+			final AffineTransform3D model = vr.getModel();
+
+			final double[] min = new double[ 3 ];
+			final double[] max = new double[ 3 ];
+
+			Arrays.setAll( min, d -> dim.min( d ) - maskOffset[ d ] );
+			Arrays.setAll( max, d -> dim.max( d ) + maskOffset[ d ] );
+
+A:			while ( c.hasNext() )
 			{
-				gridPos[ d ] += outputGridOffset[ d ];
-				fusedBlockMin[ d ] += superBlockOffset[ d ];
-				fusedBlockMax[ d ] += superBlockOffset[ d ];
-			}
-			// gridPos is now the grid coordinate in the N5 output
+				final UnsignedByteType t = c.next();
 
-			// determine which Cells and Views we need to compute the fused block
-			final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+				if ( t.get() > 0 )
+					continue;
 
-			if ( overlappingBlocks.overlappingViews().isEmpty() )
-				continue;
+				c.localize(l);
+				model.applyInverse(l, l);
 
-			try ( AutoCloseable prefetched = overlappingBlocks.prefetch( prefetchExecutor ) )
-			{
-				NativeType type;
-				if ( uint8 )
-					type = new UnsignedByteType();
-				else if ( uint16 )
-					type = new UnsignedShortType();
-				else
-					type = new FloatType();
+				for ( int d = 0; d < 3; ++d )
+					if ( l[ d ] < min[ d ] || l[ d ] > max[ d ] )
+						continue A;
 
-				final RandomAccessibleInterval< NativeType > source;
-
-				if ( firstTileWins )
-				{
-					source = FusionFirstWins.fuseVirtual(
-							dataLocal,
-							overlappingBlocks.overlappingViews(),
-							fusedBlock,
-							type,
-							minIntensity,
-							range );
-				}
-				else
-				{
-					source = Fusion.fuseVirtual(
-							dataLocal,
-							overlappingBlocks.overlappingViews(),
-							fusedBlock,
-							type,
-							minIntensity,
-							range );
-				}
-
-				N5Helper.saveBlock( source, executorVolumeWriter, n5Dataset, gridPos );
+				t.set( 255 );
 			}
 		}
-		prefetchExecutor.shutdown();
 
-		// not HDF5
-		if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
-			executorVolumeWriter.close();
+		if ( uint8 )
+		{
+			N5Utils.saveBlock(img, executorVolumeWriter, n5Dataset, gridBlock[2]);
+		}
+		else if ( uint16 )
+		{
+			final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
+					Converters.convertRAI(
+							img,
+							(i, o) -> o.setInteger( i.get() > 0 ? 65535 : 0 ),
+							new UnsignedShortType());
+
+			N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
+		}
+		else
+		{
+			final RandomAccessibleInterval< FloatType > sourceFloat =
+					Converters.convertRAI(
+							img,
+							(i, o) -> o.set( i.get() > 0 ? 1.0f : 0.0f ),
+							new FloatType());
+
+			N5Utils.saveBlock(sourceFloat, executorVolumeWriter, n5Dataset, gridBlock[2]);
+		}
 	}
 }
