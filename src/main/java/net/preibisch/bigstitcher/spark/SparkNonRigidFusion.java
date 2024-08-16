@@ -60,6 +60,7 @@ import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
+import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
@@ -379,8 +380,6 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 					final double alpha = 1.0;
 					final boolean virtualGrid = false;
 
-					final boolean useBlending = true;
-					final boolean useContentBased = false;
 					final boolean displayDistances = false;
 
 					final ExecutorService service = new SequentialExecutorService();
@@ -391,8 +390,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 									viewsToFuse,
 									viewsToUse,
 									labels,
-									useBlending,
-									useContentBased,
+									FusionType.AVG_BLEND,
 									displayDistances,
 									controlPointDistance,
 									alpha,
