@@ -59,6 +59,9 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	public enum TransformationModel { TRANSLATION, RIGID, AFFINE };
 	public enum RegularizationModel { NONE, IDENTITY, TRANSLATION, RIGID, AFFINE };
 
+	@Option(names = { "-l", "--label" }, required = true, description = "label of the interest points used for registration, multiple can be specified (e.g. -l beads -l beads2)")
+	protected ArrayList< String > labels = null;
+
 	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
 	protected RegistrationType registrationTP = RegistrationType.TIMEPOINTS_INDIVIDUALLY;
 
