@@ -52,7 +52,6 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ba
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools;
@@ -75,15 +74,14 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
+import scala.Tuple3;
+import scala.Tuple4;
 
 public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
 	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP };
-
-	@Option(names = { "-l", "--label" }, required = true, description = "label of the interest points used for registration (e.g. beads)")
-	protected String label = null;
 
 	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
 	protected Method registrationMethod = null;
@@ -96,6 +94,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "-n", "--numNeighbors" }, description = "the number of neighoring points used to build the local descriptor, only supported by PRECISE_TRANSLATION (default: 3)")
 	protected Integer numNeighbors = 3;
+
+	@Option(names = { "--limitSearch" }, description = "limit the search radius when performing descriptor matching, only applicable for PRECISE_TRANSLATION (default: no limit, all-to-all)")
+	protected Double limitSearch = null;
+
+	@Option(names = { "--matchAcrossLabels" }, description = "if more than one label is specified, allow to match across labels (default: false)")
+	protected boolean matchAcrossLabels = false;
 
 	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewIds and label before adding new ones (default: false)")
 	protected boolean clearCorrespondences = false;
@@ -190,17 +194,24 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, regularizationLambda).getClass().getSimpleName() );
 
-		final HashMap< ViewId, String > labelMapGlobal = new HashMap<>();
+		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = new HashMap<>();
+		final HashMap< String, Double > map = new HashMap<>();
+		for ( final String label : labels )
+			map.put( label, 1.0 ); // weights only matter for global opt
+
 		viewIdsGlobal.forEach( viewId ->
 		{
 			// make sure the label exists for all views that should be processed
-			if ( dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ) == null )
+			for ( final String label : labels )
 			{
-				System.out.println( "Error, label '" + label + "' does for exist for ViewId " + Group.pvid( viewId ) );
-				System.exit( 1 );
+				if ( dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ) == null )
+				{
+					System.out.println( "Error, label '" + label + "' does for exist for ViewId " + Group.pvid( viewId ) );
+					System.exit( 1 );
+				}
 			}
 
-			labelMapGlobal.put( viewId, label );
+			labelMapGlobal.put( viewId, map );
 		});
 
 		// clear all correspondences if wanted
@@ -211,7 +222,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 
 		final String xmlPath = this.xmlPath;
-		final String label = this.label;
+		final ArrayList< String > labels = new ArrayList<>( this.labels );
 		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
@@ -228,12 +239,13 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel = this.regularizationModel;
 		final double lambda = this.regularizationLambda;
+		final boolean matchAcrossLabels = this.matchAcrossLabels;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, int[][] > > > rddResults;
+		final JavaRDD< ArrayList< Tuple4< ArrayList< PointMatchGeneric< InterestPoint > >, int[][], String, String > > > rddResults;
 
 		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
 		{
@@ -241,25 +253,31 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			setup.getPairs().forEach( pair -> System.out.println( "\t" + Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) ) );
 			System.out.println( "In total: " + setup.getPairs().size() + " pair(s).");
 
-			final JavaRDD<int[][]> rdd = sc.parallelize( Spark.serializeViewIdPairsForRDD( setup.getPairs() ) );
+			// parallelize across labels as well, not only views; but it's hidden in computePairs() << we just ignore it sending a specific combination in
+			final List<Pair<ViewId, ViewId>> pairs = setup.getPairs();
+
+			final JavaRDD<Tuple3<int[][], String, String>> rdd =
+					sc.parallelize( Spark.serializeViewIdPairsWithLabelsForRDD( pairs, labels, matchAcrossLabels ) );
 
 			rddResults = rdd.map( serializedPair ->
 			{
 				final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
-				final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( serializedPair );
+				final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( serializedPair._1() );
+				final String labelA = serializedPair._2();
+				final String labelB = serializedPair._3();
 
 				//System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) );
 
-				final ArrayList< ViewId > views = new ArrayList<>();
-				views.add( pair.getA() );
-				views.add( pair.getB() );
+				final ArrayList< ViewId > views = new ArrayList<>( Arrays.asList( pair.getA(), pair.getB() ) );
 
-				final HashMap< ViewId, String > labelMap = new HashMap<>();
-				labelMap.put( pair.getA(), label);
-				labelMap.put( pair.getB(), label);
+				final HashMap< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
 
-				// load & transform all interest points
-				final Map< ViewId, List< InterestPoint > > interestpoints =
+				// load only the one label per ViewId
+				labelMap.compute( pair.getA(), (k,v) -> { v = new HashMap<>(); v.put( labelA, 1.0 ); return v; } );
+				labelMap.compute( pair.getB(), (k,v) -> { v = new HashMap<>(); v.put( labelB, 1.0 ); return v; } );
+
+				// load & transform all interest points (should be exactly one entry per ViewId
+				final Map< ViewId, HashMap< String, List< InterestPoint > > > interestpoints =
 						TransformationTools.getAllTransformedInterestPoints(
 							views,
 							data.getViewRegistrations().getViewRegistrations(),
@@ -274,11 +292,14 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
 
 					System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": Remaining interest points for alignment: " );
-					for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
-						System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": " + element.getKey() + ": " + element.getValue().size() );
-				}
 
-				final ExecutorService service = Threads.createFixedExecutorService( 1 );
+					for ( final Entry< ViewId, HashMap< String, List< InterestPoint > > > element: interestpoints.entrySet() )
+						for ( final Entry< String, List< InterestPoint > > subElement : element.getValue().entrySet() )
+							System.out.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
+
+					//for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
+					//	System.out.println( Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) + ": " + element.getKey() + ": " + element.getValue().size() );
+				}
 
 				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
 				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
@@ -290,21 +311,33 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						numNeighbors,
 						redundancy,
 						(float)ratioOfDistance,
+						limitSearch != null && Double.isFinite( limitSearch ) && limitSearch > 0,
+						limitSearch,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC);
 
 				// compute all pairwise matchings
-				final PairwiseResult<InterestPoint> result =
-						MatcherPairwiseTools.computePairs( 
+				final ExecutorService service = Threads.createFixedExecutorService( 1 );
+
+				final List<Pair<Pair<ViewId, ViewId>, PairwiseResult<InterestPoint>>> results = MatcherPairwiseTools.computePairs(
 								new ArrayList<>( Arrays.asList( pair ) ),
 								interestpoints,
 								matcher,
-								service ).get( 0 ).getB();
+								matchAcrossLabels,
+								service );
+
+				final PairwiseResult<InterestPoint> result = results.get( 0 ).getB();// should be exactly 1 entry
 
 				service.shutdown();
 
-				return new ArrayList<>( Arrays.asList( new Tuple2<>( new ArrayList<>( result.getInliers() ), serializedPair ) ) );
+				if ( results.size() > 1 )
+					throw new RuntimeException( "More than one result was produced, that's a bug, please report." );
+
+				if ( !result.getLabelA().equals( labelA ) ) throw new RuntimeException( "Label mismatch: " + result.getLabelA() + " != " + labelA);
+				if ( !result.getLabelB().equals( labelB ) ) throw new RuntimeException( "Label mismatch: " + result.getLabelB() + " != " + labelB);
+
+				return new ArrayList<>( Arrays.asList( new Tuple4<>( new ArrayList<>( result.getInliers() ), serializedPair._1(), labelA, labelB ) ) );
 			});
 		}
 		else
@@ -318,22 +351,36 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			groupedPairs.forEach( pair -> System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() ) );
 			System.out.println( "In total: " + groupedPairs.size() + " pair(s).");
 
-			final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ) );
+			// parallelize across labels as well, not only views; but it's hidden in computePairs(); we simply provide single pairs of groups/labels to compare
+			final JavaRDD<Tuple3<int[][][], String, String>> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsWithLabelsForRDD( groupedPairs, labels, matchAcrossLabels ) );
 
 			rddResults = rdd.map( serializedGroupPair ->
 			{
 				final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
-				final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
+				final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair._1() );
+				final String labelA = serializedGroupPair._2();
+				final String labelB = serializedGroupPair._3();
 
 				final ArrayList< ViewId > views = new ArrayList<>();
 				views.addAll( pair.getA().getViews() );
 				views.addAll( pair.getB().getViews() );
 
-				final HashMap< ViewId, String > labelMap = new HashMap<>();
-				views.forEach( v -> labelMap.put( v, label) );
+				final HashMap< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
+
+				// load only the one label per ViewId
+				for ( final ViewId vA : pair.getA().getViews() )
+					labelMap.compute( vA, (k,v) -> { v = new HashMap<>(); v.put( labelA, 1.0 ); return v; } );
+
+				for ( final ViewId vB : pair.getB().getViews() )
+					labelMap.compute( vB, (k,v) -> { v = new HashMap<>(); v.put( labelB, 1.0 ); return v; } );
+
+				//final HashMap< String, Double > mapL = new HashMap<>();
+				//for ( final String label : labels )
+				//	mapL.put( label, 1.0 ); // weights only matter for global opt
+				//views.forEach( v -> labelMap.put( v, mapL) );
 
 				// load & transform all interest points
-				final Map< ViewId, List< InterestPoint > > interestpoints =
+				final Map< ViewId, HashMap< String, List< InterestPoint > > > interestpoints =
 						TransformationTools.getAllTransformedInterestPoints(
 							views,
 							data.getViewRegistrations().getViewRegistrations(),
@@ -353,11 +400,16 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
 
 					System.out.println( pair.getA() + " <=> " + pair.getB() + ": Remaining interest points for alignment: " );
-					for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
-						System.out.println( pair.getA() + " <=> " + pair.getB() + ": " + element.getKey() + ": " + element.getValue().size() );
+
+					for ( final Entry< ViewId, HashMap< String, List< InterestPoint > > > element: interestpoints.entrySet() )
+						for ( final Entry< String, List< InterestPoint > > subElement : element.getValue().entrySet() )
+							System.out.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
+
+					//for ( final Entry< ViewId, List< InterestPoint > > element: interestpoints.entrySet() )
+					//	System.out.println( pair.getA() + " <=> " + pair.getB() + ": " + element.getKey() + ": " + element.getValue().size() );
 				}
 
-				final Map< Group< ViewId >, List< GroupedInterestPoint< ViewId > > > groupedInterestpoints = new HashMap<>();
+				final Map< Group< ViewId >, HashMap< String, List< GroupedInterestPoint< ViewId > > > > groupedInterestpoints = new HashMap<>();
 
 				final InterestPointGroupingMinDistance< ViewId > ipGrouping 
 						= new InterestPointGroupingMinDistance<>( interestPointMergeDistance, interestpoints );
@@ -373,23 +425,39 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
 				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
-				final MatcherPairwise matcher = createMatcherInstance(
+				final MatcherPairwise< GroupedInterestPoint< ViewId > > matcher = createMatcherInstance(
 						rp,
 						registrationMethod,
 						model,
 						numNeighbors,
 						redundancy,
 						(float)ratioOfDistance,
+						limitSearch != null && Double.isFinite( limitSearch ) && limitSearch > 0,
+						limitSearch,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC);
 
+				// compute matching
+				final ExecutorService service = Threads.createFixedExecutorService( 1 );
+
 				final List< Pair< Pair< Group< ViewId >, Group< ViewId > >, PairwiseResult< GroupedInterestPoint< ViewId > > > > resultGroup =
-						MatcherPairwiseTools.computePairs( new ArrayList<>( Arrays.asList( pair ) ), groupedInterestpoints, matcher );
+						MatcherPairwiseTools.computePairs( new ArrayList<>( Arrays.asList( pair ) ), groupedInterestpoints, matcher, matchAcrossLabels, service );
+
+				service.shutdown();
+
+				if ( resultGroup.size() > 1 )
+					throw new RuntimeException( "More than one result was produced, that's a bug, please report." );
+
+				if ( !resultGroup.get( 0 ).getB().getLabelA().equals( labelA ) )
+					throw new RuntimeException( "Label mismatch: " + resultGroup.get( 0 ).getB().getLabelA() + " != " + labelA);
+
+				if ( !resultGroup.get( 0 ).getB().getLabelB().equals( labelB ) )
+					throw new RuntimeException( "Label mismatch: " + resultGroup.get( 0 ).getB().getLabelB() + " != " + labelB);
 
 				final HashMap< Pair< ViewId, ViewId >, ArrayList<PointMatchGeneric<InterestPoint>> > mapResults = new HashMap<>();
 
-				for ( final PointMatchGeneric<GroupedInterestPoint<ViewId>> pm : resultGroup.get( 0 ).getB().getInliers() )
+				for ( final PointMatchGeneric<GroupedInterestPoint<ViewId>> pm : resultGroup.get( 0 ).getB().getInliers() )//should be exactly 1
 				{
 					GroupedInterestPoint<ViewId> p1 = pm.getPoint1();
 					GroupedInterestPoint<ViewId> p2 = pm.getPoint2();
@@ -417,7 +485,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					}
 				}
 
-				final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>> resultsLocal = new ArrayList<>();
+				final ArrayList<Tuple4<ArrayList<PointMatchGeneric<InterestPoint>>, int[][], String, String>> resultsLocal = new ArrayList<>();
 
 				System.out.println( pair.getA() + " <=> " + pair.getB() + ": The following correspondences were found per ViewId: ");
 				for ( final Entry< Pair< ViewId, ViewId >, ArrayList<PointMatchGeneric<InterestPoint>> > entry : mapResults.entrySet( ))
@@ -429,7 +497,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					else
 					{
 						System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() + ": " + Group.pvid( entry.getKey().getA() ) + "<->" + Group.pvid( entry.getKey().getB() )  + ": " + entry.getValue().size() + " correspondences." );
-						resultsLocal.add( new Tuple2<>( new ArrayList<>( entry.getValue() ), Spark.serializeViewIdPairForRDD( entry.getKey() ) ) );
+						resultsLocal.add( new Tuple4<>( new ArrayList<>( entry.getValue() ), Spark.serializeViewIdPairForRDD( entry.getKey() ), labelA, labelB ) );
 					}
 				}
 
@@ -442,22 +510,24 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		rddResults.cache();
 		rddResults.count();
 
-		final List<ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>>> results = rddResults.collect();
+		final List<ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>>> results = null;// rddResults.collect();
 
 		// add the corresponding detections and output result
 		if ( clearCorrespondences )
 			System.out.println( "Adding corresponding interest points ...");
 		else
 			System.out.println( "Adding corresponding interest points (be sure to use --clearCorrespondences if you run multiple times, you are not using it right now) ...");
-
+		/*
 		for ( final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]>> tupleList : results )
 			for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, int[][]> tuple : tupleList )
 			{
 				final Pair<ViewId, ViewId> pair = Spark.derserializeViewIdPairsForRDD( tuple._2() );
-				
+
 				final ViewId vA = pair.getA();
 				final ViewId vB = pair.getB();
-	
+
+				// TODO: get the labels
+
 				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelMapGlobal.get( vA ) );
 				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelMapGlobal.get( vB ) );
 	
@@ -469,9 +539,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			System.out.println( "Saving corresponding interest points ...");
 	
 			for ( final ViewId v : viewIdsGlobal )
-				dataGlobal.getViewInterestPoints().getViewInterestPoints().get( v ).getInterestPointList( labelMapGlobal.get( v ) ).saveCorrespondingInterestPoints( true );
+				for ( final String label : labelMapGlobal.get( v ).keySet() )
+					dataGlobal.getViewInterestPoints().getViewInterestPoints().get( v ).getInterestPointList( label ).saveCorrespondingInterestPoints( true );
 		}
-
+		*/
 		sc.close();
 
 		System.out.println( "Done.");
@@ -489,18 +560,22 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		return setup;
 	}
 
-	public static MatcherPairwise< InterestPoint > createMatcherInstance(
+	public static < I extends InterestPoint > MatcherPairwise< I > createMatcherInstance(
 			final RANSACParameters rp,
 			final Method registrationMethod,
 			final Model< ? > model,
 			final int numNeighbors,
 			final int redundancy,
 			final float ratioOfDistance,
+			final boolean limitSearchRadius,
+			final double searchRadius,
 			final double icpMaxDistance,
 			final int icpMaxIterations,
 			final boolean icpUseRANSAC )
 	{
-		MatcherPairwise< InterestPoint > matcher;
+		//MatcherPairwise< GroupedInterestPoint< ViewId > > groupedMatcher;
+		//MatcherPairwise< InterestPoint > matcherSingle;
+		final MatcherPairwise< I > matcher;
 
 		if ( registrationMethod == Method.FAST_ROTATION )
 		{
@@ -519,7 +594,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 		else if ( registrationMethod == Method.PRECISE_TRANSLATION )
 		{
-			final RGLDMParameters dp = new RGLDMParameters(model, RGLDMParameters.differenceThreshold, (float)ratioOfDistance, numNeighbors, redundancy);
+			final RGLDMParameters dp =
+					new RGLDMParameters(model, RGLDMParameters.differenceThreshold, (float)ratioOfDistance,
+							limitSearchRadius, searchRadius, numNeighbors, redundancy);
 			matcher = new RGLDMPairwise<>( rp, dp );
 		}
 		else
