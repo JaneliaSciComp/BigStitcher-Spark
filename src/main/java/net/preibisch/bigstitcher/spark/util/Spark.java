@@ -23,6 +23,7 @@ package net.preibisch.bigstitcher.spark.util;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 import org.apache.spark.SparkEnv;
@@ -45,6 +46,7 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import scala.Tuple3;
 
 public class Spark {
 
@@ -98,6 +100,40 @@ public class Spark {
 		return new ValuePair<Group<ViewId>, Group<ViewId>>( new Group<>( pairA ), new Group<>( pairB ) );
 	}
 
+	public static ArrayList< Tuple3<int[][], String, String> > serializeViewIdPairsWithLabelsForRDD(
+			final List< Pair<ViewId, ViewId> > pairs,
+			final ArrayList< String > labels,
+			final boolean matchAcrossLabels )
+	{
+		final ArrayList<Tuple3<int[][], String, String>> ser = new ArrayList<>();
+
+		for ( final Pair<ViewId, ViewId> pair : pairs )
+		{
+			final HashMap<String, String > compared = new HashMap<>();
+
+			for ( final String labelA : labels )
+				for ( final String labelB : labels )
+				{
+					if ( !matchAcrossLabels && !labelA.equals( labelB ) )
+						continue;
+
+					if ( compared.containsKey( labelA ) && compared.get( labelA ).equals( labelB ) )
+						continue;
+
+					// remember what we already compared
+					compared.put( labelA, labelB );
+
+					// for matchAcross also the inverse (A>B means we also did B>A)
+					if ( matchAcrossLabels && !labelA.equals( labelB ) )
+						compared.put( labelB, labelA );
+
+					ser.add( new Tuple3<>( serializeViewIdPairForRDD( pair ), labelA, labelB ) );
+				}
+		}
+
+		return ser;
+	}
+
 	public static ArrayList<int[][]> serializeViewIdPairsForRDD( final List< Pair<ViewId, ViewId> > pairs )
 	{
 		final ArrayList<int[][]> ser = new ArrayList<>();
@@ -118,6 +154,40 @@ public class Spark {
 		return pairInt;
 	}
 
+	public static ArrayList<Tuple3<int[][][], String, String>> serializeGroupedViewIdPairsWithLabelsForRDD(
+					final List< ? extends Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>>> pairs,
+					final ArrayList< String > labels,
+					final boolean matchAcrossLabels)
+	{
+		final ArrayList<Tuple3<int[][][], String, String>> ser = new ArrayList<>();
+
+		for ( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair : pairs )
+		{
+			final HashMap<String, String > compared = new HashMap<>();
+
+			for ( final String labelA : labels )
+				for ( final String labelB : labels )
+				{
+					if ( !matchAcrossLabels && !labelA.equals( labelB ) )
+						continue;
+
+					if ( compared.containsKey( labelA ) && compared.get( labelA ).equals( labelB ) )
+						continue;
+
+					// remember what we already compared
+					compared.put( labelA, labelB );
+
+					// for matchAcross also the inverse (A>B means we also did B>A)
+					if ( matchAcrossLabels && !labelA.equals( labelB ) )
+						compared.put( labelB, labelA );
+
+					ser.add( new Tuple3<>( serializeGroupedViewIdPairForRDD( pair ), labelA, labelB ) );
+				}
+		}
+
+		return ser;
+	}
+	
 	public static ArrayList<int[][][]> serializeGroupedViewIdPairsForRDD( final List< ? extends Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>>> pairs )
 	{
 		final ArrayList<int[][][]> ser = new ArrayList<>();
