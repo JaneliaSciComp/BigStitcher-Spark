@@ -100,6 +100,35 @@ public class Spark {
 		return new ValuePair<Group<ViewId>, Group<ViewId>>( new Group<>( pairA ), new Group<>( pairB ) );
 	}
 
+	public static ArrayList< Pair<String, String>> getAllPairwiseComparisons(
+			final ArrayList< String > labels,
+			final boolean matchAcrossLabels )
+	{
+		final ArrayList< Pair<String, String>> pairs = new ArrayList<>();
+		final HashMap<String, String > compared = new HashMap<>();
+
+		for ( final String labelA : labels )
+			for ( final String labelB : labels )
+			{
+				if ( !matchAcrossLabels && !labelA.equals( labelB ) )
+					continue;
+
+				if ( compared.containsKey( labelA ) && compared.get( labelA ).equals( labelB ) )
+					continue;
+
+				// remember what we already compared
+				compared.put( labelA, labelB );
+
+				// for matchAcross also the inverse (A>B means we also did B>A)
+				if ( matchAcrossLabels && !labelA.equals( labelB ) )
+					compared.put( labelB, labelA );
+
+				pairs.add( new ValuePair<>( labelA, labelB ) );
+			}
+
+		return pairs;
+	}
+
 	public static ArrayList< Tuple3<int[][], String, String> > serializeViewIdPairsWithLabelsForRDD(
 			final List< Pair<ViewId, ViewId> > pairs,
 			final ArrayList< String > labels,
@@ -109,6 +138,10 @@ public class Spark {
 
 		for ( final Pair<ViewId, ViewId> pair : pairs )
 		{
+			for ( final Pair<String, String> labelPair : getAllPairwiseComparisons(labels, matchAcrossLabels) )
+				ser.add( new Tuple3<>( serializeViewIdPairForRDD( pair ), labelPair.getA(), labelPair.getB() ) );
+
+			/*
 			final HashMap<String, String > compared = new HashMap<>();
 
 			for ( final String labelA : labels )
@@ -129,6 +162,7 @@ public class Spark {
 
 					ser.add( new Tuple3<>( serializeViewIdPairForRDD( pair ), labelA, labelB ) );
 				}
+			*/
 		}
 
 		return ser;
@@ -163,6 +197,10 @@ public class Spark {
 
 		for ( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair : pairs )
 		{
+			for ( final Pair<String, String> labelPair : getAllPairwiseComparisons(labels, matchAcrossLabels) )
+				ser.add( new Tuple3<>( serializeGroupedViewIdPairForRDD( pair ), labelPair.getA(), labelPair.getB() ) );
+
+			/*
 			final HashMap<String, String > compared = new HashMap<>();
 
 			for ( final String labelA : labels )
@@ -183,6 +221,7 @@ public class Spark {
 
 					ser.add( new Tuple3<>( serializeGroupedViewIdPairForRDD( pair ), labelA, labelB ) );
 				}
+			*/
 		}
 
 		return ser;

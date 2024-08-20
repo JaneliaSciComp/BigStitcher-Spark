@@ -98,8 +98,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "--limitSearch" }, description = "limit the search radius when performing descriptor matching, only applicable for PRECISE_TRANSLATION (default: no limit, all-to-all)")
 	protected Double limitSearch = null;
 
-	@Option(names = { "--matchAcrossLabels" }, description = "if more than one label is specified, allow to match across labels (default: false)")
-	protected boolean matchAcrossLabels = false;
 
 	@Option(names = { "--clearCorrespondences" }, description = "clear existing corresponding interest points for processed ViewIds and label before adding new ones (default: false)")
 	protected boolean clearCorrespondences = false;
