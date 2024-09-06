@@ -83,7 +83,7 @@ public class TransformPoints extends AbstractBasic
 				in.lines().forEach( s -> 
 				{
 					if ( s.trim().length() > 0 && s.trim().matches( "[\\p{Space}*[-]*\\d+\\.?\\d*\\p{Space}*\\,?]+") )
-						points.add( Import.csvStringToDoubleArray( s ) );
+						points.add( Import.csvStringToDoubleArray( s.trim() ) );
 					else
 						System.out.println( "Ignoring line: " + s );
 				} );
