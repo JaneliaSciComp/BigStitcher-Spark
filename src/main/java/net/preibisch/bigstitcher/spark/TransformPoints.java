@@ -49,6 +49,9 @@ public class TransformPoints extends AbstractBasic
 	@Option(names = { "-p" }, description = "coordinates in 3d (e.g. -p 3.4,423.1,-12134.14142 -p 12.1,1.2,12.1)")
 	private String p[] = null;
 
+	//@Option(names = { "--zeroMin" }, description = "add code to set the minimal coordinate to 0,0,0")
+	//private boolean p[] = null;
+ 
 	@Option(names = { "--csvOut" }, description = "path to a comma separated file (x,y,z) to which points will be saved. If ommited, it will go to stoud (printed out);(e.g. /home/jimmy/mypoints_transformed.csv)")
 	private String csvOut = null;
 	
@@ -57,17 +60,40 @@ public class TransformPoints extends AbstractBasic
 	@Override
 	public Void call() throws Exception
 	{
+		//System.out.println( "-325.12  ,  3434.23".matches( "[\\p{Space}*[-]*\\d+\\.?\\d*\\p{Space}*\\,?]+"));
+		//System.exit( 0 );
+
 		final ArrayList< double[] > points = new ArrayList<>();
 
 		if ( csvIn != null )
 		{
 			final File f = new File( csvIn );
 
+			if ( !f.exists() )
+			{
+				System.out.println( "File '" + f + "' doesn't exist.");
+				return null;
+			}
+
 			System.out.println( "Parsing '" + f.getAbsolutePath() + "'");
 
-			final BufferedReader in = TextFileAccess.openFileRead( f.getAbsoluteFile() );
-			in.lines().forEach( s -> { if ( s.trim().length() > 0 ) points.add( Import.csvStringToDoubleArray( s ) ); } );
-			in.close();
+			try
+			{
+				final BufferedReader in = TextFileAccess.openFileRead( f.getAbsoluteFile() );
+				in.lines().forEach( s -> 
+				{
+					if ( s.trim().length() > 0 && s.trim().matches( "[\\p{Space}*[-]*\\d+\\.?\\d*\\p{Space}*\\,?]+") )
+						points.add( Import.csvStringToDoubleArray( s ) );
+					else
+						System.out.println( "Ignoring line: " + s );
+				} );
+				in.close();
+			}
+			catch ( Exception e )
+			{
+				System.out.println( "Error parsing CSV file '" + f + "': " + e);
+				return null;
+			}
 		}
 
 		if ( points != null )
