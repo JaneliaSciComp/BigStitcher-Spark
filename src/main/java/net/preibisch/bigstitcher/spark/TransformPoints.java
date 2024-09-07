@@ -96,7 +96,7 @@ public class TransformPoints extends AbstractBasic
 			}
 		}
 
-		if ( points != null )
+		if ( p != null )
 			for ( final String point : p )
 				if ( point.trim().length() > 0 ) points.add( Import.csvStringToDoubleArray( point ) ); 
 
