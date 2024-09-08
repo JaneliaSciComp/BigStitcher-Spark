@@ -30,10 +30,13 @@ import java.util.Arrays;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.io.TextFileAccess;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -112,6 +115,9 @@ public class TransformPoints extends AbstractBasic
 		if ( data == null )
 			return null;
 
+		BoundingBox bb = new BoundingBoxMaximal( Import.getViewIds( data ), data ).estimate( "Max bounding box." );
+		System.out.println( "Full bounding for acquisition: " + Util.printInterval( bb ));
+		
 		final ViewId view = Import.getViewId( vi );
 
 		System.out.println( "Using transformations of viewId: " + Group.pvid( view ) );
