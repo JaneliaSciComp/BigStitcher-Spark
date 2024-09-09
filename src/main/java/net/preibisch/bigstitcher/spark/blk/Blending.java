@@ -171,10 +171,10 @@ public class Blending
 				continue;
 			}
 
-			final int b3di = Math.max( 0, Math.min( length, 1 + ( int ) b3d ) );
-			final int b2di = Math.max( 0, Math.min( b3di, 1 + ( int ) b2d ) );
-			final int b1di = Math.max( 0, Math.min( b2di, 1 + ( int ) b1d ) );
-			final int b0di = Math.max( 0, Math.min( b1di, 1 + ( int ) b0d ) );
+			final int b3di = Math.max( 0, Math.min( length, 1 + ( int ) Math.floor( b3d ) ) );
+			final int b2di = Math.max( 0, Math.min( b3di, 1 + ( int ) Math.floor( b2d ) ) );
+			final int b1di = Math.max( 0, Math.min( b2di, 1 + ( int ) Math.floor( b1d ) ) );
+			final int b0di = Math.max( 0, Math.min( b1di, 1 + ( int ) Math.floor( b0d ) ) );
 
 			for ( int x = 0; x < b0di; ++x )
 				weights[ offset + x ] = 0;

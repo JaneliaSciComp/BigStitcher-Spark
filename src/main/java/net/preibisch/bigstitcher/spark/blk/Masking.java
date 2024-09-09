@@ -145,8 +145,8 @@ public class Masking
 				continue;
 			}
 
-			final int b3di = Math.max( 0, Math.min( length, 1 + ( int ) b3d ) );
-			final int b0di = Math.max( 0, Math.min( b3di, 1 + ( int ) b0d ) );
+			final int b3di = Math.max( 0, Math.min( length, 1 + ( int ) Math.floor( b3d ) ) );
+			final int b0di = Math.max( 0, Math.min( b3di, 1 + ( int ) Math.floor( b0d ) ) );
 
 			for ( int x = 0; x < b0di; ++x )
 				weights[ offset + x ] = 0;
