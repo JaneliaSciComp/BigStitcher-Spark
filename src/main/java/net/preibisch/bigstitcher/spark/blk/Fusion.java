@@ -37,10 +37,10 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockProcessor;
+import net.imglib2.algorithm.blocks.ClampType;
+import net.imglib2.algorithm.blocks.ComputationType;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
-import net.imglib2.algorithm.blocks.convert.ClampType;
 import net.imglib2.algorithm.blocks.transform.Transform;
-import net.imglib2.algorithm.blocks.transform.Transform.ComputationType;
 import net.imglib2.algorithm.blocks.transform.Transform.Interpolation;
 import net.imglib2.blocks.PrimitiveBlocks;
 import net.imglib2.blocks.TempArray;
@@ -167,8 +167,8 @@ public class Fusion
 			t.concatenate( transform );
 			threadSafeBlocks = PrimitiveBlocks.of( Views.extendBorder( input ) )
 					.threadSafe();
-			threadSafeOperator = Transform.affine( new FloatType(), t, Interpolation.NLINEAR, ComputationType.FLOAT )
-					.adaptSourceType( ( T ) type, ClampType.NONE )
+			threadSafeOperator = Transform.createAffineOperator( new FloatType(), t, Interpolation.NLINEAR, ComputationType.FLOAT, ClampType.NONE )
+					.adaptSourceType( type, ClampType.NONE )
 					.threadSafe();
 		}
 
