@@ -1,6 +1,6 @@
 package net.preibisch.bigstitcher.spark.blk;
 
-import net.imglib2.algorithm.blocks.AbstractBlockProcessor;
+import net.imglib2.algorithm.blocks.AbstractDimensionlessBlockProcessor;
 import net.imglib2.algorithm.blocks.BlockProcessor;
 import net.imglib2.algorithm.blocks.DefaultUnaryBlockOperator;
 import net.imglib2.algorithm.blocks.UnaryBlockOperator;
@@ -28,15 +28,15 @@ public class LinearRange
 
 	private static final FloatType type = new FloatType();
 
-	private static class LinearRangeBlockProcessor extends AbstractBlockProcessor< float[], float[] >
+	private static class LinearRangeBlockProcessor extends AbstractDimensionlessBlockProcessor< float[], float[] >
 	{
 		private final float scale;
 
 		private final float offset;
 
-		LinearRangeBlockProcessor( final float scale, final float offset, final int numDimensions )
+		LinearRangeBlockProcessor( final float scale, final float offset )
 		{
-			super( PrimitiveType.FLOAT, numDimensions );
+			super( PrimitiveType.FLOAT );
 			this.scale = scale;
 			this.offset = offset;
 		}
@@ -57,7 +57,7 @@ public class LinearRange
 		@Override
 		public void compute( final float[] src, final float[] dest )
 		{
-			final int len = sourceLength;
+			final int len = sourceLength();
 			for ( int i = 0; i < len; i++ )
 				dest[ i ] = src[ i ] * scale + offset;
 		}
