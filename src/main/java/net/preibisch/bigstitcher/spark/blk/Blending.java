@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -28,6 +28,7 @@ import bdv.util.BdvFunctions;
 import bdv.util.BdvSource;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgFactory;
@@ -123,7 +124,7 @@ public class Blending
 			// TODO handle the case where border is so big that w=0 everywhere
 		}
 
-		this.blending = blending;
+		this.blending = blending.clone();
 	}
 
 	private static final float EPSILON = 0.0001f;
@@ -239,11 +240,45 @@ public class Blending
 		return ArrayImgs.floats( weights, sx, sy, sz );
 	}
 
+	/**
+	 * Conceptually,the given {@code interval} is filled with blending weights, then transformed with {@code transform}.
+	 * <p>
+	 * Blending weights are {@code 0 <= w <= 1}.
+	 * <p>
+	 * Weights are {@code w=0} for the outermost {@code border} pixels of {@code interval}.
+	 * Then weights transition from {@code 0<=w<=1} over {@code blending} pixels.
+	 * Weights are {@code w=1} inside {@code border+blending} from the {@code interval} bounds.
+	 * <p>
+	 * Finally, the given {@code boundingBox} from this transformed weights image is rendered (shifted to zero-min).
+	 *
+	 * @param interval
+	 * @param border
+	 * @param blending
+	 * @param transform
+	 * @param boundingBox
+	 */
+	static RandomAccessibleInterval< FloatType > transformBlendingRender2(
+			final Interval interval,
+			final float[] border,
+			final float[] blending,
+			final AffineTransform3D transform,
+			final Interval boundingBox )
+	{
+		final AffineTransform3D shiftedTransform = new AffineTransform3D();
+		shiftedTransform.setTranslation(
+				-boundingBox.min( 0 ),
+				-boundingBox.min( 1 ),
+				-boundingBox.min( 2 ) );
+		shiftedTransform.concatenate( transform );
+		final BlendingBlockSupplier blocks = new BlendingBlockSupplier( interval, border, blending, shiftedTransform );
+		return BlockAlgoUtils.cellImg( blocks, boundingBox.dimensionsAsLongArray(), new int[] { 32 } );
+	}
+
 	public static void main( String[] args )
 	{
 		final Interval interval = Intervals.createMinSize( 0, 0, 0, 10, 10, 10 );
-		final float[] border = { 0, 0, 0 };
-		final float[] blending = { 0, 0, 0 };
+		final float[] border = { 1, 1, 1 };
+		final float[] blending = { 2, 2, 2 };
 		final AffineTransform3D transform = new AffineTransform3D();
 		transform.scale( 2.3, 2.3, 2.3 );
 		transform.rotate( 2, 0.1 );
@@ -255,6 +290,12 @@ public class Blending
 		s.setDisplayRangeBounds( -1, 1 );
 		s.setDisplayRange( 0, 1 );
 		s.setColor( new ARGBType( 0x00ff00 ) );
+
+		final RandomAccessibleInterval< FloatType > blend2 = transformBlendingRender2( interval, border, blending, transform, boundingBox );
+		BdvSource s2 = BdvFunctions.show( blend2, "blend2", Bdv.options().addTo( s ) );
+		s2.setDisplayRangeBounds( -1, 1 );
+		s2.setDisplayRange( 0, 1 );
+		s2.setColor( new ARGBType( 0xff00ff ) );
 
 		final Img< UnsignedByteType > img = new ArrayImgFactory<>( new UnsignedByteType() ).create( interval );
 		img.forEach( t -> t.set( 128 ) );
@@ -285,6 +326,7 @@ public class Blending
 		j.setDisplayRangeBounds( 0, 255 );
 		j.setDisplayRange( 127.99, 128 );
 		j.setColor( new ARGBType( 0xff00ff ) );
+		j.setActive( false );
 
 	}
 
