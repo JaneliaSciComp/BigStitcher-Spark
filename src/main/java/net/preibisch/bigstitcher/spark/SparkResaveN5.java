@@ -38,9 +38,9 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -112,8 +112,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println();
 		}
 
-		final URI n5PathURI = URI.create( this.n5PathURIString == null ? URITools.appendName( dataGlobal.getBasePathURI(), "dataset.n5" ) : n5PathURIString );
-		final Compression compression = new GzipCompression( 1 );
+		final URI n5PathURI = URI.create( this.n5PathURIString == null ? URITools.appendName( URITools.getParent( xmlOutURI ), "dataset.n5" ) : n5PathURIString );
+		final Compression compression = new ZstandardCompression( 1 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blockScale = Import.csvStringToIntArray(blockScaleString);
@@ -128,6 +128,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 		System.out.println( "N5 block size=" + Util.printCoordinates( blockSize ) );
 		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlockSize ) );
+		System.out.println( "Setting up XML at: " + xmlOutURI );
 		System.out.println( "Setting up N5 writing to basepath: " + n5PathURI );
 
 		// all ViewSetupIds (needed to create N5 datasets)
@@ -135,7 +136,6 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				N5ApiTools.assembleDimensions( dataGlobal, viewIdsGlobal );
 
 		// all grids across all ViewId's
-		// TODO: is this list serializable?
 		final List<long[][]> gridS0 =
 				viewIdsGlobal.stream().map( viewId ->
 						N5ApiTools.assembleJobs(
@@ -170,9 +170,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		long time = System.currentTimeMillis();
 
 		// TODO: is this map serializable?
-		final Map< ViewId, MultiResolutionLevelInfo[] > viewIdToMrInfo = viewIdsGlobal.parallelStream().map(
-				viewId -> new ValuePair<>(
-						viewId,
+		final Map< ViewId, MultiResolutionLevelInfo[] > viewIdToMrInfo =
+				viewIdsGlobal.parallelStream().map( viewId -> new ValuePair<>(
+						new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ), // viewId is actually a ViewDescripton object, thus not serializable
 						N5ApiTools.setupBdvDatasetsN5(
 								n5Writer,
 								viewId,
@@ -261,7 +261,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "Saving new xml to: " + xmlOutURI );
 
 		if ( URITools.isFile( n5PathURI ))
-			dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5PathURI ), dataGlobal.getSequenceDescription()));
+			dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5PathURI.toString() ), dataGlobal.getSequenceDescription()));
 		else
 			dataGlobal.getSequenceDescription().setImgLoader( new N5CloudImageLoader( null, n5PathURI, dataGlobal.getSequenceDescription())); // null is OK because the instance is not used now
 
