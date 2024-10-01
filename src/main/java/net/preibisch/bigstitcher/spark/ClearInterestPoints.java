@@ -105,7 +105,7 @@ public class ClearInterestPoints extends AbstractBasic
 				System.out.println( "Saving XML (metadata only) ..." );
 	
 				dataGlobal.getViewInterestPoints().getViewInterestPoints().clear();
-				new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+				new XmlIoSpimData2().save( dataGlobal, xmlURI );
 	
 				System.out.println( "Removing interest point directory '" + file + "' ... " );
 	

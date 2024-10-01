@@ -37,6 +37,7 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml or -x s3://mybucket/data/dataset.xml or -x file:/home/project.xml")
 	protected String xmlURIString = null;
 
+	// will be assigned in loadSpimData2()
 	protected URI xmlURI = null;
 
 	@Option(names = { "--dryRun" }, description = "perform a 'dry run', i.e. do not save any results (default: false)")

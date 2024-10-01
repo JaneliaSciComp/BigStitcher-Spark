@@ -343,7 +343,7 @@ public class Solver extends AbstractRegistration
 		if (!dryRun)
 		{
 			System.out.println( "Saving resulting XML ... ");
-			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 		}
 
 		System.out.println( "Done.");

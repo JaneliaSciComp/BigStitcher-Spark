@@ -23,6 +23,7 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.File;
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -34,12 +35,14 @@ import java.util.concurrent.Callable;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
 import bdv.export.ExportMipmapInfo;
 import bdv.img.n5.N5ImageLoader;
@@ -55,7 +58,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
-import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
@@ -65,6 +67,8 @@ import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import util.Grid;
+import util.URITools;
 
 public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Serializable
 {
@@ -76,8 +80,10 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 	private static final long serialVersionUID = 1890656279324908516L;
 
-	@Option(names = { "-xo", "--xmlout" }, required = true, description = "path to the output BigStitcher xml, e.g. /home/project-n5.xml")
-	private String xmloutPath = null;
+	@Option(names = { "-xo", "--xmlout" }, required = true, description = "path to the output BigStitcher xml, e.g. /home/project-n5.xml or s3://myBucket/dataset.xml")
+	private String xmlOutURIString = null;
+
+	private URI xmlOutURI = null;
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,64)")
 	private String blockSizeString = "128,128,64";
@@ -88,8 +94,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (must contain full res 1,1,1 that is always created), e.g. 1,1,1; 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
 	private String downsampling = null;
 
-	@Option(names = { "-o", "--n5Path" }, description = "N5 path for saving, (default: 'folder of the xml'/dataset.n5)")
-	private String n5Path = null;
+	@Option(names = { "-o", "--n5Path" }, description = "N5 path for saving, (default: 'folder of the xml'/dataset.n5 or e.g. s3://myBucket/data.n5)")
+	private String n5PathURIString = null;
 
 	@Override
 	public Void call() throws Exception
@@ -98,6 +104,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 		if ( dataGlobal == null )
 			return null;
+
+		xmlOutURI = URI.create( xmlOutURIString );
+		System.out.println( "xmlout: " + xmlOutURI );
 
 		// process all views
 		final ArrayList< ViewId > viewIdsGlobal = Import.getViewIds( dataGlobal );
@@ -114,7 +123,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println();
 		}
 
-		final String n5Path = this.n5Path == null ? dataGlobal.getBasePath() + "/dataset.n5" : this.n5Path;
+		final URI n5PathURI = URI.create( this.n5PathURIString == null ? URITools.appendName( dataGlobal.getBasePathURI(), "dataset.n5" ) : n5PathURIString );
 		final Compression compression = new GzipCompression( 1 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
@@ -125,12 +134,13 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				blockSize[1] * blockScale[ 1 ],
 				blockSize[2] * blockScale[ 2 ] };
 
-		final N5Writer n5 = new N5FSWriter(n5Path);
+		//final N5Writer n5 = new N5FSWriter(n5Path);
+		final N5Writer n5 = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
 
 		System.out.println( "N5 block size=" + Util.printCoordinates( blockSize ) );
 		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlock ) );
 
-		System.out.println( "Setting up N5 write for basepath: " + n5Path );
+		System.out.println( "Setting up N5 write for basepath: " + n5PathURI );
 
 		// all grids across all ViewId's
 		final ArrayList<long[][]> allGrids = new ArrayList<>();
@@ -274,7 +284,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 		rdds0.foreach(
 				gridBlock -> {
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
 					final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
 
 					final SetupImgLoader< ? > imgLoader = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );
@@ -282,7 +292,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					@SuppressWarnings("rawtypes")
 					final RandomAccessibleInterval img = imgLoader.getImage( viewId.getTimePointId() );
 
-					final N5Writer n5Lcl = new N5FSWriter(n5Path);
+					//final N5Writer n5Lcl = new N5FSWriter(n5Path);
+					final N5Writer n5Lcl = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
 
 					final DataType dataType = n5Lcl.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
 					final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s0";
@@ -384,7 +395,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					gridBlock -> {
 						final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
 
-						final N5Writer n5Lcl = new N5FSWriter(n5Path);
+						//final N5Writer n5Lcl = new N5FSWriter(n5Path);
+						final N5Writer n5Lcl = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
 
 						final DataType dataType = n5Lcl.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
 						final String datasetPrev = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s-1);
@@ -453,10 +465,14 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "resaved successfully." );
 
 		// things look good, let's save the new XML
-		System.out.println( "Saving new xml to: " + xmloutPath );
+		System.out.println( "Saving new xml to: " + xmlOutURI );
 
-		dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5Path ), dataGlobal.getSequenceDescription()));
-		new XmlIoSpimData2( null ).save( dataGlobal, xmloutPath );
+		if ( URITools.isFile( n5PathURI ))
+			dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5PathURI ), dataGlobal.getSequenceDescription()));
+		else
+			dataGlobal.getSequenceDescription().setImgLoader( new N5CloudImageLoader( null, n5PathURI, dataGlobal.getSequenceDescription()));
+
+		new XmlIoSpimData2().save( dataGlobal, xmlOutURI );
 
 		n5.close();
 
