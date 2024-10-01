@@ -227,7 +227,7 @@
         <dependency>
             <groupId>net.preibisch</groupId>
             <artifactId>multiview-reconstruction</artifactId>
-            <version>4.0.0</version>
+            <version>4.1.0</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.epfl.biop</groupId>
