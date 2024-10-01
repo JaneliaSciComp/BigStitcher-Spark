@@ -101,7 +101,7 @@ public class ClearRegistrations extends AbstractSelectableViews
 		if ( !dryRun )
 		{
 			System.out.println( "Saving XML ..." );
-			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+			new XmlIoSpimData2().save( dataGlobal, xmlPath );
 		}
 
 		return null;
