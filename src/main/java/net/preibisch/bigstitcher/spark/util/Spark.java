@@ -22,6 +22,7 @@
 package net.preibisch.bigstitcher.spark.util;
 
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -223,11 +224,9 @@ public class Spark {
 	/**
 	 * @return a new data instance optimized for use within single-threaded Spark tasks.
 	 */
-	public static SpimData2 getSparkJobSpimData2(final String clusterExt,
-												 final String xmlPath)
-			throws SpimDataException {
-
-		final SpimData2 data = new XmlIoSpimData2(clusterExt).load(xmlPath);
+	public static SpimData2 getSparkJobSpimData2( final URI xmlPath ) throws SpimDataException
+	{
+		final SpimData2 data = new XmlIoSpimData2().load(xmlPath);
 		final SequenceDescription sequenceDescription = data.getSequenceDescription();
 
 		// set number of fetcher threads to 0 for spark usage
@@ -236,8 +235,8 @@ public class Spark {
 			((ViewerImgLoader) imgLoader).setNumFetcherThreads(0);
 		}
 
-		LOG.info("getSparkJobSpimData2: loaded {} for clusterExt={}, xmlPath={} on executorId={}",
-				 data, clusterExt, xmlPath, getSparkExecutorId());
+		LOG.info("getSparkJobSpimData2: loaded {}, xmlPath={} on executorId={}",
+				 data, xmlPath, getSparkExecutorId());
 
 		return data;
 	}

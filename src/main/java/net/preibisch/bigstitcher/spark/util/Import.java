@@ -32,7 +32,6 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 
 public class Import {
 
@@ -295,17 +294,18 @@ public class Import {
 		return new ViewId(timepointId, viewSetupId);
 	}
 
-	public static String createBDVPath(final String bdvString, final StorageType storageType)
+	/*
+	public static String createBDVPath(final String bdvString, final StorageFormat storageType)
 	{
 		final ViewId viewId = getViewId(bdvString);
 
 		String path = null;
 
-		if ( StorageType.N5.equals(storageType) )
+		if ( StorageFormat.N5.equals(storageType) )
 		{
 			path = "setup" + viewId.getViewSetupId() + "/" + "timepoint" + viewId.getTimePointId() + "/s0";
 		}
-		else if ( StorageType.HDF5.equals(storageType) )
+		else if ( StorageFormat.HDF5.equals(storageType) )
 		{
 			path = "t" + String.format("%05d", viewId.getTimePointId()) + "/" + "s" + String.format("%02d", viewId.getViewSetupId()) + "/0/cells";
 		}
@@ -318,5 +318,5 @@ public class Import {
 		System.out.println( "path=" + path );
 
 		return path;
-	}
+	}*/
 }

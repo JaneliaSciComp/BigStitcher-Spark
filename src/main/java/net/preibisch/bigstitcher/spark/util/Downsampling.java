@@ -21,33 +21,11 @@
  */
 package net.preibisch.bigstitcher.spark.util;
 
-import java.util.Date;
 import java.util.List;
-
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.Compression;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-
-import net.imglib2.FinalInterval;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.converter.Converters;
-import net.imglib2.type.numeric.integer.ShortType;
-import net.imglib2.type.numeric.integer.UnsignedByteType;
-import net.imglib2.type.numeric.integer.UnsignedShortType;
-import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Util;
-import net.imglib2.view.Views;
-import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
-import net.preibisch.mvrecon.process.export.ExportTools;
-import util.Grid;
 
 public class Downsampling
 {
+	/*
 	// TODO: this code is almost identical to the code in ExportN5API in multiview-reconstruction (except it's for multi-threading there)
 	public static boolean createDownsampling(
 			final String path,
@@ -224,7 +202,7 @@ public class Downsampling
 		}
 
 		return true;
-	}
+	}*/
 
 	public static boolean testDownsamplingParameters( final boolean multiRes, final List<String> downsampling, final String dataset )
 	{

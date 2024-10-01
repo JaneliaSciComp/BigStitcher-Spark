@@ -33,7 +33,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
-import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
+import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 
 public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 {
