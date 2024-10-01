@@ -29,8 +29,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -39,35 +39,24 @@ import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
-import bdv.export.ExportMipmapInfo;
 import bdv.img.n5.N5ImageLoader;
-import mpicbg.spim.data.sequence.SetupImgLoader;
-import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import mpicbg.spim.data.sequence.ViewSetup;
-import net.imglib2.FinalInterval;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.type.numeric.integer.UnsignedByteType;
-import net.imglib2.type.numeric.integer.UnsignedShortType;
-import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
-import net.imglib2.view.Views;
+import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
-import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
-import util.Grid;
 import util.URITools;
 
 public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Serializable
@@ -129,78 +118,47 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blockScale = Import.csvStringToIntArray(blockScaleString);
 
-		final int[] computeBlock = new int[] {
+		final int[] computeBlockSize = new int[] {
 				blockSize[0] * blockScale[ 0 ],
 				blockSize[1] * blockScale[ 1 ],
 				blockSize[2] * blockScale[ 2 ] };
 
 		//final N5Writer n5 = new N5FSWriter(n5Path);
-		final N5Writer n5 = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
+		final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
 
 		System.out.println( "N5 block size=" + Util.printCoordinates( blockSize ) );
-		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlock ) );
-
-		System.out.println( "Setting up N5 write for basepath: " + n5PathURI );
-
-		// all grids across all ViewId's
-		final ArrayList<long[][]> allGrids = new ArrayList<>();
+		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlockSize ) );
+		System.out.println( "Setting up N5 writing to basepath: " + n5PathURI );
 
 		// all ViewSetupIds (needed to create N5 datasets)
-		final HashMap<Integer, long[]> viewSetupIdToDimensions = new HashMap<>();
+		final HashMap<Integer, long[]> dimensions =
+				N5ApiTools.assembleDimensions( dataGlobal, viewIdsGlobal );
 
-		// all ViewSetups for estimating downsampling
-		final List< ViewSetup > viewSetups = new ArrayList<>();
+		// all grids across all ViewId's
+		// TODO: is this list serializable?
+		final List<long[][]> gridS0 =
+				viewIdsGlobal.stream().map( viewId ->
+						N5ApiTools.assembleJobs(
+								viewId,
+								dimensions.get( viewId.getViewSetupId() ),
+								blockSize,
+								computeBlockSize ) ).flatMap(List::stream).collect( Collectors.toList() );
 
-		for ( final ViewId viewId : viewIdsGlobal )
-		{
-			final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
-
-			final List<long[][]> grid = Grid.create(
-					vd.getViewSetup().getSize().dimensionsAsLongArray(),
-					computeBlock,
-					blockSize);
-
-			// add timepointId and ViewSetupId & dimensions to the gridblock
-			for ( final long[][] gridBlock : grid )
-				allGrids.add( new long[][]{
-					gridBlock[ 0 ].clone(),
-					gridBlock[ 1 ].clone(),
-					gridBlock[ 2 ].clone(),
-					new long[] { viewId.getTimePointId(), viewId.getViewSetupId() },
-					vd.getViewSetup().getSize().dimensionsAsLongArray()
-				});
-
-			viewSetupIdToDimensions.put( viewId.getViewSetupId(), vd.getViewSetup().getSize().dimensionsAsLongArray() );
-			viewSetups.add( vd.getViewSetup() );
-		}
+		final Map<Integer, DataType> dataTypes =
+				N5ApiTools.assembleDataTypes( dataGlobal, dimensions.keySet() );
 
 		// estimate or read downsampling factors
-		final int[][] downsampling;
+		final int[][] downsamplings;
 
 		if ( this.downsampling == null )
-		{
-			final Map<Integer, ExportMipmapInfo> mipmaps = Resave_HDF5.proposeMipmaps( viewSetups );
-
-			int[][] tmp = mipmaps.values().iterator().next().getExportResolutions();
-
-			for ( final ExportMipmapInfo info : mipmaps.values() )
-				if (info.getExportResolutions().length > tmp.length)
-					tmp = info.getExportResolutions();
-
-			downsampling = tmp;
-		}
+			downsamplings = N5ApiTools.mipMapInfoToDownsamplings( Resave_HDF5.proposeMipmaps( N5ApiTools.assembleViewSetups(dataGlobal, viewIdsGlobal) ) );
 		else
-		{
-			downsampling = Import.csvStringToDownsampling( this.downsampling );
-		}
+			downsamplings = Import.csvStringToDownsampling( this.downsampling );
 
-		if ( !Import.testFirstDownsamplingIsPresent( downsampling ) )
-			throw new RuntimeException( "First downsampling step is not [1,1,...1], stopping." );
+		if ( !Import.testFirstDownsamplingIsPresent( downsamplings ) )
+			throw new RuntimeException( "First downsampling step must be full resolution [1,1,...1], stopping." );
 
-		System.out.println( "Selected downsampling steps:" );
-
-		for ( int i = 0; i < downsampling.length; ++i )
-			System.out.println( Util.printCoordinates( downsampling[i] ) );
+		System.out.println( "Downsamplings: " + Arrays.deepToString( downsamplings ) );
 
 		if ( dryRun )
 		{
@@ -208,67 +166,25 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			return null;
 		}
 
-		// create one dataset per ViewSetupId
-		for ( final Entry<Integer, long[]> viewSetup: viewSetupIdToDimensions.entrySet() )
-		{
-			final Object type = dataGlobal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewSetup.getKey() ).getImageType();
-			final DataType dataType;
+		// create all datasets and write BDV metadata for all ViewIds (including downsampling) in parallel
+		long time = System.currentTimeMillis();
 
-			if ( UnsignedShortType.class.isInstance( type ) )
-				dataType = DataType.UINT16;
-			else if ( UnsignedByteType.class.isInstance( type ) )
-				dataType = DataType.UINT8;
-			else if ( FloatType.class.isInstance( type ) )
-				dataType = DataType.FLOAT32;
-			else
-				throw new RuntimeException("Unsupported pixel type: " + type.getClass().getCanonicalName() );
+		// TODO: is this map serializable?
+		final Map< ViewId, MultiResolutionLevelInfo[] > viewIdToMrInfo = viewIdsGlobal.parallelStream().map(
+				viewId -> new ValuePair<>(
+						viewId,
+						N5ApiTools.setupBdvDatasetsN5(
+								n5Writer,
+								viewId,
+								dataTypes.get( viewId.getViewSetupId() ),
+								dimensions.get( viewId.getViewSetupId() ),
+								compression,
+								blockSize,
+								downsamplings )
+						) ).collect(Collectors.toMap( e -> e.getA(), e -> e.getB() ));
 
-			// TODO: ViewSetupId needs to contain: {"downsamplingFactors":[[1,1,1],[2,2,1]],"dataType":"uint16"}
-			final String n5Dataset = "setup" + viewSetup.getKey();
-
-			System.out.println( "Creating group: " + "'setup" + viewSetup.getKey() + "'" );
-
-			n5.createGroup( n5Dataset );
-
-			System.out.println( "setting attributes for '" + "setup" + viewSetup.getKey() + "'");
-
-			n5.setAttribute( n5Dataset, "downsamplingFactors", downsampling );
-			n5.setAttribute( n5Dataset, "dataType", dataType );
-			n5.setAttribute( n5Dataset, "blockSize", blockSize );
-			n5.setAttribute( n5Dataset, "dimensions", viewSetup.getValue() );
-			n5.setAttribute( n5Dataset, "compression", compression );
-		}
-
-		// create all image (s0) datasets
-		for ( final ViewId viewId : viewIdsGlobal )
-		{
-			System.out.println( "Creating dataset for " + Group.pvid( viewId ) );
-			
-			final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s0";
-			final DataType dataType = n5.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
-
-			n5.createDataset(
-					dataset,
-					viewSetupIdToDimensions.get( viewId.getViewSetupId() ), // dimensions
-					blockSize,
-					dataType,
-					compression );
-
-			System.out.println( "Setting attributes for " + Group.pvid( viewId ) );
-
-			// set N5 attributes for timepoint
-			// e.g. {"resolution":[1.0,1.0,3.0],"saved_completely":true,"multiScale":true}
-			String ds ="setup" + viewId.getViewSetupId() + "/" + "timepoint" + viewId.getTimePointId();
-			n5.setAttribute(ds, "resolution", new double[] {1,1,1} );
-			n5.setAttribute(ds, "saved_completely", true );
-			n5.setAttribute(ds, "multiScale", true );
-
-			// set additional N5 attributes for s0 dataset
-			ds = ds + "/s0";
-			n5.setAttribute(ds, "downsamplingFactors", new int[] {1,1,1} );
-		}
-
-		System.out.println( "numBlocks = " + allGrids.size() );
+		System.out.println( "Created BDV-metadata, took " + (System.currentTimeMillis() - time ) + " ms." );
+		System.out.println( "Number of compute blocks = " + gridS0.size() );
 
 		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
 
@@ -278,51 +194,24 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		// Save s0 level
 		//
-		final long time = System.currentTimeMillis();
+		time = System.currentTimeMillis();
 
-		final JavaRDD<long[][]> rdds0 = sc.parallelize(allGrids);
+		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0 );
 
 		rdds0.foreach(
-				gridBlock -> {
+				gridBlock ->
+				{
 					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
-					final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
-
-					final SetupImgLoader< ? > imgLoader = dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );
-
-					@SuppressWarnings("rawtypes")
-					final RandomAccessibleInterval img = imgLoader.getImage( viewId.getTimePointId() );
-
-					//final N5Writer n5Lcl = new N5FSWriter(n5Path);
 					final N5Writer n5Lcl = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
 
-					final DataType dataType = n5Lcl.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
-					final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s0";
+					N5ApiTools.resaveS0Block(
+							dataLocal,
+							n5Lcl,
+							dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
+							N5ApiTools.gridToDatasetBdv( 0, StorageFormat.N5 ), // a function mapping the gridblock to the dataset name for level 0 and N5
+							gridBlock );
 
-					if ( dataType == DataType.UINT16 )
-					{
-						@SuppressWarnings("unchecked")
-						final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedShortType());
-					}
-					else if ( dataType == DataType.UINT8 )
-					{
-						@SuppressWarnings("unchecked")
-						final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedByteType());
-					}
-					else if ( dataType == DataType.FLOAT32 )
-					{
-						@SuppressWarnings("unchecked")
-						final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(img, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new FloatType());
-					}
-					else
-					{
-						n5Lcl.close();
-						throw new RuntimeException("Unsupported pixel type: " + dataType );
-					}
-
-					System.out.println( "ViewId " + Group.pvid( viewId ) + ", written block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+					n5Lcl.close();
 				});
 
 		System.out.println( "Resaved N5 s0 level, took: " + (System.currentTimeMillis() - time ) + " ms." );
@@ -330,131 +219,35 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		// Save remaining downsampling levels (s1 ... sN)
 		//
-		for ( int level = 1; level < downsampling.length; ++level )
+		for ( int level = 1; level < downsamplings.length; ++level )
 		{
-			final int[] ds = new int[ downsampling[ 0 ].length ];
-
-			for ( int d = 0; d < ds.length; ++d )
-				ds[ d ] = downsampling[ level ][ d ] / downsampling[ level - 1 ][ d ];
-
-			System.out.println( "Downsampling: " + Util.printCoordinates( downsampling[ level ] ) + " with relative downsampling of " + Util.printCoordinates( ds ));
-
-			// all grids across all ViewId's
-			final ArrayList<long[][]> allGridsDS = new ArrayList<>();
-
-			// adjust dimensions
-			for ( final ViewId viewId : viewIdsGlobal )
-			{
-				final long[] previousDim = n5.getAttribute( "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (level-1), "dimensions", long[].class );
-				final long[] dim = new long[ previousDim.length ];
-				for ( int d = 0; d < dim.length; ++d )
-					dim[ d ] = previousDim[ d ] / ds[ d ];
-				final DataType dataType = n5.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
-
-				System.out.println( Group.pvid( viewId ) + ": s" + (level-1) + " dim=" + Util.printCoordinates( previousDim ) + ", s" + level + " dim=" + Util.printCoordinates( dim ) + ", datatype=" + dataType );
-
-				final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + level;
-
-				n5.createDataset(
-						dataset,
-						dim, // dimensions
-						blockSize,
-						dataType,
-						compression );
-
-				final List<long[][]> grid = Grid.create(
-						dim,
-						new int[] {
-								blockSize[0],
-								blockSize[1],
-								blockSize[2]
-						},
-						blockSize);
-
-				// add timepointId and ViewSetupId to the gridblock
-				for ( final long[][] gridBlock : grid )
-					allGridsDS.add( new long[][]{
-						gridBlock[ 0 ].clone(),
-						gridBlock[ 1 ].clone(),
-						gridBlock[ 2 ].clone(),
-						new long[] { viewId.getTimePointId(), viewId.getViewSetupId() }
-					});
-
-				// set additional N5 attributes for sN dataset
-				n5.setAttribute(dataset, "downsamplingFactors", downsampling[ level ] );
-			}
-
-			System.out.println( "s" + level + " num blocks=" + allGridsDS.size() );
-
-			final JavaRDD<long[][]> rddsN = sc.parallelize(allGridsDS);
-
 			final int s = level;
+
+			final List<long[][]> allBlocks =
+					viewIdsGlobal.stream().map( viewId ->
+							N5ApiTools.assembleJobs(
+									viewId,
+									viewIdToMrInfo.get(viewId)[s] )).flatMap(List::stream).collect( Collectors.toList() );
+
+			IOFunctions.println( "Downsampling level s" + s + "... " );
+			IOFunctions.println( "Number of compute blocks: " + allBlocks.size() );
+
+			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks);
+
 			final long timeS = System.currentTimeMillis();
 
 			rddsN.foreach(
-					gridBlock -> {
-						final ViewId viewId = new ViewId( (int)gridBlock[ 3 ][ 0 ], (int)gridBlock[ 3 ][ 1 ]);
-
-						//final N5Writer n5Lcl = new N5FSWriter(n5Path);
+					gridBlock ->
+					{
 						final N5Writer n5Lcl = URITools.instantiateN5Writer( StorageFormat.N5, n5PathURI );
 
-						final DataType dataType = n5Lcl.getAttribute( "setup" + viewId.getViewSetupId(), "dataType", DataType.class );
-						final String datasetPrev = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s-1);
-						final String dataset = "setup" + viewId.getViewSetupId() + "/timepoint" + viewId.getTimePointId() + "/s" + (s);
+						N5ApiTools.writeDownsampledBlock(
+								n5Lcl,
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+								gridBlock );
 
-						if ( dataType == DataType.UINT16 )
-						{
-							RandomAccessibleInterval<UnsignedShortType> downsampled = N5Utils.open(n5Lcl, datasetPrev);;
-
-							for ( int d = 0; d < downsampled.numDimensions(); ++d )
-								if ( ds[ d ] > 1 )
-									downsampled = LazyHalfPixelDownsample2x.init(
-										downsampled,
-										new FinalInterval( downsampled ),
-										new UnsignedShortType(),
-										blockSize,
-										d);
-
-							final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
-							N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedShortType());
-						}
-						else if ( dataType == DataType.UINT8 )
-						{
-							RandomAccessibleInterval<UnsignedByteType> downsampled = N5Utils.open(n5Lcl, datasetPrev);
-
-							for ( int d = 0; d < downsampled.numDimensions(); ++d )
-								if ( ds[ d ] > 1 )
-									downsampled = LazyHalfPixelDownsample2x.init(
-										downsampled,
-										new FinalInterval( downsampled ),
-										new UnsignedByteType(),
-										blockSize,
-										d);
-
-							final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
-							N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new UnsignedByteType());
-						}
-						else if ( dataType == DataType.FLOAT32 )
-						{
-							RandomAccessibleInterval<FloatType> downsampled = N5Utils.open(n5Lcl, datasetPrev);;
-
-							for ( int d = 0; d < downsampled.numDimensions(); ++d )
-								if ( ds[ d ] > 1 )
-									downsampled = LazyHalfPixelDownsample2x.init(
-										downsampled,
-										new FinalInterval( downsampled ),
-										new FloatType(),
-										blockSize,
-										d);
-
-							final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
-							N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, dataset, gridBlock[2], new FloatType());
-						}
-						else
-						{
-							n5Lcl.close();
-							throw new RuntimeException("Unsupported pixel type: " + dataType );
-						}
+						n5Lcl.close();
 					});
 
 			System.out.println( "Resaved N5 s" + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
@@ -470,11 +263,11 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		if ( URITools.isFile( n5PathURI ))
 			dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5PathURI ), dataGlobal.getSequenceDescription()));
 		else
-			dataGlobal.getSequenceDescription().setImgLoader( new N5CloudImageLoader( null, n5PathURI, dataGlobal.getSequenceDescription()));
+			dataGlobal.getSequenceDescription().setImgLoader( new N5CloudImageLoader( null, n5PathURI, dataGlobal.getSequenceDescription())); // null is OK because the instance is not used now
 
 		new XmlIoSpimData2().save( dataGlobal, xmlOutURI );
 
-		n5.close();
+		n5Writer.close();
 
 		Thread.sleep( 100 );
 		System.out.println( "Resaved project, in total took: " + (System.currentTimeMillis() - time ) + " ms." );
