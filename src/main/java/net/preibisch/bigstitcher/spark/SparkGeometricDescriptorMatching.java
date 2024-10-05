@@ -519,15 +519,18 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		for ( final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>>> tupleList : results )
 			for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>> tuple : tupleList )
 			{
-				final Pair<ViewId, ViewId> pair = tuple._2().getPair();// Spark.derserializeViewIdPairsForRDD( tuple._2() );
-				
-				final ViewId vA = pair.getA();
-				final ViewId vB = pair.getB();
+				//final Pair<ViewId, ViewId> pair = tuple._2().getPair();// Spark.derserializeViewIdPairsForRDD( tuple._2() );
+
+				final ViewId vA = tuple._2().vA;
+				final ViewId vB = tuple._2().vB;
+
+				final String labelA = tuple._2().labelA;
+				final String labelB = tuple._2().labelB;
 	
-				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelMapGlobal.get( vA ) );
-				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelMapGlobal.get( vB ) );
+				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelA );// labelMapGlobal.get( vA ) );
+				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelB );// labelMapGlobal.get( vB ) );
 	
-				MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelMapGlobal.get( vA ), labelMapGlobal.get( vB ), listA, listB );
+				MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelA, labelB, listA, listB );
 			}
 
 		if (!dryRun)
@@ -535,7 +538,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			System.out.println( "Saving corresponding interest points ...");
 	
 			for ( final ViewId v : viewIdsGlobal )
+			{
+				// TODO: for each label
 				dataGlobal.getViewInterestPoints().getViewInterestPoints().get( v ).getInterestPointList( labelMapGlobal.get( v ) ).saveCorrespondingInterestPoints( true );
+			}
 		}
 
 		sc.close();
