@@ -113,8 +113,12 @@ public class Solver extends AbstractRegistration
 	protected Boolean splitTimepoints = null;
 
 
-	@Option(names = { "-l", "--label" }, description = "label of the interest points used for solve if using interest points (e.g. beads)")
-	protected String label = null;
+	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
+	protected ArrayList<String> labels = null;
+
+	@Option(names = { "-lw", "--labelweights" }, required = false, description = "weights of label(s) of the interest points used for registration (e.g. -l 1.0 -l 0.1, default: 1.0)")
+	protected ArrayList<Double> labelweights = null;
+
 
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
@@ -160,13 +164,30 @@ public class Solver extends AbstractRegistration
 		// setup specific things for Interestpoints or Stitching as a source
 		if ( sourcePoints == SolverSource.IP )
 		{
-			if ( label == null || label.trim().length() == 0 )
+			if ( labels == null || labels.size() == 0 )
 			{
-				System.out.println( "You need to specify a label (-l) when using interest points." );
+				System.out.println( "No labels specified. Stopping." );
 				return null;
 			}
 
-			System.out.println( "Using interest points '" + label + "' as source for solve." );
+			if ( labelweights == null || labelweights.size() == 0 )
+			{
+				labelweights = new ArrayList<>();
+				labels.forEach( label -> labelweights.add( 1.0 ));
+			}
+
+			if ( labelweights.size() != labels.size() )
+			{
+				System.out.println( "You need to specify as many weights as labels, or do not specify weights at all" );
+				return null;
+			}
+
+			final HashMap< String, Double > map = new HashMap<>();
+
+			for ( int i = 0; i < labels.size(); ++i )
+				map.put( labels.get( i ), labelweights.get( i ) ); // weights are used for the solve
+
+			System.out.println( "labels & weights: " + map);
 
 			if ( groupIllums == null )
 				groupIllums = false;

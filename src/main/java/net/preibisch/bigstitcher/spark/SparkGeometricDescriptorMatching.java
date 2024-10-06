@@ -86,9 +86,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
-	@Option(names = { "-lw", "--labelweights" }, required = false, description = "weights of label(s) of the interest points used for registration (e.g. -l 1.0 -l 0.1, default: 1.0)")
-	protected ArrayList<Double> labelweights = null;
-
 	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
 	protected Method registrationMethod = null;
 
@@ -188,24 +185,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			ransacMaxError = 5.0;
 		}
 
-		if ( labels == null || labels.size() == 0 )
-		{
-			System.out.println( "No labels specified. Stopping." );
-			return null;
-		}
-
-		if ( labelweights == null || labelweights.size() == 0 )
-		{
-			labelweights = new ArrayList<>();
-			labels.forEach( label -> labelweights.add( 1.0 ));
-		}
-
-		if ( labelweights.size() != labels.size() )
-		{
-			System.out.println( "You need to specify as many weights as labels, or do not specify weights at all" );
-			return null;
-		}
-
 		// identify groups/subsets
 		final PairwiseSetup< ViewId > setup = setupGroups( viewReg );
 
@@ -223,7 +202,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final HashMap< String, Double > map = new HashMap<>();
 
 		for ( int i = 0; i < labels.size(); ++i )
-			map.put( labels.get( i ), labelweights.get( i ) );
+			map.put( labels.get( i ), 1.0 ); // weights are not relevant during point matching, just for the solver (global opt)
 
 		System.out.println( "labels & weights: " + map);
 
