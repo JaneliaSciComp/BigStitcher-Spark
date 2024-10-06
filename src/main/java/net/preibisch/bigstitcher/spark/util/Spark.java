@@ -25,6 +25,7 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkEnv;
 import org.slf4j.Logger;
@@ -260,4 +261,23 @@ public class Spark {
 		return serializableList;
 	}
 
+	public static ArrayList< Pair<Group<ViewId>, Group<ViewId>> > toGroupViewIds( final List<Pair<Group<ViewId>, Group<ViewId>>> pairList )
+	{
+		final ArrayList< Pair<Group<ViewId>, Group<ViewId>> > serializableList = new ArrayList<>();
+
+		pairList.forEach( pair -> serializableList.add(
+				new ValuePair<>(
+						toGroupViewIds( pair.getA() ),
+						toGroupViewIds( pair.getB() ) )));
+
+		return serializableList;
+	}
+
+	public static Group<ViewId> toGroupViewIds( final Group<ViewId> group )
+	{
+		return new Group<>(
+				group.getViews().stream().map( viewId -> new ViewId(
+						viewId.getTimePointId(),
+						viewId.getViewSetupId()) ).collect( Collectors.toList() ) );
+	}
 }

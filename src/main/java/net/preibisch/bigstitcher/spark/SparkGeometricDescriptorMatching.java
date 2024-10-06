@@ -218,6 +218,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, regularizationLambda).getClass().getSimpleName() );
 
+		// set up ViewIds, Labels and Weights
 		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = new HashMap<>();
 		final HashMap< String, Double > map = new HashMap<>();
 
@@ -253,8 +254,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 		final URI xmlURI = this.xmlURI;
 		final boolean matchAcrossLabels = this.matchAcrossLabels;
-		//final ArrayList< String > labels = this.labels;
-		//final ArrayList< Double > labelweights = this.labelweights;
 		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
@@ -376,17 +375,20 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			System.out.println( "grouped" );
 
 			final List<Pair<Group<ViewId>, Group<ViewId>>> groupedPairs =
-					setup.getSubsets().stream().map( s -> s.getGroupedPairs() ).flatMap(List::stream).collect( Collectors.toList() );
+					Spark.toGroupViewIds(
+							setup.getSubsets().stream().map( s -> s.getGroupedPairs() ).flatMap(List::stream).collect( Collectors.toList() ) );
+
+			// hashmap Group<ViewId> to Map< String, Double > for defining all tasks ahead of time
+			final HashMap< Group< ViewId >, HashMap< String, Double > > groupedMap = new HashMap<>();
+			setup.getSubsets().forEach( subset -> subset.getGroups().forEach( group -> groupedMap.put( Spark.toGroupViewIds( group ), map ) ));
 
 			final ArrayList<MatchingTask<Group<ViewId>>> tasksList = 
-					MatcherPairwiseTools.getTasksList( groupedPairs, null, matchAcrossLabels ); // TODO: hashmap Group<ViewId> to Map< String, Double > missing
-
+					MatcherPairwiseTools.getTasksList( groupedPairs, groupedMap, matchAcrossLabels ); 
 
 			System.out.println( "The following groups of ViewIds will be matched to each other: ");
 			groupedPairs.forEach( pair -> System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() ) );
 			System.out.println( "In total: " + groupedPairs.size() + " pair(s).");
 
-			//final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ) );
 			final JavaRDD<MatchingTask<Group<ViewId>>> rdd = sc.parallelize( tasksList );
 
 			rddResults = rdd.map( task ->
@@ -528,16 +530,14 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		for ( final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>>> tupleList : results )
 			for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>> tuple : tupleList )
 			{
-				//final Pair<ViewId, ViewId> pair = tuple._2().getPair();// Spark.derserializeViewIdPairsForRDD( tuple._2() );
-
 				final ViewId vA = tuple._2().vA;
 				final ViewId vB = tuple._2().vB;
 
 				final String labelA = tuple._2().labelA;
 				final String labelB = tuple._2().labelB;
 	
-				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelA );// labelMapGlobal.get( vA ) );
-				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelB );// labelMapGlobal.get( vB ) );
+				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelA );
+				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelB );
 	
 				MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelA, labelB, listA, listB );
 			}
