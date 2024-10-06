@@ -243,4 +243,21 @@ public class Spark {
 
 	private static final Logger LOG = LoggerFactory.getLogger(Spark.class);
 
+	public static ArrayList< Pair<ViewId, ViewId> > toViewIds( final List<Pair<ViewId, ViewId>> pairList )
+	{
+		final ArrayList< Pair<ViewId, ViewId> > serializableList = new ArrayList<>();
+
+		pairList.forEach( pair -> serializableList.add(
+				new ValuePair<>(
+						new ViewId(
+								pair.getA().getTimePointId(),
+								pair.getA().getViewSetupId()),
+						new ViewId(
+								pair.getB().getTimePointId(),
+								pair.getB().getViewSetupId())
+						)));
+
+		return serializableList;
+	}
+
 }
