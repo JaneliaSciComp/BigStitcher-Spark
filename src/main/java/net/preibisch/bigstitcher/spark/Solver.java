@@ -29,6 +29,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import mpicbg.models.AbstractModel;
@@ -161,6 +162,8 @@ public class Solver extends AbstractRegistration
 		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
 			return null;
 
+		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal;
+
 		// setup specific things for Interestpoints or Stitching as a source
 		if ( sourcePoints == SolverSource.IP )
 		{
@@ -189,6 +192,8 @@ public class Solver extends AbstractRegistration
 
 			System.out.println( "labels & weights: " + map);
 
+			labelMapGlobal = SparkGeometricDescriptorMatching.buildLabelMap( dataGlobal, viewIdsGlobal, map );
+
 			if ( groupIllums == null )
 				groupIllums = false;
 
@@ -204,6 +209,8 @@ public class Solver extends AbstractRegistration
 		else
 		{
 			System.out.println( "Using stitching results as source for solve." );
+
+			labelMapGlobal = null;
 
 			if ( groupIllums == null )
 				groupIllums = true;
@@ -258,7 +265,7 @@ public class Solver extends AbstractRegistration
 		final PointMatchCreator pmc;
 
 		if ( sourcePoints == SolverSource.IP )
-			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, label);//new InterestPointMatchCreator( pairs );
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal );//new InterestPointMatchCreator( pairs );
 		else
 			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal);
 
@@ -410,15 +417,19 @@ public class Solver extends AbstractRegistration
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
-			final String label )
+			final Map< ViewId, ? extends Map< String, Double > > labelMap )
 	{
 		// load all interest points and correspondences
-		System.out.println( "Loading all relevant interest points ... ");
-		for ( final ViewId viewId : viewIdsGlobal )
+		System.out.println( "Loading all relevant interest points (in parallel) ... ");
+
+		final ArrayList< Pair< ViewId, String > > ipsToLoad = new ArrayList<>();
+		viewIdsGlobal.forEach( viewId -> labelMap.get( viewId ).forEach( (label, weight) -> ipsToLoad.add( new ValuePair<>( viewId, label ) ) ));
+
+		ipsToLoad.parallelStream().forEach( info ->
 		{
-			dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).getInterestPointsCopy();
-			dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-		}
+			dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getInterestPointsCopy();
+			dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getCorrespondingInterestPointsCopy();
+		});
 
 		// extract all corresponding interest points for given ViewId's and label
 		System.out.println( "Setting up all corresponding interest points ... ");
@@ -436,51 +447,60 @@ public class Solver extends AbstractRegistration
 				final ViewRegistration vRegB = dataGlobal.getViewRegistrations().getViewRegistration( vB );
 
 				vRegA.updateModel(); vRegB.updateModel();
-				AffineTransform3D mA = vRegA.getModel();
-				AffineTransform3D mB = vRegB.getModel();
+				final AffineTransform3D mA = vRegA.getModel();
+				final AffineTransform3D mB = vRegB.getModel();
 
-				PairwiseResult< ? > pairResult = new PairwiseResult<>( false );
-				List inliers = new ArrayList<>();
-
-				List<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-				//List<CorrespondingInterestPoints> cpB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-
-				final List<InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( label ).getInterestPointsCopy();
-				final List<InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getInterestPointsCopy();
-
-				for ( final CorrespondingInterestPoints p : cpA )
-				{
-					if ( p.getCorrespodingLabel().equals( label ) && p.getCorrespondingViewId().equals( vB ) )
+				// iterate over all pairs of labels
+				for ( final String labelA : labelMap.get( vA ).keySet() )
+					for ( final String labelB : labelMap.get( vB ).keySet() )
 					{
-						InterestPoint ipA = ipListA.get( p.getDetectionId() );
-						InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
-
-						// we need to copy the array because it might not be bijective
-						// (some points in one list might correspond with the same point in the other list)
-						// which leads to the SpimData model being applied twice
-						ipA = new InterestPoint( ipA.getId(), ipA.getL().clone() );
-						ipB = new InterestPoint( ipB.getId(), ipB.getL().clone() );
-
-						// transform the points
-						mA.apply( ipA.getL(), ipA.getL() );
-						mA.apply( ipA.getW(), ipA.getW() );
-						mB.apply( ipB.getL(), ipB.getL() );
-						mB.apply( ipB.getW(), ipB.getW() );
-
-						inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
+						final PairwiseResult< ? > pairResult = new PairwiseResult<>( false );
+						final ArrayList inliers = new ArrayList<>();
+		
+						// set labels (required by InterestPointMatchCreator to assign weights)
+						pairResult.setLabelA( labelA );
+						pairResult.setLabelB( labelB );
+		
+						final List<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getCorrespondingInterestPointsCopy();
+						//List<CorrespondingInterestPoints> cpB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
+		
+						final List<InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getInterestPointsCopy();
+						final List<InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB ).getInterestPointsCopy();
+		
+						for ( final CorrespondingInterestPoints p : cpA )
+						{
+							if ( p.getCorrespodingLabel().equals( labelB ) && p.getCorrespondingViewId().equals( vB ) )
+							{
+								InterestPoint ipA = ipListA.get( p.getDetectionId() );
+								InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
+		
+								// we need to copy the array because it might not be bijective
+								// (some points in one list might correspond with the same point in the other list)
+								// which leads to the SpimData model being applied twice
+								ipA = new InterestPoint( ipA.getId(), ipA.getL().clone() );
+								ipB = new InterestPoint( ipB.getId(), ipB.getL().clone() );
+		
+								// transform the points
+								mA.apply( ipA.getL(), ipA.getL() );
+								mA.apply( ipA.getW(), ipA.getW() );
+								mB.apply( ipB.getL(), ipB.getL() );
+								mB.apply( ipB.getW(), ipB.getW() );
+		
+								inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
+							}
+						}
+		
+						// set inliers
+						if ( inliers.size() > 0 )
+						{
+							System.out.println( Group.pvid( vA ) + " <-> " + Group.pvid( vB ) + ": " + inliers.size() + " correspondences added." );
+							pairResult.setInliers( inliers, 0.0 );
+							pairs.add( new ValuePair<>( new ValuePair<>( vA, vB), pairResult)) ;
+						}
 					}
-				}
-
-				// set inliers
-				if ( inliers.size() > 0 )
-				{
-					System.out.println( Group.pvid( vA ) + " <-> " + Group.pvid( vB ) + ": " + inliers.size() + " correspondences added." );
-					pairResult.setInliers( inliers, 0.0 );
-					pairs.add( new ValuePair<>( new ValuePair<>( vA, vB), pairResult)) ;
-				}
 			}
 
-		return new InterestPointMatchCreator( pairs );
+		return new InterestPointMatchCreator( pairs, labelMap );
 	}
 
 	public static HashSet< ViewId > assembleFixedAuto(

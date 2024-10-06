@@ -198,7 +198,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, regularizationLambda).getClass().getSimpleName() );
 
 		// set up ViewIds, Labels and Weights
-		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = new HashMap<>();
 		final HashMap< String, Double > map = new HashMap<>();
 
 		for ( int i = 0; i < labels.size(); ++i )
@@ -206,23 +205,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 		System.out.println( "labels & weights: " + map);
 
-		viewIdsGlobal.forEach( viewId ->
-		{
-			final ViewInterestPointLists ipl = dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId );
-
-			// make sure the label exists for all views that should be processed
-			labels.forEach( label ->
-			{
-				if ( ipl.getInterestPointList( label ) == null )
-				{
-					System.out.println( "Error, label '" + label + "' does for exist for ViewId " + Group.pvid( viewId ) );
-					System.exit( 1 );
-				}
-			});
-
-			// needs to be ViewId, not ViewDescription, then its serializable
-			labelMapGlobal.put( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ), map );
-		});
+		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = buildLabelMap( dataGlobal, viewIdsGlobal, map );
 
 		// clear all correspondences if wanted
 		if ( clearCorrespondences )
@@ -629,15 +612,38 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		return matcher;
 	}
 
-	public static void getAllGroupedPairs( final Collection< Subset< ViewId > > subsets )
+	public static HashMap< ViewId, HashMap< String, Double > > buildLabelMap(
+			final SpimData2 data,
+			final List< ViewId > viewIds,
+			final HashMap< String, Double > map )
 	{
-		subsets.stream().map( s -> s.getGroupedPairs() ).collect( Collectors.toList() );
-		final List<Pair<Group<ViewId>, Group<ViewId>>> groupedPairs = new ArrayList<>();
-		
-		for ( final Subset< ViewId > subset : subsets )
+		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = new HashMap<>();
+		/*final HashMap< String, Double > map = new HashMap<>();
+
+		for ( int i = 0; i < labels.size(); ++i )
+			map.put( labels.get( i ), 1.0 ); // weights are not relevant during point matching, just for the solver (global opt)
+
+		System.out.println( "labels & weights: " + map);*/
+
+		viewIds.forEach( viewId ->
 		{
-			List<Pair<Group<ViewId>, Group<ViewId>>> g = subset.getGroupedPairs();
-		}
+			final ViewInterestPointLists ipl = data.getViewInterestPoints().getViewInterestPointLists( viewId );
+
+			// make sure the label exists for all views that should be processed
+			map.keySet().forEach( label ->
+			{
+				if ( ipl.getInterestPointList( label ) == null )
+				{
+					System.out.println( "Error, label '" + label + "' does for exist for ViewId " + Group.pvid( viewId ) );
+					System.exit( 1 );
+				}
+			});
+
+			// needs to be ViewId, not ViewDescription, then its serializable
+			labelMapGlobal.put( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ), map );
+		});
+
+		return labelMapGlobal;
 	}
 
 	public static void main(final String... args) throws SpimDataException
@@ -645,5 +651,4 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new SparkGeometricDescriptorMatching()).execute(args));
 	}
-
 }
