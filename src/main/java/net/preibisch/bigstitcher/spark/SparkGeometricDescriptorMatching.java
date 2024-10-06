@@ -53,6 +53,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ad
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
@@ -97,6 +98,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
 	protected Double significance = 3.0;
+
+	@Option(names = { "-sr", "--searchRadius" }, description = "Only for PRECISE_TRANSLATION; limits the search range for corresponding points in global coordinate space (default: no limit)")
+	protected Double searchRadius = null;
 
 	@Option(names = { "-r", "--redundancy" }, description = "the redundancy of the local descriptor (default: 1)")
 	protected Integer redundancy = 1;
@@ -265,6 +269,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
 		final Method registrationMethod = this.registrationMethod;
 		final double ratioOfDistance = this.significance;
+		final boolean limitSearchRadius = ( this.searchRadius == null ) ? false : true;
+		final double searchRadius = ( this.searchRadius == null ) ? 0 : this.searchRadius;
 		final int redundancy = this.redundancy;
 		final int numNeighbors = this.numNeighbors;
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
@@ -341,7 +347,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						model,
 						numNeighbors,
 						redundancy,
-						(float)ratioOfDistance,
+						ratioOfDistance,
+						limitSearchRadius,
+						searchRadius,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC);
@@ -445,11 +453,15 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						model,
 						numNeighbors,
 						redundancy,
-						(float)ratioOfDistance,
+						ratioOfDistance,
+						limitSearchRadius,
+						searchRadius,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC);
 
+				// TODO: is this already running for one viewId, one label?
+				// TODO: do not use executorservice
 				final List< Pair< Pair< Group< ViewId >, Group< ViewId > >, PairwiseResult< GroupedInterestPoint< ViewId > > > > resultGroup =
 						MatcherPairwiseTools.computePairs( new ArrayList<>( Arrays.asList( task.getPair() ) ), groupedInterestpoints, matcher, matchAcrossLabels );
 
@@ -535,13 +547,17 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 		if (!dryRun)
 		{
-			System.out.println( "Saving corresponding interest points ...");
-	
+			System.out.println( "Saving corresponding interest points (in parallel) ...");
+
+			final ArrayList< Pair< ViewId, String > > allIps = new ArrayList<>();
+
 			for ( final ViewId v : viewIdsGlobal )
-			{
-				// TODO: for each label
-				dataGlobal.getViewInterestPoints().getViewInterestPoints().get( v ).getInterestPointList( labelMapGlobal.get( v ) ).saveCorrespondingInterestPoints( true );
-			}
+				for ( final String l : labels )
+					allIps.add( new ValuePair<>( v, l) );
+
+			final Map<ViewId, ViewInterestPointLists> ip = dataGlobal.getViewInterestPoints().getViewInterestPoints();
+
+			allIps.parallelStream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( true ) );
 		}
 
 		sc.close();
@@ -567,7 +583,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final Model< ? > model,
 			final int numNeighbors,
 			final int redundancy,
-			final float ratioOfDistance,
+			final double ratioOfDistance,
+			final boolean limitSearchRadius,
+			final double searchRadius,
 			final double icpMaxDistance,
 			final int icpMaxIterations,
 			final boolean icpUseRANSAC )
@@ -591,7 +609,14 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 		else if ( registrationMethod == Method.PRECISE_TRANSLATION )
 		{
-			final RGLDMParameters dp = new RGLDMParameters(model, RGLDMParameters.differenceThreshold, (float)ratioOfDistance, numNeighbors, redundancy);
+			final RGLDMParameters dp = new RGLDMParameters(
+					model,
+					RGLDMParameters.differenceThreshold,
+					(float)ratioOfDistance,
+					limitSearchRadius,
+					searchRadius,
+					numNeighbors,
+					redundancy);
 			matcher = new RGLDMPairwise<>( rp, dp );
 		}
 		else
