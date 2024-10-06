@@ -400,8 +400,24 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				views.addAll( task.vA.getViews() );
 				views.addAll( task.vB.getViews() );
 
+				// filter so we only load interest points we actually need
 				final HashMap< ViewId, HashMap< String, Double > > labelMap = new HashMap<>();
-				views.forEach( view -> labelMap.put(view, labelMapGlobal.get( view ) ));
+
+				views.forEach( viewId -> labelMap.put( viewId, new HashMap<>() ));
+
+				task.vA.getViews().forEach( viewA -> {
+						labelMapGlobal.get( viewA ).forEach( (label, weight ) -> {
+							if ( label.equals( task.labelA ) )
+								labelMap.get( viewA ).put( label, weight );
+						} );
+				} );
+
+				task.vB.getViews().forEach( viewB -> {
+						labelMapGlobal.get( viewB ).forEach( (label, weight ) -> {
+							if ( label.equals( task.labelB ) )
+								labelMap.get( viewB ).put( label, weight );
+						} );
+				} );
 
 				// load & transform all interest points
 				final Map< ViewId, HashMap< String, List< InterestPoint > > > interestpoints =
