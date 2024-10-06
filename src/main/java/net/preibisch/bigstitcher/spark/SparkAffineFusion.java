@@ -23,12 +23,12 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 
-import org.apache.hadoop.fs.StorageType;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -37,6 +37,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
@@ -53,17 +54,21 @@ import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import util.Grid;
+import util.URITools;
 
 public class SparkAffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5")
-	private String n5Path = null;
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	private String n5PathURIString = null;
 
 	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "Custom N5/ZARR/HDF5 dataset - it must end with '/s0' to be able to compute a multi-resolution pyramid, e.g. -d /ch488/s0")
 	private String n5Dataset = null;
@@ -76,7 +81,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
-	private StorageType storageType = null;
+	private StorageFormat storageType = null;
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
@@ -135,6 +140,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Override
 	public Void call() throws Exception
 	{
+		final URI n5PathURI = URI.create( n5PathURIString );
+
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for affine fusion.");
@@ -233,7 +240,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			return null;
 
 		if ( multiRes )
-			downsamplings = ExportTools.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
+			downsamplings = ExportN5Api.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
 		else if ( this.downsampling != null )
 			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
 		else
@@ -247,7 +254,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		//ImageJFunctions.show( virtual, Executors.newFixedThreadPool( Runtime.getRuntime().availableProcessors() ) );
 		//SimpleMultiThreading.threadHaltUnClean();
 
-		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : Import.createBDVPath( this.bdvString, this.storageType );
+		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : N5ApiTools.createBDVPath( this.bdvString, 0, this.storageType );
 		final Compression compression = new GzipCompression( 1 );
 
 		final double minIntensity = ( uint8 || uint16 ) ? this.minIntensity : 0;
@@ -270,7 +277,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		}
 		catch (Exception e ) {}
 
-		final N5Writer driverVolumeWriter = N5Util.createWriter( n5Path, storageType );
+		final N5Writer driverVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 
 		System.out.println( "Format being written: " + storageType );
 
@@ -303,7 +310,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 			try
 			{
-				if ( !ExportTools.writeBDVMetaData(
+				if ( !N5ApiTools.writeBDVMetaData(
 						driverVolumeWriter,
 						storageType,
 						dataType,
@@ -312,7 +319,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 						blockSize,
 						downsamplings,
 						viewId,
-						n5Path,
+						n5PathURI,
 						xmlOutPath,
 						instantiate ) )
 				{
@@ -344,11 +351,11 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		if ( masks )
 			rdd.foreach( new WriteSuperBlockMasks(
-					xmlPath,
+					xmlURI,
 					preserveAnisotropy,
 					anisotropyFactor,
 					minBB,
-					n5Path,
+					n5PathURI,
 					n5Dataset,
 					storageType,
 					serializedViewIds,
@@ -358,27 +365,27 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					blockSize ) );
 		else
 			rdd.foreach( new WriteSuperBlock(
-				xmlPath,
-				preserveAnisotropy,
-				anisotropyFactor,
-				minBB,
-				n5Path,
-				n5Dataset,
-				bdvString,
-				storageType,
-				serializedViewIds,
-				uint8,
-				uint16,
-				minIntensity,
-				range,
-				blockSize,
-				firstTileWins ) );
+					xmlURI,
+					preserveAnisotropy,
+					anisotropyFactor,
+					minBB,
+					n5PathURI,
+					n5Dataset,
+					bdvString,
+					storageType,
+					serializedViewIds,
+					uint8,
+					uint16,
+					minIntensity,
+					range,
+					blockSize,
+					firstTileWins ) );
 
 		if ( this.downsamplings != null )
 		{
 			// TODO: run common downsampling code (affine, non-rigid, downsampling-only)
 			Downsampling.createDownsampling(
-					n5Path,
+					n5PathURI,
 					n5Dataset,
 					driverVolumeWriter,
 					dimensions,
@@ -394,12 +401,12 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		sc.close();
 
 		// close HDF5 writer
-		if ( N5Util.hdf5DriverVolumeWriter != null )
+		/*if ( N5Util.hdf5DriverVolumeWriter != null )
 			N5Util.hdf5DriverVolumeWriter.close();
-		else if ( multiRes )
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
+		else*/ if ( multiRes )
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
 		else
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset + "'" );
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
