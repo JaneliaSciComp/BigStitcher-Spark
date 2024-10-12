@@ -90,8 +90,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
-	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 4,4,1)")
-	private String blockScaleString = "4,4,1";
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
+	private String blockScaleString = "2,2,1";
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
