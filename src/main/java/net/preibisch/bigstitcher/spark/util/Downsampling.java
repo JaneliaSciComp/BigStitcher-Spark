@@ -42,10 +42,10 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.SparkAffineFusion;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import util.Grid;
-import util.URITools;
 
 public class Downsampling
 {
@@ -123,7 +123,8 @@ public class Downsampling
 			rdd.foreach(
 					gridBlock ->
 					{
-						final N5Writer executorVolumeWriter = URITools.instantiateN5Writer( storageType, path );//N5Util.createWriter( path, storageType );
+						final N5Writer executorVolumeWriter =
+								SparkAffineFusion.createN5Writer( path, storageType );//URITools.instantiateN5Writer( storageType, path );//N5Util.createWriter( path, storageType );
 
 						try
 						{
@@ -212,8 +213,8 @@ public class Downsampling
 							exc.printStackTrace();
 						}
 
-						// not HDF5
-						//if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
+						// if it is not the shared HDF5 writer, then close
+						if ( SparkAffineFusion.sharedHDF5Writer != executorVolumeWriter )
 							executorVolumeWriter.close();
 					});
 

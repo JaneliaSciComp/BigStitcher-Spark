@@ -47,6 +47,7 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.SparkAffineFusion;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -167,7 +168,7 @@ public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 
 		final List< ViewId > overlappingViews = WriteSuperBlock.findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
-		final N5Writer executorVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
+		final N5Writer executorVolumeWriter = SparkAffineFusion.createN5Writer(n5PathURI, storageType); //URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 
 		final Img<UnsignedByteType> img = ArrayImgs.unsignedBytes( fusedBlock.dimensionsAsLongArray() );
 		final RandomAccessibleInterval<UnsignedByteType> block = Views.translate( img, fusedBlockMin );
@@ -229,5 +230,9 @@ A:			while ( c.hasNext() )
 
 			N5Utils.saveBlock(sourceFloat, executorVolumeWriter, n5Dataset, gridBlock[2]);
 		}
+
+		// if it is not the shared HDF5 writer, then close
+		if ( SparkAffineFusion.sharedHDF5Writer != executorVolumeWriter )
+			executorVolumeWriter.close();
 	}
 }

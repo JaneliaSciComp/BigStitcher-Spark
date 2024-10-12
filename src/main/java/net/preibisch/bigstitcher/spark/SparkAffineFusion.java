@@ -29,7 +29,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.Executors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -53,7 +52,6 @@ import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -190,7 +188,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
-		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
+		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
+				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
 
 		final DataType dataType;
 
@@ -255,7 +254,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		else if ( this.downsampling != null )
 			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
 		else
-			downsamplings = new int[][]{{ 1, 1, 1 }};
+			downsamplings = null;// for new code: new int[][]{{ 1, 1, 1 }};
 
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
@@ -282,31 +281,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		}
 		catch (Exception e ) {}
 
-		final N5Writer driverVolumeWriter;// = URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
-
-		try
-		{
-			if ( storageType == StorageFormat.HDF5 )
-			{
-				final File dir = new File( URITools.removeFilePrefix( n5PathURI ) ).getParentFile();
-				if ( !dir.exists() )
-					dir.mkdirs();
-				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.removeFilePrefix( n5PathURI ) );
-			}
-			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
-			{
-				driverVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );
-			}
-			else
-				throw new RuntimeException( "storageType " + storageType + " not supported." );
-		}
-		catch ( Exception e )
-		{
-			IOFunctions.println( "Couldn't create " + storageType + " container '" + n5PathURI + "': " + e );
-			return null;
-		}
-
 		System.out.println( "Format being written: " + storageType );
+		final N5Writer driverVolumeWriter = createN5Writer( n5PathURI, storageType );
 
 		driverVolumeWriter.createDataset(
 				n5Dataset,
@@ -372,9 +348,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		sc.sc().requestExecutors( 10 );
-		sc.sc().killExecutor( n5Dataset );
-
 		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
 		final long time = System.currentTimeMillis();
@@ -430,10 +403,10 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		sc.close();
 
-		// close HDF5 writer
-		if ( sharedHDF5Writer != null )
-			sharedHDF5Writer.close();
-		else if ( multiRes )
+		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
+		driverVolumeWriter.close();
+
+		if ( multiRes )
 			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
 		else
 			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
@@ -441,6 +414,41 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		return null;
+	}
+
+	public static N5Writer createN5Writer(
+			final URI n5PathURI,
+			final StorageFormat storageType )
+	{
+		final N5Writer driverVolumeWriter;
+
+		try
+		{
+			if ( storageType == StorageFormat.HDF5 )
+			{
+				if ( sharedHDF5Writer != null )
+					return sharedHDF5Writer;
+
+				final File dir = new File( URITools.removeFilePrefix( n5PathURI ) ).getParentFile();
+				if ( !dir.exists() )
+					dir.mkdirs();
+
+				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.removeFilePrefix( n5PathURI ) );
+			}
+			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+			{
+				driverVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );
+			}
+			else
+				throw new RuntimeException( "storageType " + storageType + " not supported." );
+		}
+		catch ( Exception e )
+		{
+			IOFunctions.println( "Couldn't create " + storageType + " container '" + n5PathURI + "': " + e );
+			return null;
+		}
+
+		return driverVolumeWriter;
 	}
 
 	public static void main(final String... args) throws SpimDataException {
