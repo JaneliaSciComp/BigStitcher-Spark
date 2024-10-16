@@ -72,6 +72,7 @@ import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.Grid;
+import util.URITools;
 
 public class SparkNonRigidFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
@@ -172,12 +173,12 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		final BoundingBox bb = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
-		this.n5PathURI = URI.create( n5PathURIString );
+		this.n5PathURI = URITools.toURI( n5PathURIString );
 		System.out.println( "Fused volume: " + n5PathURI );
 
 		if ( this.bdvString != null )
 		{
-			this.xmlOutURI = URI.create( xmlOutURIString );
+			this.xmlOutURI = URITools.toURI( xmlOutURIString );
 			System.out.println( "XML: " + xmlOutURI );
 		}
 

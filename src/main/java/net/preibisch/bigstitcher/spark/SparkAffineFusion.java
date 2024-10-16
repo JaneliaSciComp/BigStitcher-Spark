@@ -177,12 +177,12 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
-		this.n5PathURI = URI.create( n5PathURIString );
+		this.n5PathURI = URITools.toURI( n5PathURIString );
 		System.out.println( "Fused volume: " + n5PathURI );
 
 		if ( this.bdvString != null )
 		{
-			this.xmlOutURI = URI.create( xmlOutURIString );
+			this.xmlOutURI = URITools.toURI( xmlOutURIString );
 			System.out.println( "XML: " + xmlOutURI );
 		}
 
@@ -429,11 +429,11 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 				if ( sharedHDF5Writer != null )
 					return sharedHDF5Writer;
 
-				final File dir = new File( URITools.removeFilePrefix( n5PathURI ) ).getParentFile();
+				final File dir = new File( URITools.fromURI( n5PathURI ) ).getParentFile();
 				if ( !dir.exists() )
 					dir.mkdirs();
 
-				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.removeFilePrefix( n5PathURI ) );
+				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.fromURI( n5PathURI ) );
 			}
 			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
 			{

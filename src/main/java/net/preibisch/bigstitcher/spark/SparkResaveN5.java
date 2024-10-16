@@ -94,7 +94,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		if ( dataGlobal == null )
 			return null;
 
-		xmlOutURI = URI.create( xmlOutURIString );
+		xmlOutURI = URITools.toURI( xmlOutURIString );
 		System.out.println( "xmlout: " + xmlOutURI );
 
 		// process all views
@@ -112,7 +112,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println();
 		}
 
-		final URI n5PathURI = URI.create( this.n5PathURIString == null ? URITools.appendName( URITools.getParent( xmlOutURI ), "dataset.n5" ) : n5PathURIString );
+		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParent( xmlOutURI ), "dataset.n5" ) : n5PathURIString );
 		final Compression compression = new ZstandardCompression( 1 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);

@@ -737,7 +737,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					final InterestPointsN5 i = (InterestPointsN5)ipl;
 
 					//final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
-					final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URI.create( URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) ) );
+					final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) ) );
 
 					final String datasetIntensities = i.ipDataset() + "/intensities";
 
