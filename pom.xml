@@ -144,6 +144,12 @@
 			<groupId>org.bigdataviewer</groupId>
 			<artifactId>bigdataviewer-n5</artifactId>
 			<version>1.0.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
+                </exclusion>
+            </exclusions>
 		</dependency>
         <dependency>
             <groupId>sc.fiji</groupId>
