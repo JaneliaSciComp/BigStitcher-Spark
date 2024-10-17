@@ -6,13 +6,13 @@
     <parent>
         <groupId>org.scijava</groupId>
         <artifactId>pom-scijava</artifactId>
-        <version>38.0.1</version>
+        <version>39.0.0</version>
         <relativePath/>
     </parent>
 
     <groupId>net.preibisch</groupId>
     <artifactId>BigStitcher-Spark</artifactId>
-    <version>0.0.2-SNAPSHOT</version>
+    <version>0.1.0-SNAPSHOT</version>
 
     <name>BigStitcher Spark</name>
     <description>Spark-based parallel BigStitcher project.</description>
@@ -86,6 +86,7 @@
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
 
+		<!--
 		<imglib2.version>7.1.2</imglib2.version>
 		<imglib2-realtransform.version>4.0.3</imglib2-realtransform.version>
 		<imglib2-cache.version>1.0.0-beta-19</imglib2-cache.version>
@@ -94,12 +95,12 @@
 		<n5-imglib2.version>7.0.2</n5-imglib2.version>
 		<bigdataviewer-core.version>10.6.1</bigdataviewer-core.version>
 		<bigdataviewer-vistools.version>1.0.0-beta-36</bigdataviewer-vistools.version>
-		<spim_data.version>2.3.3</spim_data.version>
-
+		-->
 		<!-- <n5-zarr.version>1.3.5</n5-zarr.version> -->
 
-		<multiview-reconstruction.version>4.1.2-SNAPSHOT</multiview-reconstruction.version>
-		<BigStitcher.version>2.0.1</BigStitcher.version>
+		<spim_data.version>2.3.5</spim_data.version>
+		<multiview-reconstruction.version>4.2.1</multiview-reconstruction.version>
+		<BigStitcher.version>2.1.0</BigStitcher.version>
     </properties>
 
     <repositories>
