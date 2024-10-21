@@ -67,6 +67,11 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	-ds '1,1,1; 2,2,1; 4,4,1; 8,8,2'
 	*/
 
+	// TOOD: there is a bug:
+	// -x s3://janelia-bigstitcher-spark/Stitching/dataset.xml -xo /Users/preibischs/SparkTest/Stitching/dataset.xml
+	// sets the wrong path for the N5:
+	// file:/Users/preibischs/workspace/BigStitcher-Spark/file:/Users/preibischs/SparkTest/Stitching-fromcloud/dataset.n5
+	
 	private static final long serialVersionUID = 1890656279324908516L;
 
 	@Option(names = { "-xo", "--xmlout" }, required = true, description = "path to the output BigStitcher xml, e.g. /home/project-n5.xml or s3://myBucket/dataset.xml")
@@ -261,7 +266,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "Saving new xml to: " + xmlOutURI );
 
 		if ( URITools.isFile( n5PathURI ))
-			dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( new File( n5PathURI.toString() ), dataGlobal.getSequenceDescription()));
+			dataGlobal.getSequenceDescription().setImgLoader( new N5ImageLoader( n5PathURI, dataGlobal.getSequenceDescription()));
 		else
 			dataGlobal.getSequenceDescription().setImgLoader( new N5CloudImageLoader( null, n5PathURI, dataGlobal.getSequenceDescription())); // null is OK because the instance is not used now
 
