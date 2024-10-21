@@ -114,7 +114,7 @@ public class Solver extends AbstractRegistration
 	protected Boolean splitTimepoints = null;
 
 
-	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
+	@Option(names = { "-l", "--label" }, required = false, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
 	@Option(names = { "-lw", "--labelweights" }, required = false, description = "weights of label(s) of the interest points used for registration (e.g. -l 1.0 -l 0.1, default: 1.0)")
