@@ -262,13 +262,6 @@ public class Solver extends AbstractRegistration
 				: new HashMap<>();
 		*/
 
-		final PointMatchCreator pmc;
-
-		if ( sourcePoints == SolverSource.IP )
-			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal );//new InterestPointMatchCreator( pairs );
-		else
-			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal);
-
 		// run global optimization
 		final Collection< Group< ViewId > > groups;
 
@@ -276,6 +269,19 @@ public class Solver extends AbstractRegistration
 			groups = new ArrayList<>();
 		else // for grouping all we need here is the set of groups
 			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
+
+		final PointMatchCreator pmc;
+
+		if ( sourcePoints == SolverSource.IP )
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds );//new InterestPointMatchCreator( pairs );
+		else
+			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal);
+
+		if ( pmc == null )
+		{
+			System.out.println( "No views are connected, stopping." );
+			return null;
+		}
 
 		final GlobalOptimizationParameters globalOptParameters = new GlobalOptimizationParameters(relativeThreshold, absoluteThreshold, globalOptType, false );
 		final Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs = new ArrayList<>();
@@ -417,7 +423,9 @@ public class Solver extends AbstractRegistration
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
-			final Map< ViewId, ? extends Map< String, Double > > labelMap )
+			final Map< ViewId, ? extends Map< String, Double > > labelMap,
+			final Collection< Group< ViewId > > groups,
+			final HashSet< ViewId > fixedViewIds )
 	{
 		// load all interest points and correspondences
 		System.out.println( "Loading all relevant interest points (in parallel) ... ");
@@ -437,11 +445,26 @@ public class Solver extends AbstractRegistration
 		final ArrayList< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
 
 		for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
-			for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
+A:			for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
 			{
 				// order doesn't matter, saved symmetrically
 				final ViewId vA = viewIdsGlobal.get( i );
 				final ViewId vB = viewIdsGlobal.get( j );
+
+				// both are fixed, no need to connect them
+				if ( fixedViewIds.contains( vA ) && fixedViewIds.contains( vB ) )
+				{
+					System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " becauase they are both fixed." );
+					continue;
+				}
+
+				// both are part of the same group, no need to connect them
+				for ( final Group< ViewId > group : groups )
+					if ( group.contains( vA ) && group.contains( vB ) )
+					{
+						System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " becauase they are part of the same group." );
+						continue A;
+					}
 
 				final ViewRegistration vRegA = dataGlobal.getViewRegistrations().getViewRegistration( vA );
 				final ViewRegistration vRegB = dataGlobal.getViewRegistrations().getViewRegistration( vB );
@@ -500,7 +523,12 @@ public class Solver extends AbstractRegistration
 					}
 			}
 
-		return new InterestPointMatchCreator( pairs, labelMap );
+		System.out.println( "Total number of pairs of views that are connected: " + pairs.size() );
+
+		if ( pairs.size() > 0 )
+			return new InterestPointMatchCreator( pairs, labelMap );
+		else
+			return null;
 	}
 
 	public static HashSet< ViewId > assembleFixedAuto(
