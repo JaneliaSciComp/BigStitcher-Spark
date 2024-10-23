@@ -101,6 +101,10 @@
 		<spim_data.version>2.3.5</spim_data.version>
 		<multiview-reconstruction.version>4.2.4</multiview-reconstruction.version>
 		<BigStitcher.version>2.1.0</BigStitcher.version>
+
+		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
+		<ome-codecs.version>0.3.0</ome-codecs.version>
+
     </properties>
 
     <repositories>
