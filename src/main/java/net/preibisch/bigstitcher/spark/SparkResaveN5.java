@@ -117,7 +117,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println();
 		}
 
-		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParent( xmlOutURI ), "dataset.n5" ) : n5PathURIString );
+		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParentURI( xmlOutURI ), "dataset.n5" ) : n5PathURIString );
 		final Compression compression = new ZstandardCompression( 1 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
