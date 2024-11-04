@@ -129,6 +129,7 @@ install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFu
 
 echo 'Installing utils ...'
 
+install_command split-images "net.preibisch.bigstitcher.spark.SplitDatasets"
 install_command downsample "net.preibisch.bigstitcher.spark.SparkDownsample"
 install_command clear-interestpoints "net.preibisch.bigstitcher.spark.ClearInterestPoints"
 install_command clear-registrations "net.preibisch.bigstitcher.spark.ClearRegistrations"
