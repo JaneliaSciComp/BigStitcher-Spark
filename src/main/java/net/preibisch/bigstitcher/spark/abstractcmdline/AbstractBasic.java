@@ -25,7 +25,10 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.concurrent.Callable;
 
+import bdv.ViewerImgLoader;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.sequence.SequenceDescription;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import picocli.CommandLine.Option;
@@ -53,5 +56,19 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2( xmlURI );
 
 		return dataGlobal;
+	}
+
+	public SpimData2 loadSpimData2( final int numThreads ) throws SpimDataException
+	{
+		final SpimData2 data = loadSpimData2();
+
+		final SequenceDescription sequenceDescription = data.getSequenceDescription();
+
+		// set number of fetcher threads (by default set to 0 for spark)
+		final BasicImgLoader imgLoader = sequenceDescription.getImgLoader();
+		if (imgLoader instanceof ViewerImgLoader)
+			((ViewerImgLoader) imgLoader).setNumFetcherThreads( numThreads);
+
+		return data;
 	}
 }

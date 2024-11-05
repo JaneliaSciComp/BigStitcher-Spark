@@ -4,10 +4,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 
+import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.util.Pair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -15,6 +17,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.Split_Views;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.explorer.SelectedViewDescriptionListener;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import net.preibisch.stitcher.gui.StitchingExplorer;
 import picocli.CommandLine;
@@ -70,7 +73,8 @@ public class SplitDatasets extends AbstractBasic
 	@Override
 	public Void call() throws Exception
 	{
-		this.dataGlobal = this.loadSpimData2();
+		// if we want to display the result, we need to set the fetcher threads to anything but 0
+		this.dataGlobal = displayResult ? this.loadSpimData2( Runtime.getRuntime().availableProcessors() ) : this.loadSpimData2();
 
 		if ( dataGlobal == null )
 			throw new IllegalArgumentException( "Couldn't load SpimData XML project." );
@@ -119,11 +123,39 @@ public class SplitDatasets extends AbstractBasic
 
 		if ( displayResult )
 		{
+			new ImageJ();
+
 			final StitchingExplorer< SpimData2 > explorer = new StitchingExplorer< >( newData, xmlOutURI, new XmlIoSpimData2() );
 			explorer.getFrame().toFront();
 
-			// TODO: check when it is quit
-			SimpleMultiThreading.threadHaltUnClean();
+			explorer.addListener( new SelectedViewDescriptionListener<SpimData2>() {
+				
+				@Override
+				public void updateContent(SpimData2 data) {}
+				
+				@Override
+				public void selectedViewDescriptions(List<List<BasicViewDescription<?>>> viewDescriptions) {}
+				
+				@Override
+				public void save() {}
+				
+				@Override
+				public void quit()
+				{
+					System.out.println( "quitting GUI.");
+					System.exit( 0 );
+				}
+			});
+
+			// program will be quit by the listener above
+			try
+			{
+				Thread.sleep( Long.MAX_VALUE );
+			}
+			catch ( final InterruptedException e )
+			{
+				System.err.println( "MultiThreading.threadWait(): Thread woken up: " + e );
+			}
 		}
 		else if ( !dryRun )
 		{
