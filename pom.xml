@@ -164,11 +164,11 @@
             <artifactId>aws-java-sdk-s3</artifactId>
             <version>${aws-java-sdk-s3.version}</version>
         </dependency> -->
-        <dependency>
+        <!-- <dependency>
             <groupId>org.bigdataviewer</groupId>
             <artifactId>bigdataviewer-omezarr</artifactId>
             <version>0.2.3</version>
-        </dependency>
+        </dependency> -->
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5</artifactId>
