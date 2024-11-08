@@ -200,9 +200,10 @@ public class ViewUtil
 			transformToSource = null;
 		}
 
+		// TODO: this fails for the AllenOMEZarrLoader because the RandomAccessibleInterval< ? > img is .view().slice( 4, 0 ).slice( 3, 0 );
 		if ( ! ( rai instanceof AbstractCellImg ) )
 		{
-			throw new IllegalArgumentException( "TODO. Handling source types other than CellImg is not implemented yet" );
+			throw new IllegalArgumentException( "TODO. Handling source types other than CellImg is not implemented yet, rai is=" + rai.getClass().getName() );
 		}
 
 		// Brute force search for overlapping cells:
