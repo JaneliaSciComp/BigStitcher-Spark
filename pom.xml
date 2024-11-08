@@ -100,7 +100,7 @@
 
 		<bigdataviewer-core.version>10.6.3</bigdataviewer-core.version>
 		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>4.3.2</multiview-reconstruction.version>
+		<multiview-reconstruction.version>4.3.4</multiview-reconstruction.version>
 		<BigStitcher.version>2.2.1</BigStitcher.version>
 
 		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
