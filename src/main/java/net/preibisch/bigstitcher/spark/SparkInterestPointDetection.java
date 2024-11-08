@@ -158,6 +158,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "-dsz", "--downsampleZ" }, description = "downsampling in Z to use for segmentation, e.g. 2 (default: 1)")
 	protected Integer dsz = 1;
 
+	//-x /Users/preibischs/SparkTest/IP/dataset.xml -l beadsTest500 -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255 --prefetch
+	//-x /Users/preibischs/Downloads/dataset-allen.xml -l beadsTest500 -vi '0,0' -s 1.8 -t 0.008 -dsxy 32 -dsz 32 --minIntensity 0 --maxIntensity 255 --prefetch
+
 	@Override
 	public Void call() throws Exception
 	{
