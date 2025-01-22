@@ -43,6 +43,7 @@ import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
@@ -222,7 +223,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final URI xmlURI = this.xmlURI;
 		final URI xmloutURI = this.xmlOutURI;
 		final StorageFormat storageType = this.storageType;
-		final Compression compression = new GzipCompression( 1 );
+		final Compression compression = new ZstandardCompression( 3 );
 
 		final ArrayList< String > labels = new ArrayList<>(interestPoints);
 		final boolean uint8 = this.uint8;

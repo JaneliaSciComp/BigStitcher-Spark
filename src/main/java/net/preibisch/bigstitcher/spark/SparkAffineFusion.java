@@ -35,11 +35,11 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
@@ -259,7 +259,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
 		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : N5ApiTools.createBDVPath( this.bdvString, 0, this.storageType );
-		final Compression compression = new GzipCompression( 1 );
+
+		// TODO: expose
+		final Compression compression = new ZstandardCompression( 3 );// new GzipCompression( 1 );
 
 		final double minIntensity = ( uint8 || uint16 ) ? this.minIntensity : 0;
 		final double range;
