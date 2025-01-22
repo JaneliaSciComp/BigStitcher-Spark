@@ -124,7 +124,7 @@ public class Downsampling
 					gridBlock ->
 					{
 						final N5Writer executorVolumeWriter =
-								SparkAffineFusion.createN5Writer( path, storageType );//URITools.instantiateN5Writer( storageType, path );//N5Util.createWriter( path, storageType );
+								N5Util.createN5Writer( path, storageType );
 
 						try
 						{
@@ -214,7 +214,7 @@ public class Downsampling
 						}
 
 						// if it is not the shared HDF5 writer, then close
-						if ( SparkAffineFusion.sharedHDF5Writer != executorVolumeWriter )
+						if ( N5Util.sharedHDF5Writer != executorVolumeWriter )
 							executorVolumeWriter.close();
 					});
 

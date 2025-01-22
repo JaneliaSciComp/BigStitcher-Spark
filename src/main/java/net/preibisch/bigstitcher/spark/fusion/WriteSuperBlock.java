@@ -48,7 +48,6 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
-import net.preibisch.bigstitcher.spark.SparkAffineFusion;
 import net.preibisch.bigstitcher.spark.blk.Fusion;
 import net.preibisch.bigstitcher.spark.blk.FusionFirstWins;
 import net.preibisch.bigstitcher.spark.blk.N5Helper;
@@ -56,7 +55,6 @@ import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import util.URITools;
 
 public class WriteSuperBlock implements VoidFunction< long[][] >
 {
@@ -219,7 +217,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 		final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
-		final N5Writer executorVolumeWriter = SparkAffineFusion.createN5Writer(n5PathURI, storageType);//URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
+		final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);//URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 		final ExecutorService prefetchExecutor = Executors.newCachedThreadPool(); //Executors.newFixedThreadPool( N_PREFETCH_THREADS );
 
 		final CellGrid blockGrid = new CellGrid( superBlockSize, blockSize );
@@ -282,7 +280,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		prefetchExecutor.shutdown();
 
 		// if it is not the shared HDF5 writer, then close
-		if ( SparkAffineFusion.sharedHDF5Writer != executorVolumeWriter )
+		if ( N5Util.sharedHDF5Writer != executorVolumeWriter )
 			executorVolumeWriter.close();
 	}
 }

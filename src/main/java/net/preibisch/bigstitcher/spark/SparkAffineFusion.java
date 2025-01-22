@@ -52,6 +52,7 @@ import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -132,8 +133,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 	// null is fine for now (used by multiRes later)
 	private int[][] downsamplings;
-
-	public static N5HDF5Writer sharedHDF5Writer = null;
 
 	URI n5PathURI = null, xmlOutURI = null;
 
@@ -284,7 +283,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		catch (Exception e ) {}
 
 		System.out.println( "Format being written: " + storageType );
-		final N5Writer driverVolumeWriter = createN5Writer( n5PathURI, storageType );
+		final N5Writer driverVolumeWriter = N5Util.createN5Writer( n5PathURI, storageType );
 
 		driverVolumeWriter.createDataset(
 				n5Dataset,
@@ -416,41 +415,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		return null;
-	}
-
-	public static N5Writer createN5Writer(
-			final URI n5PathURI,
-			final StorageFormat storageType )
-	{
-		final N5Writer driverVolumeWriter;
-
-		try
-		{
-			if ( storageType == StorageFormat.HDF5 )
-			{
-				if ( sharedHDF5Writer != null )
-					return sharedHDF5Writer;
-
-				final File dir = new File( URITools.fromURI( n5PathURI ) ).getParentFile();
-				if ( !dir.exists() )
-					dir.mkdirs();
-
-				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.fromURI( n5PathURI ) );
-			}
-			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
-			{
-				driverVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );
-			}
-			else
-				throw new RuntimeException( "storageType " + storageType + " not supported." );
-		}
-		catch ( Exception e )
-		{
-			IOFunctions.println( "Couldn't create " + storageType + " container '" + n5PathURI + "': " + e );
-			return null;
-		}
-
-		return driverVolumeWriter;
 	}
 
 	public static void main(final String... args) throws SpimDataException {
