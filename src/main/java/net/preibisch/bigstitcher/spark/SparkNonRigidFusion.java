@@ -43,6 +43,7 @@ import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
@@ -60,6 +61,7 @@ import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
@@ -222,7 +224,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final URI xmlURI = this.xmlURI;
 		final URI xmloutURI = this.xmlOutURI;
 		final StorageFormat storageType = this.storageType;
-		final Compression compression = new GzipCompression( 1 );
+		final Compression compression = new ZstandardCompression( 3 );
 
 		final ArrayList< String > labels = new ArrayList<>(interestPoints);
 		final boolean uint8 = this.uint8;
@@ -247,7 +249,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		System.out.println( "Format being written: " + storageType );
 
-		final N5Writer driverVolumeWriter = SparkAffineFusion.createN5Writer(n5PathURI, storageType);
+		final N5Writer driverVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
 
 		if ( driverVolumeWriter == null )
 			return null;
@@ -412,7 +414,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 					service.shutdown();
 
-					final N5Writer executorVolumeWriter = SparkAffineFusion.createN5Writer(n5PathURI, storageType);
+					final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
 
 					if ( uint8 )
 					{
@@ -440,7 +442,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 						N5Utils.saveBlock(source, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 
-					if ( executorVolumeWriter != SparkAffineFusion.sharedHDF5Writer )
+					if ( executorVolumeWriter != N5Util.sharedHDF5Writer )
 						executorVolumeWriter.close();
 				});
 

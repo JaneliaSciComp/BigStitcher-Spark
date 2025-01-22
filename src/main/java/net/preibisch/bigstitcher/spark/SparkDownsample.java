@@ -22,6 +22,7 @@
 package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -31,9 +32,9 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
 import net.imglib2.FinalInterval;
@@ -45,10 +46,12 @@ import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.DataTypeUtil;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.Grid;
+import util.URITools;
 
 public class SparkDownsample extends AbstractBasic implements Callable<Void>, Serializable
 {
@@ -65,6 +68,10 @@ public class SparkDownsample extends AbstractBasic implements Callable<Void>, Se
 
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,32 that each spark thread writes 512,512,32 (default: 1,1,1)")
 	private String blockScaleString = "1,1,1";
+
+	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
+	private StorageFormat storageType = null;
 
 	@Option(names = { "-ds", "--downsampling" }, split = ";", required = true, description = "consecutive downsample steps (e.g. 2,2,1; 2,2,1; 2,2,2; 2,2,2)")
 	private List<String> downsampling = null;
@@ -91,8 +98,8 @@ public class SparkDownsample extends AbstractBasic implements Callable<Void>, Se
 
 		final int[][] downsampling = Import.csvStringListToDownsampling( this.downsampling );
 
-		final String n5Path = this.n5PathIn;
-		final N5Writer n5 = new N5FSWriter(n5Path);
+		final URI n5Path = URITools.toURI( this.n5PathIn );
+		final N5Writer n5 = N5Util.createN5Writer( n5Path, storageType );
 
 		final Compression compression = n5.getAttribute( n5DatasetIn, "compression", Compression.class );
 		final int[] blockSize = n5.getAttribute( n5DatasetIn, "blockSize", int[].class );
@@ -149,10 +156,10 @@ public class SparkDownsample extends AbstractBasic implements Callable<Void>, Se
 
 			rdd.foreach(
 					gridBlock -> {
-						final N5Writer n5Lcl = new N5FSWriter(n5Path);
+						final N5Writer n5Lcl = N5Util.createN5Writer( n5Path, storageType );
 						final DataType dataTypeLcl = DataType.fromString(dataTypeString);
 
-						RandomAccessibleInterval downsampled = N5Utils.open(n5Lcl, n5DatasetIn);
+						RandomAccessibleInterval downsampled = N5Utils.open( n5Lcl, n5DatasetIn );
 
 						for ( int d = 0; d < downsampled.numDimensions(); ++d )
 							if ( ds[ d ] > 1 )
@@ -171,8 +178,9 @@ public class SparkDownsample extends AbstractBasic implements Callable<Void>, Se
 			System.out.println( "downsampled level=" + level +", took: " + (System.currentTimeMillis() - timeLevel ) + " ms." );
 		}
 
-
 		sc.close();
+
+		n5.close();
 
 		Thread.sleep( 100 );
 		System.out.println( "finished downsampling, in total took: " + (System.currentTimeMillis() - time ) + " ms." );

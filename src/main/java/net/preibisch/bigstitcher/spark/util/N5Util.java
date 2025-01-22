@@ -21,16 +21,55 @@
  */
 package net.preibisch.bigstitcher.spark.util;
 
-import java.io.IOException;
+import java.io.File;
+import java.net.URI;
 
-import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
-import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+
+import net.preibisch.legacy.io.IOFunctions;
+import util.URITools;
 
 public class N5Util
 {
+	public static N5HDF5Writer sharedHDF5Writer = null;
+
+	public static N5Writer createN5Writer(
+			final URI n5PathURI,
+			final StorageFormat storageType )
+	{
+		final N5Writer driverVolumeWriter;
+
+		try
+		{
+			if ( storageType == StorageFormat.HDF5 )
+			{
+				if ( sharedHDF5Writer != null )
+					return sharedHDF5Writer;
+
+				final File dir = new File( URITools.fromURI( n5PathURI ) ).getParentFile();
+				if ( !dir.exists() )
+					dir.mkdirs();
+
+				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.fromURI( n5PathURI ) );
+			}
+			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+			{
+				driverVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );
+			}
+			else
+				throw new RuntimeException( "storageType " + storageType + " not supported." );
+		}
+		catch ( Exception e )
+		{
+			IOFunctions.println( "Couldn't create " + storageType + " container '" + n5PathURI + "': " + e );
+			return null;
+		}
+
+		return driverVolumeWriter;
+	}
+
 	/*
 	// only supported for local spark HDF5 writes, needs to share a writer instance
 	public static N5HDF5Writer hdf5DriverVolumeWriter = null;

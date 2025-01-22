@@ -21,7 +21,6 @@
  */
 package net.preibisch.bigstitcher.spark;
 
-import java.io.File;
 import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
@@ -118,7 +117,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		}
 
 		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParentURI( xmlOutURI ), "dataset.n5" ) : n5PathURIString );
-		final Compression compression = new ZstandardCompression( 1 );
+		final Compression compression = new ZstandardCompression( 3 );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blockScale = Import.csvStringToIntArray(blockScaleString);
