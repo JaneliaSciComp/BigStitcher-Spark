@@ -1,6 +1,7 @@
 package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -10,14 +11,20 @@ import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.FinalDimensions;
+import net.imglib2.FinalInterval;
+import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.export.ExportN5Api;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import util.URITools;
 
 public class CreateFusionContainer extends AbstractBasic implements Callable<Void>, Serializable
 {
@@ -65,6 +72,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
+	URI outPathURI = null, xmlOutURI = null;
 
 	@Override
 	public Void call() throws Exception
@@ -112,9 +120,71 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		else if ( numTimepoints > numTimepointsXML )
 			System.out.println( "WARNING: you selected to fuse MORE timepoints than present in the data. This works, but you will need specify the content manually.");
 
+		this.outPathURI =  URITools.toURI( outputPathURIString );
+		System.out.println( "ZARR/N5/HDF5 container: " + outPathURI );
 
+		if ( this.bdv )
+		{
+			this.xmlOutURI = URITools.toURI( xmlOutURIString );
+			System.out.println( "XML: " + xmlOutURI );
+
+			if ( storageType == StorageFormat.ZARR )
+			{
+				System.out.println( "BDV project for OME-ZARR not yet supported (but very soon!)" );
+				return null;
+			}
+		}
 
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
+
+		final long[] minBB = boundingBox.minAsLongArray();
+		final long[] maxBB = boundingBox.maxAsLongArray();
+
+		if ( preserveAnisotropy )
+		{
+			System.out.println( "Preserving anisotropy.");
+
+			if ( Double.isNaN( anisotropyFactor ) )
+			{
+				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( dataGlobal, viewIdsGlobal );
+
+				System.out.println( "Anisotropy factor [computed from data]: " + anisotropyFactor );
+			}
+			else
+			{
+				System.out.println( "Anisotropy factor [provided]: " + anisotropyFactor );
+			}
+
+			// prepare downsampled boundingbox
+			minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
+			maxBB[ 2 ] = Math.round( Math.ceil( maxBB[ 2 ] / anisotropyFactor ) );
+
+			boundingBox = new BoundingBox( new FinalInterval(minBB, maxBB) );
+
+			System.out.println( "Adjusted bounding box (anisotropy preserved: " + Util.printInterval( boundingBox ) );
+		}
+
+		final int[] blockSize = Import.csvStringToIntArray( blockSizeString );
+
+		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
+
+		//
+		// set up downsampling (if wanted)
+		//
+		if ( !Downsampling.testDownsamplingParameters( this.multiRes, this.downsampling ) )
+			return null;
+
+		final int[][] downsamplings;
+
+		if ( multiRes )
+			downsamplings = ExportN5Api.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
+		else if ( this.downsampling != null )
+			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
+		else
+			downsamplings = new int[][]{{ 1, 1, 1 }};
+
+		System.out.println( "The following downsampling pyramid will be created:" );
+		System.out.println( Arrays.deepToString( downsamplings ) );
 
 		// TODO Auto-generated method stub
 		return null;
