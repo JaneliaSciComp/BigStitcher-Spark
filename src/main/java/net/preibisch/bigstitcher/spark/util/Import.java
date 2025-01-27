@@ -29,6 +29,7 @@ import java.util.List;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
@@ -65,17 +66,12 @@ public class Import {
 	}
 
 	public static void validateInputParameters(
-			final boolean uint8,
-			final boolean uint16,
+			final DataTypeFusion datatype,
 			final Double minIntensity,
 			final Double maxIntensity )
 			throws IllegalArgumentException
 	{
-		if ( uint8 && uint16 ) {
-			throw new IllegalArgumentException( "Please only select UINT8, UINT16 or nothing (FLOAT32)." );
-		}
-
-		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) ) {
+		if ( ( datatype == DataTypeFusion.UINT8 || datatype == DataTypeFusion.UINT16 ) && (minIntensity == null || maxIntensity == null ) ) {
 			throw new IllegalArgumentException( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
 		}
 	}

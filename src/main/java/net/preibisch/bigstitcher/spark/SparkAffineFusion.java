@@ -21,7 +21,6 @@
  */
 package net.preibisch.bigstitcher.spark;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
@@ -37,7 +36,6 @@ import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
@@ -54,7 +52,6 @@ import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
@@ -69,6 +66,11 @@ import util.URITools;
 
 public class SparkAffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
+	public static enum DataTypeFusion
+	{
+		UINT8, UINT16, FLOAT32
+	}
+
 	private static final long serialVersionUID = -6103761116219617153L;
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
@@ -109,12 +111,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
-	// TODO: make a variable just as -s is
-	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
-	private boolean uint16 = false;
-
-	@Option(names = { "--UINT8" }, description = "save as UINT8 [0...255], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
-	private boolean uint8 = false;
+	@Option(names = {"-p", "--dataType"}, defaultValue = "FLOAT32", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Data type, UINT8 [0...255], UINT16 [0...65535] and FLOAT32 are supported, when choosing UINT8 or UINT16 you must define min and max intensity (default: FLOAT32)")
+	private DataTypeFusion dataTypeFusion = null;
 
 	@Option(names = { "--minIntensity" }, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
 	private Double minIntensity = null;
@@ -162,7 +161,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			return null;
 		}
 
-		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
+		Import.validateInputParameters( dataTypeFusion, minIntensity, maxIntensity);
 
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
@@ -192,12 +191,12 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		final DataType dataType;
 
-		if ( uint8 )
+		if ( dataTypeFusion == DataTypeFusion.UINT8 )
 		{
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT8;
 		}
-		else if ( uint16 )
+		else if ( dataTypeFusion == DataTypeFusion.UINT16 )
 		{
 			System.out.println( "Fusing to UINT16, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT16;
@@ -262,11 +261,11 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		// TODO: expose
 		final Compression compression = new ZstandardCompression( 3 );// new GzipCompression( 1 );
 
-		final double minIntensity = ( uint8 || uint16 ) ? this.minIntensity : 0;
+		final double minIntensity = ( dataTypeFusion != DataTypeFusion.FLOAT32 ) ? this.minIntensity : 0;
 		final double range;
-		if ( uint8 )
+		if ( dataTypeFusion == DataTypeFusion.UINT8 )
 			range = ( this.maxIntensity - this.minIntensity ) / 255.0;
-		else if ( uint16 )
+		else if ( dataTypeFusion == DataTypeFusion.UINT16 )
 			range = ( this.maxIntensity - this.minIntensity ) / 65535.0;
 		else
 			range = 0;
@@ -363,8 +362,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					n5Dataset,
 					storageType,
 					serializedViewIds,
-					uint8,
-					uint16,
+					dataTypeFusion == DataTypeFusion.UINT8,
+					dataTypeFusion == DataTypeFusion.UINT16,
 					maskOff,
 					blockSize ) );
 		else
@@ -378,8 +377,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					bdvString,
 					storageType,
 					serializedViewIds,
-					uint8,
-					uint16,
+					dataTypeFusion == DataTypeFusion.UINT8,
+					dataTypeFusion == DataTypeFusion.UINT16,
 					minIntensity,
 					range,
 					blockSize,

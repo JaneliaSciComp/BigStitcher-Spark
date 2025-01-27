@@ -58,6 +58,7 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
+import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -112,11 +113,9 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	@Option(names = { "-ip", "--interestPoints" }, required = true, description = "provide a list of corresponding interest points to be used for the fusion (e.g. -ip 'beads' -ip 'nuclei'")
 	private ArrayList<String> interestPoints = null;
 
-	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
-	private boolean uint16 = false;
-
-	@Option(names = { "--UINT8" }, description = "save as UINT8 [0...255], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
-	private boolean uint8 = false;
+	@Option(names = {"-p", "--dataType"}, defaultValue = "FLOAT32", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Data type, UINT8 [0...255], UINT16 [0...65535] and FLOAT32 are supported, when choosing UINT8 or UINT16 you must define min and max intensity (default: FLOAT32)")
+	private DataTypeFusion dataTypeFusion = null;
 
 	@Option(names = { "--minIntensity" }, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
 	private Double minIntensity = null;
@@ -147,13 +146,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			return null;
 		}
 
-		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
-
-		if ( StorageFormat.HDF5.equals( storageType ) && bdvString != null && !uint16 )
-		{
-			System.out.println( "BDV-compatible HDF5 only supports 16-bit output for now. Please use '--UINT16' flag for fusion." );
-			System.exit( 0 );
-		}
+		Import.validateInputParameters(dataTypeFusion, minIntensity, maxIntensity);
 
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
@@ -191,17 +184,12 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		final DataType dataType;
 
-		if ( uint8 )
+		if ( dataTypeFusion == DataTypeFusion.UINT8 )
 		{
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT8;
 		}
-		else if ( uint16 && bdvString != null && StorageFormat.HDF5.equals( storageType ) )
-		{
-			System.out.println( "Fusing to INT16 (for BDV compliance, which is treated as UINT16), min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
-			dataType = DataType.INT16;
-		}
-		else if ( uint16)
+		else if ( dataTypeFusion == DataTypeFusion.UINT16 )
 		{
 			System.out.println( "Fusing to UINT16, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT16;
@@ -227,8 +215,8 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final Compression compression = new ZstandardCompression( 3 );
 
 		final ArrayList< String > labels = new ArrayList<>(interestPoints);
-		final boolean uint8 = this.uint8;
-		final boolean uint16 = this.uint16;
+		final boolean uint8 = (dataTypeFusion == DataTypeFusion.UINT8);
+		final boolean uint16 = (dataTypeFusion == DataTypeFusion.UINT16);
 		final double minIntensity = (uint8 || uint16 ) ? this.minIntensity : 0;
 		final double range;
 		if ( uint8 )
@@ -296,7 +284,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 						downsamplings,
 						viewId,
 						n5PathURI,
-						xmlOutURI,
+						xmloutURI,
 						instantiate ) == null )
 				{
 					System.out.println( "Failed to write metadata for '" + n5Dataset + "'." );
