@@ -254,17 +254,34 @@ public class Import {
 	}
 
 	/**
-	 * converts a List of Strings (relative steps) like '[2,2,1][2,2,2] to downsampling levels in int[][], e.g. [1,1,1][2,2,1][4,4,2]
+	 * converts a List of Strings like '[1,1,1][ 2,2,1][ 4,4,1 ][ 8,8,2] to downsampling levels in int[][]
 	 * @param csvString
 	 * @return
 	 */
-	public static int[][] csvStringListToDownsampling(final List<String> csvString) {
-
-		final int[][] downsampling = new int[csvString.size() + 1][];
-		downsampling[ i ] = new int[] { 1, 1, 1 };
-
-		for ( int i = 1; i <= csvString.size(); ++i )
+	public static int[][] csvStringListToDownsampling(final List<String> csvString)
+	{
+		if ( csvString == null || csvString.size() < 1 )
+		{
+			System.out.println( "List of strings for downsampling is empty/null.");
+			return null;
+		}
+		
+		final int[][] downsampling = new int[csvString.size()][];
+		for ( int i = 0; i < csvString.size(); ++i )
+		{
 			downsampling[ i ] = Arrays.stream(csvString.get( i ).split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
+			if ( downsampling[ i ].length != 3 )
+			{
+				System.out.println( "dimensions of downsampling entry is not 3: " + csvString.get( i ) );
+				return null;
+			}
+		}
+
+		if ( !Arrays.equals( downsampling[ 0 ], new int[] { 1, 1, 1 }))
+		{
+			System.out.println( "first entry is not [1,1,1], but must be: " + csvString.get( 0 ) );
+			return null;
+		}
 
 		return downsampling;
 	}
