@@ -1,27 +1,48 @@
 package net.preibisch.bigstitcher.spark;
 
+import java.io.File;
 import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Function;
 
+import org.janelia.saalfeldlab.n5.Bzip2Compression;
+import org.janelia.saalfeldlab.n5.Compression;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.Lz4Compression;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.XzCompression;
+import org.janelia.saalfeldlab.n5.blosc.BloscCompression;
+import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
+import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -30,12 +51,21 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 {
 	private static final long serialVersionUID = -9140450542904228386L;
 
+	public static enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
+
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset storage type, currently supported OME-ZARR, N5, and ONLY for local, multithreaded Spark HDF5 (default: OME-ZARR)")
 	private StorageFormat storageType = null;
+
+	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Dataset compression")
+	private Compressions compression = null;
+
+	@Option(names = {"-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
+	private Integer compressionLevel = null;
 
 	@Option(names = {"-ch", "--numChannels" }, description = "number of fused channels in the output container (default: as many as in the XML)")
 	private Integer numChannels = null;
@@ -63,7 +93,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
 	private boolean multiRes = false;
 
-	@Option(names = { "-ds", "--downsampling" }, split = ";", required = false, description = "Manually define steps to create of a multi-resolution pyramid (e.g. -ds 2,2,1; 2,2,1; 2,2,2; 2,2,2)")
+	@Option(names = { "-ds", "--downsampling" }, split = ";", required = false, description = "Manually define steps to create a multi-resolution pyramid (e.g. -ds 1,1,1 -ds 2,2,1 -ds 4,4,2 -ds 8,8,4)")
 	private List<String> downsampling = null;
 
 	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
@@ -86,6 +116,15 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		if ( this.bdv && xmlOutURIString == null )
 		{
 			System.out.println( "Please specify the output XML for the BDV dataset: -xo");
+			return null;
+		}
+
+		this.outPathURI =  URITools.toURI( outputPathURIString );
+		System.out.println( "ZARR/N5/HDF5 container: " + outPathURI );
+
+		if ( storageType == StorageFormat.HDF5 && URITools.isFile( outPathURI ) )
+		{
+			System.out.println( "HDF5 only supports local storage, but --outputPath=" + outPathURI );
 			return null;
 		}
 
@@ -119,9 +158,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "WARNING: you selected to fuse LESS timepoints than present in the data. This works, but you will need specify the content manually.");
 		else if ( numTimepoints > numTimepointsXML )
 			System.out.println( "WARNING: you selected to fuse MORE timepoints than present in the data. This works, but you will need specify the content manually.");
-
-		this.outPathURI =  URITools.toURI( outputPathURIString );
-		System.out.println( "ZARR/N5/HDF5 container: " + outPathURI );
 
 		if ( this.bdv )
 		{
@@ -161,15 +197,55 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			boundingBox = new BoundingBox( new FinalInterval(minBB, maxBB) );
 
-			System.out.println( "Adjusted bounding box (anisotropy preserved: " + Util.printInterval( boundingBox ) );
+			System.out.println( "Adjusted bounding box (anisotropy preserved): " + Util.printInterval( boundingBox ) );
 		}
 
 		final int[] blockSize = Import.csvStringToIntArray( blockSizeString );
 
 		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
 
+		// compression and data type
+		final Compression compression;
+
+		//Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
+		if ( this.compression == Compressions.Lz4 )
+			compression = new Lz4Compression();
+		else if ( this.compression == Compressions.Gzip )
+			compression = new GzipCompression( compressionLevel == null ? 1 : compressionLevel );
+		else if ( this.compression == Compressions.Zstandard )
+			compression = new ZstandardCompression( compressionLevel == null ? 3 : compressionLevel );
+		else if ( this.compression == Compressions.Blosc )
+			compression = new BloscCompression();
+		else if ( this.compression == Compressions.Bzip2 )
+			compression = new Bzip2Compression();
+		else if ( this.compression == Compressions.Xz )
+			compression = new XzCompression( compressionLevel == null ? 6 : compressionLevel );
+		else if ( this.compression == Compressions.Raw )
+			compression = new RawCompression();
+		else
+			compression = null;
+
+		System.out.println( "Compression: " + this.compression );
+		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
+
+		final DataType dt;
+
+		if ( dataTypeFusion == DataTypeFusion.UINT8 )
+			dt = DataType.UINT8;
+		else if ( dataTypeFusion == DataTypeFusion.UINT16 )
+			dt = DataType.UINT16;
+		else if ( dataTypeFusion == DataTypeFusion.FLOAT32 )
+			dt = DataType.FLOAT32;
+		else
+			dt = null;
+
+		System.out.println( "Data type: " + dt );
+
+		if ( dt == null || compression == null )
+			return null;
+
 		//
-		// set up downsampling (if wanted)
+		// set up downsampling
 		//
 		if ( !Downsampling.testDownsamplingParameters( this.multiRes, this.downsampling ) )
 			return null;
@@ -183,10 +259,123 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		else
 			downsamplings = new int[][]{{ 1, 1, 1 }};
 
+		if ( downsamplings == null )
+			return null;
+
 		System.out.println( "The following downsampling pyramid will be created:" );
 		System.out.println( Arrays.deepToString( downsamplings ) );
 
-		// TODO Auto-generated method stub
+		//
+		// set up container and metadata
+		//
+		final N5Writer driverVolumeWriter;
+		//MultiResolutionLevelInfo[] mrInfo;
+
+		System.out.println();
+		System.out.println( "Setting up container and metadata in '" + outPathURI + "' ... " );
+
+		// init base folder and writer
+		if ( storageType == StorageFormat.HDF5 )
+		{
+			final File dir = new File( URITools.fromURI( outPathURI ) ).getParentFile();
+			if ( !dir.exists() )
+				dir.mkdirs();
+			driverVolumeWriter = new N5HDF5Writer( URITools.fromURI( outPathURI ) );
+		}
+		else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+		{
+			driverVolumeWriter = URITools.instantiateN5Writer( storageType, outPathURI );
+		}
+		else
+		{
+			System.out.println( "Unsupported format: " + storageType );
+			return null;
+			
+		}
+
+		// setup datasets and metadata
+		if ( bdv )
+		{
+			// TODO: set extra attributes to load the state
+		}
+		else if ( storageType == StorageFormat.ZARR ) // OME-Zarr export
+		{
+			IOFunctions.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
+
+			final long[] dim3d = boundingBox.dimensionsAsLongArray();
+
+			final long[] dim = new long[] { dim3d[ 0 ], dim3d[ 1 ], dim3d[ 2 ], numChannels, numTimepoints };
+			final int[] blockSize5d = new int[] { blockSize[ 0 ], blockSize[ 1 ], blockSize[ 2 ], 1, 1 };
+			final int[][] ds = new int[ downsamplings.length ][];
+			for ( int d = 0; d < ds.length; ++d )
+				ds[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
+
+			final Function<Integer, String> levelToName = (level) -> "/" + level;
+
+			// all is 5d now
+			MultiResolutionLevelInfo[] mrInfoZarr = N5ApiTools.setupMultiResolutionPyramid(
+					driverVolumeWriter,
+					levelToName,
+					dt,
+					dim, //5d
+					compression,
+					blockSize5d, //5d
+					ds ); // 5d
+
+			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
+					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfoZarr[level].absoluteDownsamplingDouble() );
+
+			// extract the resolution of the s0 export
+			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
+			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+
+			IOFunctions.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+
+			// create metadata
+			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+					5, // int n
+					"/", // String name, I also saw "/"
+					resolutionS0, // double[] resolutionS0,
+					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+					mrInfoZarr.length, // int numResolutionLevels,
+					levelToName,
+					levelToMipmapTransform );
+
+			// save metadata
+
+			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
+			// for this to work you need to register an adapter in the N5Factory class
+			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
+			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+
+			// TODO: set extra attributes to load the state
+		}
+		else // simple HDF5/N5 export
+		{
+			for ( int t = 0; t < numTimepoints; ++t )
+				for ( int c = 0; c < numChannels; ++c )
+				{
+					String title = "ch"+c+"tp"+t;
+
+					IOFunctions.println( "Creating 3D " + storageType +" container '" + title + "' in '" + outPathURI + "' ... " );
+		
+					// setup multi-resolution pyramid
+					final MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupMultiResolutionPyramid(
+							driverVolumeWriter,
+							(level) -> title + "/s" + level,
+							dt,
+							boundingBox.dimensionsAsLongArray(),
+							compression,
+							blockSize,
+							downsamplings );
+
+					// TODO: set extra attributes to load the state
+				}
+		}
+
+		driverVolumeWriter.close();
+
 		return null;
 	}
 
