@@ -22,6 +22,7 @@
 package net.preibisch.bigstitcher.spark.cloud;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.URISyntaxException;
 
 import bdv.ViewerImgLoader;
@@ -32,6 +33,7 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
+import util.URITools;
 
 public class TestN5Loading
 {
@@ -110,18 +112,18 @@ public class TestN5Loading
 		System.out.println( "Done.");
 	}
 	*/
-	public static void testBigStitcherGUI( final String xml ) throws SpimDataException
+	public static void testBigStitcherGUI( final URI xml ) throws SpimDataException
 	{
 		new ImageJ();
 
-		final SpimData2 data = Spark.getSparkJobSpimData2( "", xml );
+		final SpimData2 data = Spark.getSparkJobSpimData2( xml );
 
 		final BasicImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
 		if (imgLoader instanceof ViewerImgLoader)
 			((ViewerImgLoader) imgLoader).setNumFetcherThreads(-1);
 
 		
-		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, new XmlIoSpimData2("") );
+		final ViewSetupExplorer< SpimData2 > explorer = new ViewSetupExplorer<>( data, xml, new XmlIoSpimData2() );
 
 		explorer.getFrame().toFront();
 	}
@@ -133,7 +135,8 @@ public class TestN5Loading
 		//testLoadInterestPoints();
 		//testBigStitcherGUI( "s3://janelia-bigstitcher-spark/Stitching/dataset.xml" );
 		//testBigStitcherGUI( "/Users/preibischs/Documents/Janelia/Projects/BigStitcher/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" );
-		testBigStitcherGUI( "/home/preibischs@hhmi.org/Desktop/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" );
+		//testBigStitcherGUI( "/home/preibischs@hhmi.org/Desktop/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" );
+		testBigStitcherGUI( URITools.toURI( "/Users/preibischs/Documents/Janelia/Projects/BigStitcher/Allen/bigstitcher_emr_708369_2024-04-23_06-52-14_2.xml" ) );
 		//s3://aind-open-data/exaSPIM_708369_2024-04-08_15-20-36_flatfield-correction_2024-04-16_20-33-12/SPIM.ome.zarr
 		//testBDV();
 		//testInterestPoints();

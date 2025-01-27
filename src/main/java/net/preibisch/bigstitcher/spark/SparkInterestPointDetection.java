@@ -21,8 +21,8 @@
  */
 package net.preibisch.bigstitcher.spark;
 
-import java.io.File;
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -39,13 +39,12 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.GzipCompression;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
-import ij.ImageJ;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -60,9 +59,7 @@ import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.converter.Converters;
-import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
 import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
@@ -75,7 +72,6 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract;
-import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
@@ -100,6 +96,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple3;
 import scala.Tuple4;
+import util.Grid;
+import util.URITools;
 
 public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
@@ -160,6 +158,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "-dsz", "--downsampleZ" }, description = "downsampling in Z to use for segmentation, e.g. 2 (default: 1)")
 	protected Integer dsz = 1;
 
+	//-x /Users/preibischs/SparkTest/IP/dataset.xml -l beadsTest500 -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255 --prefetch
+	//-x /Users/preibischs/Downloads/dataset-allen.xml -l beadsTest500 -vi '0,0' -s 1.8 -t 0.008 -dsxy 32 -dsz 32 --minIntensity 0 --maxIntensity 255 --prefetch
+
 	@Override
 	public Void call() throws Exception
 	{
@@ -181,7 +182,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		// Global variables that need to be serialized for Spark as each job needs access to them
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
-		final String xmlPath = this.xmlPath;
+		final URI xmlURI = this.xmlURI;
 		final String label = this.label;
 		final int downsampleXY = this.dsxy;
 		final int downsampleZ = this.dsz;
@@ -340,7 +341,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// return ViewId, interval, locations, intensities
 		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
 		{
-			final SpimData2 data = Spark.getSparkJobSpimData2( "", xmlPath );
+			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
 			final ViewId viewId = Spark.deserializeViewId( serializedInput._1() );
 			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
 
@@ -723,7 +724,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			{
 				System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
 				
-				final InterestPoints ipl = InterestPoints.newInstance( dataGlobal.getBasePath(), viewId, label );
+				final InterestPoints ipl = InterestPoints.newInstance( dataGlobal.getBasePathURI(), viewId, label );
 	
 				ipl.setInterestPoints( interestPoints.get( viewId ) );
 				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
@@ -738,7 +739,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 					final InterestPointsN5 i = (InterestPointsN5)ipl;
 
-					final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
+					//final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
+					final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) ) );
+
 					final String datasetIntensities = i.ipDataset() + "/intensities";
 
 					if ( interestPoints.get( viewId ).size() == 0 )
@@ -771,7 +774,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
 					}
 	
-					IOFunctions.println( "Saved: " + new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() + ":/" + datasetIntensities );
+					IOFunctions.println( "Saved: " + URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) + ":/" + datasetIntensities );
 	
 					n5Writer.close();
 				}
@@ -785,7 +788,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			System.out.println( "Saving XML (metadata only) ..." );
 	
-			new XmlIoSpimData2( null ).save( dataGlobal, xmlPath );
+			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 		}
 
 		System.out.println( "Done ..." );

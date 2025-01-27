@@ -21,6 +21,7 @@
  */
 package net.preibisch.bigstitcher.spark.fusion;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.concurrent.Executors;
 
 import org.apache.spark.api.java.function.VoidFunction;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -53,13 +55,12 @@ import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
 
 public class WriteSuperBlock implements VoidFunction< long[][] >
 {
 	private static final long serialVersionUID = 4185504467908084954L;
 
-	private final String xmlPath;
+	private final URI xmlURI;
 
 	private final boolean preserveAnisotropy;
 
@@ -67,13 +68,13 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final long[] minBB;
 
-	private final String n5Path;
+	private final URI n5PathURI;
 
 	private final String n5Dataset;
 
 	private final String bdvString;
 
-	private final StorageType storageType;
+	private final StorageFormat storageType;
 
 	private final int[][] serializedViewIds;
 
@@ -90,14 +91,14 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 	private final boolean firstTileWins;
 
 	public WriteSuperBlock(
-			final String xmlPath,
+			final URI xmlURI,
 			final boolean preserveAnisotropy,
 			final double anisotropyFactor,
 			final long[] minBB,
-			final String n5Path,
+			final URI n5PathURI,
 			final String n5Dataset,
 			final String bdvString,
-			final StorageType storageType,
+			final StorageFormat storageType,
 			final int[][] serializedViewIds,
 			final boolean uint8,
 			final boolean uint16,
@@ -106,11 +107,11 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 			final int[] blockSize,
 			final boolean firstTileWins )
 	{
-		this.xmlPath = xmlPath;
+		this.xmlURI = xmlURI;
 		this.preserveAnisotropy = preserveAnisotropy;
 		this.anisotropyFactor = anisotropyFactor;
 		this.minBB = minBB;
-		this.n5Path = n5Path;
+		this.n5PathURI = n5PathURI;
 		this.n5Dataset = n5Dataset;
 		this.bdvString = bdvString;
 		this.storageType = storageType;
@@ -181,7 +182,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		// --------------------------------------------------------
 
 		// custom serialization
-		final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+		final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
 		final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
 		// If requested, preserve the anisotropy of the data (such that
@@ -216,7 +217,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 		final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
-		final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
+		final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);//URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 		final ExecutorService prefetchExecutor = Executors.newCachedThreadPool(); //Executors.newFixedThreadPool( N_PREFETCH_THREADS );
 
 		final CellGrid blockGrid = new CellGrid( superBlockSize, blockSize );
@@ -278,8 +279,8 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		}
 		prefetchExecutor.shutdown();
 
-		// not HDF5
-		if ( N5Util.hdf5DriverVolumeWriter != executorVolumeWriter )
+		// if it is not the shared HDF5 writer, then close
+		if ( N5Util.sharedHDF5Writer != executorVolumeWriter )
 			executorVolumeWriter.close();
 	}
 }

@@ -50,7 +50,7 @@ public class TestDependencies implements Callable<Void>, Serializable
 	@Override
 	public Void call() throws Exception {
 
-		final XmlIoSpimData2 io = new XmlIoSpimData2( "" );
+		final XmlIoSpimData2 io = new XmlIoSpimData2();
 		final SpimData2 data = io.load( xmlPath );
 
 		// select views to process

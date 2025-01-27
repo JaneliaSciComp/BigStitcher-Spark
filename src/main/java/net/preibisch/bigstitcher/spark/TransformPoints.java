@@ -30,10 +30,13 @@ import java.util.Arrays;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.io.TextFileAccess;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.boundingbox.BoundingBoxMaximal;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -49,6 +52,9 @@ public class TransformPoints extends AbstractBasic
 	@Option(names = { "-p" }, description = "coordinates in 3d (e.g. -p 3.4,423.1,-12134.14142 -p 12.1,1.2,12.1)")
 	private String p[] = null;
 
+	//@Option(names = { "--zeroMin" }, description = "add code to set the minimal coordinate to 0,0,0")
+	//private boolean p[] = null;
+ 
 	@Option(names = { "--csvOut" }, description = "path to a comma separated file (x,y,z) to which points will be saved. If ommited, it will go to stoud (printed out);(e.g. /home/jimmy/mypoints_transformed.csv)")
 	private String csvOut = null;
 	
@@ -57,20 +63,43 @@ public class TransformPoints extends AbstractBasic
 	@Override
 	public Void call() throws Exception
 	{
+		//System.out.println( "-325.12  ,  3434.23".matches( "[\\p{Space}*[-]*\\d+\\.?\\d*\\p{Space}*\\,?]+"));
+		//System.exit( 0 );
+
 		final ArrayList< double[] > points = new ArrayList<>();
 
 		if ( csvIn != null )
 		{
 			final File f = new File( csvIn );
 
+			if ( !f.exists() )
+			{
+				System.out.println( "File '" + f + "' doesn't exist.");
+				return null;
+			}
+
 			System.out.println( "Parsing '" + f.getAbsolutePath() + "'");
 
-			final BufferedReader in = TextFileAccess.openFileRead( f.getAbsoluteFile() );
-			in.lines().forEach( s -> { if ( s.trim().length() > 0 ) points.add( Import.csvStringToDoubleArray( s ) ); } );
-			in.close();
+			try
+			{
+				final BufferedReader in = TextFileAccess.openFileRead( f.getAbsoluteFile() );
+				in.lines().forEach( s -> 
+				{
+					if ( s.trim().length() > 0 && s.trim().matches( "[\\p{Space}*[-]*\\d+\\.?\\d*\\p{Space}*\\,?]+") )
+						points.add( Import.csvStringToDoubleArray( s.trim() ) );
+					else
+						System.out.println( "Ignoring line: " + s );
+				} );
+				in.close();
+			}
+			catch ( Exception e )
+			{
+				System.out.println( "Error parsing CSV file '" + f + "': " + e);
+				return null;
+			}
 		}
 
-		if ( points != null )
+		if ( p != null )
 			for ( final String point : p )
 				if ( point.trim().length() > 0 ) points.add( Import.csvStringToDoubleArray( point ) ); 
 
@@ -86,6 +115,9 @@ public class TransformPoints extends AbstractBasic
 		if ( data == null )
 			return null;
 
+		BoundingBox bb = new BoundingBoxMaximal( Import.getViewIds( data ), data ).estimate( "Max bounding box." );
+		System.out.println( "Full bounding for acquisition: " + Util.printInterval( bb ));
+		
 		final ViewId view = Import.getViewId( vi );
 
 		System.out.println( "Using transformations of viewId: " + Group.pvid( view ) );

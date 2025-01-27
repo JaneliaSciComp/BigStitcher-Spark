@@ -22,8 +22,10 @@
 package net.preibisch.bigstitcher.spark.util;
 
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkEnv;
 import org.slf4j.Logger;
@@ -223,11 +225,9 @@ public class Spark {
 	/**
 	 * @return a new data instance optimized for use within single-threaded Spark tasks.
 	 */
-	public static SpimData2 getSparkJobSpimData2(final String clusterExt,
-												 final String xmlPath)
-			throws SpimDataException {
-
-		final SpimData2 data = new XmlIoSpimData2(clusterExt).load(xmlPath);
+	public static SpimData2 getSparkJobSpimData2( final URI xmlPath ) throws SpimDataException
+	{
+		final SpimData2 data = new XmlIoSpimData2().load(xmlPath);
 		final SequenceDescription sequenceDescription = data.getSequenceDescription();
 
 		// set number of fetcher threads to 0 for spark usage
@@ -236,12 +236,48 @@ public class Spark {
 			((ViewerImgLoader) imgLoader).setNumFetcherThreads(0);
 		}
 
-		LOG.info("getSparkJobSpimData2: loaded {} for clusterExt={}, xmlPath={} on executorId={}",
-				 data, clusterExt, xmlPath, getSparkExecutorId());
+		LOG.info("getSparkJobSpimData2: loaded {}, xmlPath={} on executorId={}",
+				 data, xmlPath, getSparkExecutorId());
 
 		return data;
 	}
 
 	private static final Logger LOG = LoggerFactory.getLogger(Spark.class);
 
+	public static ArrayList< Pair<ViewId, ViewId> > toViewIds( final List<Pair<ViewId, ViewId>> pairList )
+	{
+		final ArrayList< Pair<ViewId, ViewId> > serializableList = new ArrayList<>();
+
+		pairList.forEach( pair -> serializableList.add(
+				new ValuePair<>(
+						new ViewId(
+								pair.getA().getTimePointId(),
+								pair.getA().getViewSetupId()),
+						new ViewId(
+								pair.getB().getTimePointId(),
+								pair.getB().getViewSetupId())
+						)));
+
+		return serializableList;
+	}
+
+	public static ArrayList< Pair<Group<ViewId>, Group<ViewId>> > toGroupViewIds( final List<Pair<Group<ViewId>, Group<ViewId>>> pairList )
+	{
+		final ArrayList< Pair<Group<ViewId>, Group<ViewId>> > serializableList = new ArrayList<>();
+
+		pairList.forEach( pair -> serializableList.add(
+				new ValuePair<>(
+						toGroupViewIds( pair.getA() ),
+						toGroupViewIds( pair.getB() ) )));
+
+		return serializableList;
+	}
+
+	public static Group<ViewId> toGroupViewIds( final Group<ViewId> group )
+	{
+		return new Group<>(
+				group.getViews().stream().map( viewId -> new ViewId(
+						viewId.getTimePointId(),
+						viewId.getViewSetupId()) ).collect( Collectors.toList() ) );
+	}
 }

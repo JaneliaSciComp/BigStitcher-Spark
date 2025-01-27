@@ -22,19 +22,27 @@
 package net.preibisch.bigstitcher.spark.abstractcmdline;
 
 import java.io.Serializable;
+import java.net.URI;
 import java.util.concurrent.Callable;
 
+import bdv.ViewerImgLoader;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.sequence.SequenceDescription;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import picocli.CommandLine.Option;
+import util.URITools;
 
 public abstract class AbstractBasic implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -4916959775650710928L;
 
-	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml")
-	protected String xmlPath = null;
+	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml or -x s3://mybucket/data/dataset.xml or -x file:/home/project.xml")
+	protected String xmlURIString = null;
+
+	// will be assigned in loadSpimData2()
+	protected URI xmlURI = null;
 
 	@Option(names = { "--dryRun" }, description = "perform a 'dry run', i.e. do not save any results (default: false)")
 	protected boolean dryRun = false;
@@ -44,9 +52,23 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
-		System.out.println( "xml: " + xmlPath);
-		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2("", xmlPath);
+		System.out.println( "xml: " + (xmlURI = URITools.toURI(xmlURIString)) );
+		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2( xmlURI );
 
 		return dataGlobal;
+	}
+
+	public SpimData2 loadSpimData2( final int numThreads ) throws SpimDataException
+	{
+		final SpimData2 data = loadSpimData2();
+
+		final SequenceDescription sequenceDescription = data.getSequenceDescription();
+
+		// set number of fetcher threads (by default set to 0 for spark)
+		final BasicImgLoader imgLoader = sequenceDescription.getImgLoader();
+		if (imgLoader instanceof ViewerImgLoader)
+			((ViewerImgLoader) imgLoader).setNumFetcherThreads( numThreads);
+
+		return data;
 	}
 }

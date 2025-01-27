@@ -21,8 +21,10 @@
  */
 package net.preibisch.bigstitcher.spark;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,9 +35,11 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
@@ -47,25 +51,28 @@ import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
-import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
-import net.preibisch.mvrecon.process.export.ExportTools;
-import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
+import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools;
+import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
+import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import util.Grid;
+import util.URITools;
 
 public class SparkAffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5")
-	private String n5Path = null;
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	private String n5PathURIString = null;
 
 	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "Custom N5/ZARR/HDF5 dataset - it must end with '/s0' to be able to compute a multi-resolution pyramid, e.g. -d /ch488/s0")
 	private String n5Dataset = null;
@@ -73,18 +80,19 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. --bdv 0,0 or --bdv 4,1")
 	private String bdvString = null;
 
-	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (only valid if --bdv was selected), e.g. -xo /home/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
-	private String xmlOutPath = null;
+	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (only valid if --bdv was selected), "
+			+ "e.g. -xo /home/project.xml or -xo s3://myBucket/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
+	private String xmlOutURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
-	private StorageType storageType = null;
+	private StorageFormat storageType = null;
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
-	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 4,4,1)")
-	private String blockScaleString = "4,4,1";
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
+	private String blockScaleString = "2,2,1";
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
@@ -123,14 +131,13 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	// TODO: support create custom downsampling pyramids, null is fine for now (used by multiRes later)
+	// null is fine for now (used by multiRes later)
 	private int[][] downsamplings;
 
+	URI n5PathURI = null, xmlOutURI = null;
 
 	/**
-	 * Assumes that
-	 * at most 8 views are required per output block, and
-	 * at most 8 input blocks per output block are required from one input view per output block.
+	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
 	//static final int N_PREFETCH_THREADS = 72;
 
@@ -149,7 +156,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			return null;
 		}
 
-		if ( this.bdvString != null && xmlOutPath == null )
+		if ( this.bdvString != null && xmlOutURIString == null )
 		{
 			System.out.println( "Please specify the output XML for the BDV dataset: -xo");
 			return null;
@@ -169,12 +176,19 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
+		this.n5PathURI = URITools.toURI( n5PathURIString );
+		System.out.println( "Fused volume: " + n5PathURI );
+
+		if ( this.bdvString != null )
+		{
+			this.xmlOutURI = URITools.toURI( xmlOutURIString );
+			System.out.println( "XML: " + xmlOutURI );
+		}
+
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
-		System.out.println( "Fusing: " + boundingBox.getTitle() +
-				": " + Util.printInterval( boundingBox ) +
-				" with blocksize " + Util.printCoordinates( blockSize ) +
-				" and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
+		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
+				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
 
 		final DataType dataType;
 
@@ -235,22 +249,18 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			return null;
 
 		if ( multiRes )
-			downsamplings = ExportTools.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
+			downsamplings = ExportN5Api.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
 		else if ( this.downsampling != null )
 			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
 		else
-			downsamplings = null;
+			downsamplings = null;// for new code: new int[][]{{ 1, 1, 1 }};
 
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
-		// display virtually
-		//final RandomAccessibleInterval< FloatType > virtual = FusionTools.fuseVirtual( data, viewIds, bb, Double.NaN ).getA();
-		//new ImageJ();
-		//ImageJFunctions.show( virtual, Executors.newFixedThreadPool( Runtime.getRuntime().availableProcessors() ) );
-		//SimpleMultiThreading.threadHaltUnClean();
+		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : N5ApiTools.createBDVPath( this.bdvString, 0, this.storageType );
 
-		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : Import.createBDVPath( this.bdvString, this.storageType );
-		final Compression compression = new GzipCompression( 1 );
+		// TODO: expose
+		final Compression compression = new ZstandardCompression( 3 );// new GzipCompression( 1 );
 
 		final double minIntensity = ( uint8 || uint16 ) ? this.minIntensity : 0;
 		final double range;
@@ -272,9 +282,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		}
 		catch (Exception e ) {}
 
-		final N5Writer driverVolumeWriter = N5Util.createWriter( n5Path, storageType );
-
 		System.out.println( "Format being written: " + storageType );
+		final N5Writer driverVolumeWriter = N5Util.createN5Writer( n5PathURI, storageType );
 
 		driverVolumeWriter.createDataset(
 				n5Dataset,
@@ -305,7 +314,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 			try
 			{
-				if ( !ExportTools.writeBDVMetaData(
+				if ( SpimData2Tools.writeBDVMetaData(
 						driverVolumeWriter,
 						storageType,
 						dataType,
@@ -314,9 +323,9 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 						blockSize,
 						downsamplings,
 						viewId,
-						n5Path,
-						xmlOutPath,
-						instantiate ) )
+						n5PathURI,
+						xmlOutURI,
+						instantiate ) == null )
 				{
 					System.out.println( "Failed to write metadata for '" + n5Dataset + "'." );
 					return null;
@@ -346,11 +355,11 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		if ( masks )
 			rdd.foreach( new WriteSuperBlockMasks(
-					xmlPath,
+					xmlURI,
 					preserveAnisotropy,
 					anisotropyFactor,
 					minBB,
-					n5Path,
+					n5PathURI,
 					n5Dataset,
 					storageType,
 					serializedViewIds,
@@ -360,27 +369,27 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 					blockSize ) );
 		else
 			rdd.foreach( new WriteSuperBlock(
-				xmlPath,
-				preserveAnisotropy,
-				anisotropyFactor,
-				minBB,
-				n5Path,
-				n5Dataset,
-				bdvString,
-				storageType,
-				serializedViewIds,
-				uint8,
-				uint16,
-				minIntensity,
-				range,
-				blockSize,
-				firstTileWins ) );
+					xmlURI,
+					preserveAnisotropy,
+					anisotropyFactor,
+					minBB,
+					n5PathURI,
+					n5Dataset,
+					bdvString,
+					storageType,
+					serializedViewIds,
+					uint8,
+					uint16,
+					minIntensity,
+					range,
+					blockSize,
+					firstTileWins ) );
 
 		if ( this.downsamplings != null )
 		{
 			// TODO: run common downsampling code (affine, non-rigid, downsampling-only)
 			Downsampling.createDownsampling(
-					n5Path,
+					n5PathURI,
 					n5Dataset,
 					driverVolumeWriter,
 					dimensions,
@@ -395,13 +404,13 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 
 		sc.close();
 
-		// close HDF5 writer
-		if ( N5Util.hdf5DriverVolumeWriter != null )
-			N5Util.hdf5DriverVolumeWriter.close();
-		else if ( multiRes )
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
+		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
+		driverVolumeWriter.close();
+
+		if ( multiRes )
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
 		else
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset + "'" );
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 

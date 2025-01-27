@@ -21,19 +21,20 @@
  */
 package net.preibisch.bigstitcher.spark.fusion;
 
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 
 import org.apache.spark.api.java.function.VoidFunction;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Cursor;
-import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
@@ -45,21 +46,20 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
-import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
-import net.preibisch.bigstitcher.spark.blk.N5Helper;
+import net.preibisch.bigstitcher.spark.SparkAffineFusion;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
+import util.URITools;
 
 public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 {
 
 	private static final long serialVersionUID = 1346166310488822467L;
 
-	private final String xmlPath;
+	private final URI xmlURI;
 
 	private final boolean preserveAnisotropy;
 
@@ -67,11 +67,11 @@ public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 
 	private final long[] minBB;
 
-	private final String n5Path;
+	private final URI n5PathURI;
 
 	private final String n5Dataset;
 
-	private final StorageType storageType;
+	private final StorageFormat storageType;
 
 	private final int[][] serializedViewIds;
 
@@ -84,24 +84,24 @@ public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 	private final int[] blockSize;
 
 	public WriteSuperBlockMasks(
-			final String xmlPath,
+			final URI xmlURI,
 			final boolean preserveAnisotropy,
 			final double anisotropyFactor,
 			final long[] minBB,
-			final String n5Path,
+			final URI n5PathURI,
 			final String n5Dataset,
-			final StorageType storageType,
+			final StorageFormat storageType,
 			final int[][] serializedViewIds,
 			final boolean uint8,
 			final boolean uint16,
 			final double[] maskOffset,
 			final int[] blockSize )
 	{
-		this.xmlPath = xmlPath;
+		this.xmlURI = xmlURI;
 		this.preserveAnisotropy = preserveAnisotropy;
 		this.anisotropyFactor = anisotropyFactor;
 		this.minBB = minBB;
-		this.n5Path = n5Path;
+		this.n5PathURI = n5PathURI;
 		this.n5Dataset = n5Dataset;
 		this.storageType = storageType;
 		this.serializedViewIds = serializedViewIds;
@@ -135,7 +135,7 @@ public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 		// --------------------------------------------------------
 
 		// custom serialization
-		final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+		final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 		final List< ViewId > viewIds = Spark.deserializeViewIds( serializedViewIds );
 
 		// If requested, preserve the anisotropy of the data (such that
@@ -169,7 +169,7 @@ public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 
 		final List< ViewId > overlappingViews = WriteSuperBlock.findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
-		final N5Writer executorVolumeWriter = N5Util.createWriter( n5Path, storageType );
+		final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType); //URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 
 		final Img<UnsignedByteType> img = ArrayImgs.unsignedBytes( fusedBlock.dimensionsAsLongArray() );
 		final RandomAccessibleInterval<UnsignedByteType> block = Views.translate( img, fusedBlockMin );
@@ -231,5 +231,9 @@ A:			while ( c.hasNext() )
 
 			N5Utils.saveBlock(sourceFloat, executorVolumeWriter, n5Dataset, gridBlock[2]);
 		}
+
+		// if it is not the shared HDF5 writer, then close
+		if ( N5Util.sharedHDF5Writer != executorVolumeWriter )
+			executorVolumeWriter.close();
 	}
 }

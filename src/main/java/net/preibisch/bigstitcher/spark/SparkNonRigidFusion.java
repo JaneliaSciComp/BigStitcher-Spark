@@ -23,12 +23,14 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 
+import org.apache.hadoop.fs.StorageType;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -39,7 +41,9 @@ import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrWriter;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
@@ -56,18 +60,21 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
-import net.preibisch.bigstitcher.spark.util.Grid;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
+import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.export.ExportN5API.StorageType;
-import net.preibisch.mvrecon.process.export.ExportTools;
-import net.preibisch.mvrecon.process.export.ExportTools.InstantiateViewSetup;
 import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools;
+import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
+import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import util.Grid;
+import util.URITools;
 
 public class SparkNonRigidFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
@@ -76,8 +83,8 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	 */
 	private static final long serialVersionUID = 385486695284409953L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5 path for saving, e.g. /home/fused.n5")
-	private String n5Path = null;
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	private String n5PathURIString = null;
 
 	@Option(names = { "-d", "--n5Dataset" }, required = true, description = "N5 dataset - it is highly recommended to add s0 to be able to compute a multi-resolution pyramid later, e.g. /ch488/s0")
 	private String n5Dataset = null;
@@ -85,15 +92,19 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. -b 0,0 or -b 4,1")
 	private String bdvString = null;
 
-	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (if --bdv was selected), e.g. /home/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
-	private String xmlOutPath = null;
+	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (only valid if --bdv was selected), "
+			+ "e.g. -xo /home/project.xml or -xo s3://myBucket/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
+	private String xmlOutURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
-	private StorageType storageType = null;
+	private StorageFormat storageType = null;
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
+
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
+	private String blockScaleString = "2,2,1";
 
 	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
 	private String boundingBoxName = null;
@@ -113,9 +124,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
 
-
-	// only supported for local spark HDF5 writes, needs to share a writer instance
-	private static N5HDF5Writer hdf5DriverVolumeWriter = null;
+	URI n5PathURI = null, xmlOutURI = null;
 
 	@Override
 	public Void call() throws Exception
@@ -132,9 +141,15 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			System.exit( 0 );
 		}
 
+		if ( this.bdvString != null && xmlOutURIString == null )
+		{
+			System.out.println( "Please specify the output XML for the BDV dataset: -xo");
+			return null;
+		}
+
 		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
 
-		if ( StorageType.HDF5.equals( storageType ) && bdvString != null && !uint16 )
+		if ( StorageFormat.HDF5.equals( storageType ) && bdvString != null && !uint16 )
 		{
 			System.out.println( "BDV-compatible HDF5 only supports 16-bit output for now. Please use '--UINT16' flag for fusion." );
 			System.exit( 0 );
@@ -160,9 +175,19 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		final BoundingBox bb = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
 
-		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
+		this.n5PathURI = URITools.toURI( n5PathURIString );
+		System.out.println( "Fused volume: " + n5PathURI );
 
-		System.out.println( "Fusing: " + bb.getTitle() + ": " + Util.printInterval( bb )  + " with blocksize " + Util.printCoordinates( blockSize ) );
+		if ( this.bdvString != null )
+		{
+			this.xmlOutURI = URITools.toURI( xmlOutURIString );
+			System.out.println( "XML: " + xmlOutURI );
+		}
+
+		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
+		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
+		System.out.println( "Fusing: " + bb.getTitle() + ": " + Util.printInterval( bb ) +
+				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
 
 		final DataType dataType;
 
@@ -171,7 +196,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.UINT8;
 		}
-		else if ( uint16 && bdvString != null && StorageType.HDF5.equals( storageType ) )
+		else if ( uint16 && bdvString != null && StorageFormat.HDF5.equals( storageType ) )
 		{
 			System.out.println( "Fusing to INT16 (for BDV compliance, which is treated as UINT16), min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 			dataType = DataType.INT16;
@@ -187,21 +212,19 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			dataType = DataType.FLOAT32;
 		}
 
-		final long[] dimensions = new long[ bb.numDimensions() ];
-		bb.dimensions( dimensions );
-
-		final long[] min = new long[ bb.numDimensions() ];
-		bb.min( min );
+		final long[] dimensions = bb.dimensionsAsLongArray();
+		final long[] min = bb.minAsLongArray();
 
 		
 		//
 		// final variables for Spark
 		//
-		final String n5Path = this.n5Path;
-		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : Import.createBDVPath( this.bdvString, this.storageType );
-		final String xmlPath = this.xmlPath;
-		final StorageType storageType = this.storageType;
-		final Compression compression = new GzipCompression( 1 );
+		final URI n5PathURI = this.n5PathURI;
+		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : N5ApiTools.createBDVPath( this.bdvString, 0, this.storageType );
+		final URI xmlURI = this.xmlURI;
+		final URI xmloutURI = this.xmlOutURI;
+		final StorageFormat storageType = this.storageType;
+		final Compression compression = new ZstandardCompression( 3 );
 
 		final ArrayList< String > labels = new ArrayList<>(interestPoints);
 		final boolean uint8 = this.uint8;
@@ -224,17 +247,12 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		}
 		catch (Exception e ) {}
 
-		final N5Writer driverVolumeWriter;
-		if ( StorageType.N5.equals(storageType) )
-			driverVolumeWriter = new N5FSWriter(n5Path);
-		else if ( StorageType.ZARR.equals(storageType) )
-			driverVolumeWriter = new N5ZarrWriter(n5Path);
-		else if ( StorageType.HDF5.equals(storageType) )
-			driverVolumeWriter = hdf5DriverVolumeWriter = new N5HDF5Writer(n5Path);
-		else
-			throw new RuntimeException( "storageType " + storageType + " not supported." );
-
 		System.out.println( "Format being written: " + storageType );
+
+		final N5Writer driverVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
+
+		if ( driverVolumeWriter == null )
+			return null;
 
 		driverVolumeWriter.createDataset(
 				n5Dataset,
@@ -243,21 +261,14 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 				dataType,
 				compression );
 
-		final List<long[][]> grid = Grid.create( dimensions, blockSize );
-
-		/*
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-
+		final int[] superBlockSize = new int[ 3 ];
+		Arrays.setAll( superBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
 		final List<long[][]> grid = Grid.create(dimensions,
-				new int[] {
-						blockSize[0] * 4,
-						blockSize[1] * 4,
-						blockSize[2] * 4
-				},
+				superBlockSize,
 				blockSize);
-		*/
 
-		System.out.println( "numBlocks = " + grid.size() );
+		System.out.println( "numJobs = " + grid.size() );
 
 		driverVolumeWriter.setAttribute( n5Dataset, "offset", min);
 
@@ -275,7 +286,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 			try
 			{
-				if ( !ExportTools.writeBDVMetaData(
+				if ( SpimData2Tools.writeBDVMetaData(
 						driverVolumeWriter,
 						storageType,
 						dataType,
@@ -284,9 +295,9 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 						blockSize,
 						downsamplings,
 						viewId,
-						this.n5Path,
-						this.xmlOutPath,
-						instantiate ) )
+						n5PathURI,
+						xmlOutURI,
+						instantiate ) == null )
 				{
 					System.out.println( "Failed to write metadata for '" + n5Dataset + "'." );
 					return null;
@@ -303,8 +314,9 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		}
 
 		final SparkConf conf = new SparkConf().setAppName("NonRigidFusion");
-		// TODO: REMOVE
-		//conf.set("spark.driver.bindAddress", "127.0.0.1");
+
+		if (localSparkBindAddress)
+			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
@@ -315,7 +327,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		rdd.foreach(
 				gridBlock -> {
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2("", xmlPath);
+					final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 
 					// be smarter, test which ViewIds are actually needed for the block we want to fuse
 					final Interval fusedBlock =
@@ -379,8 +391,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 					final double alpha = 1.0;
 					final boolean virtualGrid = false;
 
-					final boolean useBlending = true;
-					final boolean useContentBased = false;
+					final FusionType fusionType = FusionType.AVG_BLEND;
 					final boolean displayDistances = false;
 
 					final ExecutorService service = new SequentialExecutorService();
@@ -391,8 +402,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 									viewsToFuse,
 									viewsToUse,
 									labels,
-									useBlending,
-									useContentBased,
+									fusionType,
 									displayDistances,
 									controlPointDistance,
 									alpha,
@@ -404,16 +414,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 					service.shutdown();
 
-					final N5Writer executorVolumeWriter;
-
-					if ( StorageType.N5.equals(storageType) )
-						executorVolumeWriter = new N5FSWriter(n5Path);
-					else if ( StorageType.ZARR.equals(storageType) )
-						executorVolumeWriter = new N5ZarrWriter(n5Path);
-					else if ( StorageType.HDF5.equals(storageType) )
-						executorVolumeWriter = hdf5DriverVolumeWriter;
-					else
-						throw new RuntimeException( "storageType " + storageType + " not supported." );
+					final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
 
 					if ( uint8 )
 					{
@@ -421,11 +422,6 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 								Converters.convert(
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedByteType());
-
-						//new ImageJ();
-						//ImageJFunctions.show( source );
-						//ImageJFunctions.show( sourceUINT8 );
-						//SimpleMultiThreading.threadHaltUnClean();
 
 						//final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlock[0], gridBlock[1]);
 						N5Utils.saveBlock(sourceUINT8, executorVolumeWriter, n5Dataset, gridBlock[2]);
@@ -437,39 +433,25 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
 										new UnsignedShortType());
 
-						if ( bdvString != null && StorageType.HDF5.equals( storageType ) )
-						{
-							// Tobias: unfortunately I store as short and treat it as unsigned short in Java.
-							// The reason is, that when I wrote this, the jhdf5 library did not support unsigned short. It's terrible and should be fixed.
-							// https://github.com/bigdataviewer/bigdataviewer-core/issues/154
-							// https://imagesc.zulipchat.com/#narrow/stream/327326-BigDataViewer/topic/XML.2FHDF5.20specification
-							final RandomAccessibleInterval< ShortType > sourceINT16 = 
-									Converters.convertRAI( sourceUINT16, (i,o)->o.set( i.getShort() ), new ShortType() );
-
-							// why???
-							//final RandomAccessibleInterval<ShortType> sourceGridBlock = Views.offsetInterval(sourceINT16, gridBlock[0], gridBlock[1]);
-							N5Utils.saveBlock(sourceINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
-						}
-						else
-						{
-							//final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-							N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
-						}
+						//final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
+						N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
 					else
 					{
 						//final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
 						N5Utils.saveBlock(source, executorVolumeWriter, n5Dataset, gridBlock[2]);
 					}
+
+					if ( executorVolumeWriter != N5Util.sharedHDF5Writer )
+						executorVolumeWriter.close();
 				});
 
 		sc.close();
 
-		// close HDF5 writer
-		if ( hdf5DriverVolumeWriter != null )
-			hdf5DriverVolumeWriter.close();
+		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
+		driverVolumeWriter.close();
 
-		System.out.println( "Saved non-rigid, e.g. view with './n5-view -i " + n5Path + " -d " + n5Dataset );
+		System.out.println( "Saved non-rigid, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset );
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		return null;
