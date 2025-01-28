@@ -44,6 +44,7 @@ import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
@@ -337,6 +338,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final SpimData2 dataFusion =
 					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, setups, tps );
+
+			new XmlIoSpimData2().save( dataFusion, xmlOutPathURI );
 
 			dataFusion.getSequenceDescription().getViewDescriptions().values().stream().parallel().forEach( vd ->
 			{
