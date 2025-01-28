@@ -25,7 +25,14 @@ import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.sequence.Angle;
+import mpicbg.spim.data.sequence.Channel;
+import mpicbg.spim.data.sequence.FinalVoxelDimensions;
+import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.Tile;
+import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
@@ -43,6 +50,7 @@ import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
+import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -296,6 +304,54 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// setup datasets and metadata
 		if ( bdv )
 		{
+			final long[] bb = boundingBox.dimensionsAsLongArray();
+
+			final ArrayList< ViewSetup > setups = new ArrayList<>();
+			final ArrayList< TimePoint > tps = new ArrayList<>();
+
+			for ( int t = 0; t < numTimepoints; ++t )
+				tps.add( new TimePoint( t ) );
+
+			// extract the resolution of the s0 export
+			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
+			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+
+			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", resolutionS0 );
+
+			for ( int c = 0; c < numChannels; ++c )
+			{
+				setups.add(
+						new ViewSetup(
+								c,
+								"setup " + c,
+								new FinalDimensions( bb ),
+								vxNew,
+								new Tile( 0 ),
+								new Channel( c, "Channel " + c ),
+								new Angle( 0 ),
+								new Illumination( 0 ) ) );
+			}
+
+			final SpimData2 dataFusion =
+					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, setups, tps );
+
+			dataFusion.getSequenceDescription().getViewDescriptions().values().stream().parallel().forEach( vd ->
+			{
+				if ( storageType == StorageFormat.N5 )
+				{
+					MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupBdvDatasetsN5(
+							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+				}
+				else // HDF5
+				{
+					MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupBdvDatasetsHDF5(
+							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+				}
+			});
+
 			// TODO: set extra attributes to load the state
 		}
 		else if ( storageType == StorageFormat.ZARR ) // OME-Zarr export
@@ -313,7 +369,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final Function<Integer, String> levelToName = (level) -> "/" + level;
 
 			// all is 5d now
-			MultiResolutionLevelInfo[] mrInfoZarr = N5ApiTools.setupMultiResolutionPyramid(
+			MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupMultiResolutionPyramid(
 					driverVolumeWriter,
 					levelToName,
 					dt,
@@ -323,14 +379,14 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					ds ); // 5d
 
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
-					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfoZarr[level].absoluteDownsamplingDouble() );
+					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
 			// extract the resolution of the s0 export
 			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
 			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
 			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
 
-			IOFunctions.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
@@ -338,7 +394,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					"/", // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
-					mrInfoZarr.length, // int numResolutionLevels,
+					mrInfo.length, // int numResolutionLevels,
 					levelToName,
 					levelToMipmapTransform );
 
@@ -351,7 +407,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			// TODO: set extra attributes to load the state
 		}
-		else // simple HDF5/N5 export
+		else // simple (no bdv project) HDF5/N5 export
 		{
 			for ( int t = 0; t < numTimepoints; ++t )
 				for ( int c = 0; c < numChannels; ++c )
