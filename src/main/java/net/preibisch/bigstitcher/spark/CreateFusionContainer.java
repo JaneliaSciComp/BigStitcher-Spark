@@ -5,6 +5,7 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
@@ -31,6 +32,7 @@ import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
@@ -302,9 +304,28 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			
 		}
 
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumTimepoints", numTimepoints );
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumChannels", numChannels );
+
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", boundingBox.minAsLongArray() );
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", boundingBox.maxAsLongArray() );
+
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
+
 		// setup datasets and metadata
+		MultiResolutionLevelInfo[][] mrInfos;
+
 		if ( bdv )
 		{
+			System.out.println( "Creating BDV compatible container at '" + outPathURI + "' ... " );
+
+			if ( storageType == StorageFormat.N5 )
+				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+			else
+				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
+
 			final long[] bb = boundingBox.dimensionsAsLongArray();
 
 			final ArrayList< ViewSetup > setups = new ArrayList<>();
@@ -339,18 +360,27 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final SpimData2 dataFusion =
 					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, setups, tps );
 
-			new XmlIoSpimData2().save( dataFusion, xmlOutPathURI );
+			new XmlIoSpimData2().save( dataFusion, xmlOutURI );
 
-			dataFusion.getSequenceDescription().getViewDescriptions().values().stream().parallel().forEach( vd ->
+			final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
+
+			mrInfos = new MultiResolutionLevelInfo[ vds.size() ][];
+
+			vds.stream().parallel().forEach( vd ->
 			{
+				final int c = vd.getViewSetup().getChannel().getId();
+				final int t = vd.getTimePointId();
+
 				if ( storageType == StorageFormat.N5 )
 				{
-					MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupBdvDatasetsN5(
+					mrInfos[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
 							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+
+					driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 				}
 				else // HDF5
 				{
-					MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupBdvDatasetsHDF5(
+					mrInfos[ c + t*c  ] = N5ApiTools.setupBdvDatasetsHDF5(
 							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
 				}
 			});
@@ -359,7 +389,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 		else if ( storageType == StorageFormat.ZARR ) // OME-Zarr export
 		{
-			IOFunctions.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
+			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
+
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
 
 			final long[] dim3d = boundingBox.dimensionsAsLongArray();
 
@@ -371,8 +403,10 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final Function<Integer, String> levelToName = (level) -> "/" + level;
 
+			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
+
 			// all is 5d now
-			MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupMultiResolutionPyramid(
+			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
 					driverVolumeWriter,
 					levelToName,
 					dt,
@@ -382,7 +416,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					ds ); // 5d
 
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
-					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
+					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfos[ 0 ][level].absoluteDownsamplingDouble() );
 
 			// extract the resolution of the s0 export
 			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
@@ -397,7 +431,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					"/", // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
-					mrInfo.length, // int numResolutionLevels,
+					mrInfos[ 0 ].length, // int numResolutionLevels,
 					levelToName,
 					levelToMipmapTransform );
 
@@ -407,20 +441,25 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			// for this to work you need to register an adapter in the N5Factory class
 			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
-
-			// TODO: set extra attributes to load the state
 		}
 		else // simple (no bdv project) HDF5/N5 export
 		{
-			for ( int t = 0; t < numTimepoints; ++t )
-				for ( int c = 0; c < numChannels; ++c )
+			mrInfos = new MultiResolutionLevelInfo[ numChannels * numTimepoints ][];
+
+			if ( storageType == StorageFormat.N5 )
+				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "N5" );
+			else
+				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "HDF5" );
+
+			for ( int c = 0; c < numChannels; ++c )
+				for ( int t = 0; t < numTimepoints; ++t )
 				{
 					String title = "ch"+c+"tp"+t;
 
 					IOFunctions.println( "Creating 3D " + storageType +" container '" + title + "' in '" + outPathURI + "' ... " );
 		
 					// setup multi-resolution pyramid
-					final MultiResolutionLevelInfo[] mrInfo = N5ApiTools.setupMultiResolutionPyramid(
+					mrInfos[ c + t*c  ] = N5ApiTools.setupMultiResolutionPyramid(
 							driverVolumeWriter,
 							(level) -> title + "/s" + level,
 							dt,
@@ -428,10 +467,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 							compression,
 							blockSize,
 							downsamplings );
-
-					// TODO: set extra attributes to load the state
 				}
 		}
+
+
+		// TODO: set extra attributes to load the state
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", mrInfos );
 
 		driverVolumeWriter.close();
 
