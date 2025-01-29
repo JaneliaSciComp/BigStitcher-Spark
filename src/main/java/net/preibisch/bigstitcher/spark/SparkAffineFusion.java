@@ -44,6 +44,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.util.Util;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
@@ -57,6 +58,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 import picocli.CommandLine;
@@ -64,7 +66,7 @@ import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
-public class SparkAffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
+public class SparkAffineFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
 	public static enum DataTypeFusion
 	{
@@ -74,46 +76,13 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	private static final long serialVersionUID = -6103761116219617153L;
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
-	private String n5PathURIString = null;
+	private String outputPathURIString = null;
 
-	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "Custom N5/ZARR/HDF5 dataset - it must end with '/s0' to be able to compute a multi-resolution pyramid, e.g. -d /ch488/s0")
-	private String n5Dataset = null;
-
-	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. --bdv 0,0 or --bdv 4,1")
-	private String bdvString = null;
-
-	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (only valid if --bdv was selected), "
-			+ "e.g. -xo /home/project.xml or -xo s3://myBucket/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
-	private String xmlOutURIString = null;
-
-	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
+	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending)")
 	private StorageFormat storageType = null;
-
-	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
-	private String blockSizeString = "128,128,128";
 
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
 	private String blockScaleString = "2,2,1";
-
-	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
-	private String boundingBoxName = null;
-
-	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
-	private boolean multiRes = false;
-
-	@Option(names = { "-ds", "--downsampling" }, split = ";", required = false, description = "Manually define steps to create of a multi-resolution pyramid (e.g. -ds 2,2,1; 2,2,1; 2,2,2; 2,2,2)")
-	private List<String> downsampling = null;
-
-	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
-	private boolean preserveAnisotropy = false;
-
-	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
-	private double anisotropyFactor = Double.NaN;
-
-	@Option(names = {"-p", "--dataType"}, defaultValue = "FLOAT32", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Data type, UINT8 [0...255], UINT16 [0...65535] and FLOAT32 are supported, when choosing UINT8 or UINT16 you must define min and max intensity (default: FLOAT32)")
-	private DataTypeFusion dataTypeFusion = null;
 
 	@Option(names = { "--minIntensity" }, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
 	private Double minIntensity = null;
@@ -130,11 +99,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	// null is fine for now (used by multiRes later)
-	private int[][] downsamplings;
-
-	URI n5PathURI = null, xmlOutURI = null;
-
+	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
@@ -149,21 +114,54 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			System.exit( 0 );
 		}
 
-		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
+		this.outPathURI = URITools.toURI( outputPathURIString );
+		System.out.println( "Fused volume: " + outPathURI );
+
+		if ( storageType == null )
 		{
-			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) - OR - the BigDataViewer specification (e.g. --bdv 0,1)");
-			return null;
+			if ( outputPathURIString.toLowerCase().endsWith( ".zarr" ) )
+				storageType = StorageFormat.ZARR;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".n5" ) )
+				storageType = StorageFormat.N5;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".h5" ) || outPathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
+				storageType = StorageFormat.HDF5;
+			else
+			{
+				System.out.println( "Unable to guess format from URI '" + outPathURI + "', please specify using '-s'");
+				return null;
+			}
+
+			System.out.println( "Guessed format " + storageType + " will be used to open URI '" + outPathURI + "', you can override it using '-s'");
+		}
+		else
+		{
+			System.out.println( "Format " + storageType + " will be used to open " + outPathURI );
 		}
 
-		if ( this.bdvString != null && xmlOutURIString == null )
-		{
-			System.out.println( "Please specify the output XML for the BDV dataset: -xo");
-			return null;
-		}
+		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
 
-		Import.validateInputParameters( dataTypeFusion, minIntensity, maxIntensity);
+		final String fusionFormat = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/FusionFormat", String.class );
 
-		final SpimData2 dataGlobal = this.loadSpimData2();
+		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
+
+		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
+		final int numTimepoints = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumTimepoints", int.class );
+		final int numChannels = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumChannels", int.class );
+
+		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
+		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
+
+		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
+		final double anisotropyFactor = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", double.class );
+		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
+
+		System.out.println( "Input XML: " + xmlURI );
+
+		final MultiResolutionLevelInfo[][] mrInfos =
+				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
+
+		/*
+		final SpimData2 dataGlobal = Spark.getJobSpimData2( loadFromContainer, 0 );
 
 		if ( dataGlobal == null )
 			return null;
@@ -173,10 +171,8 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 			return null;
 
-		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
+		BoundingBox boundingBox = loadFromContainer;
 
-		this.n5PathURI = URITools.toURI( n5PathURIString );
-		System.out.println( "Fused volume: " + n5PathURI );
 
 		if ( this.bdvString != null )
 		{
@@ -412,7 +408,7 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
-
+		*/
 		return null;
 	}
 

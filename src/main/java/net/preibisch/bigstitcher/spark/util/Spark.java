@@ -227,13 +227,21 @@ public class Spark {
 	 */
 	public static SpimData2 getSparkJobSpimData2( final URI xmlPath ) throws SpimDataException
 	{
+		return getJobSpimData2( xmlPath, 0 );
+	}
+
+	/**
+	 * @return a new data instance optimized for multi-threaded tasks.
+	 */
+	public static SpimData2 getJobSpimData2( final URI xmlPath, final int numFetcherThreads ) throws SpimDataException
+	{
 		final SpimData2 data = new XmlIoSpimData2().load(xmlPath);
 		final SequenceDescription sequenceDescription = data.getSequenceDescription();
 
 		// set number of fetcher threads to 0 for spark usage
 		final BasicImgLoader imgLoader = sequenceDescription.getImgLoader();
 		if (imgLoader instanceof ViewerImgLoader) {
-			((ViewerImgLoader) imgLoader).setNumFetcherThreads(0);
+			((ViewerImgLoader) imgLoader).setNumFetcherThreads( numFetcherThreads );
 		}
 
 		LOG.info("getSparkJobSpimData2: loaded {}, xmlPath={} on executorId={}",
