@@ -64,7 +64,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 	public static enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
 
-	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
+	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
@@ -304,6 +304,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			
 		}
 
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/InputXML", xmlURI );
+
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumTimepoints", numTimepoints );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumChannels", numChannels );
 
@@ -325,6 +327,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 			else
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
+
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/OutputXML", xmlOutURI );
 
 			final long[] bb = boundingBox.dimensionsAsLongArray();
 
