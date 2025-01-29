@@ -380,7 +380,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				}
 				else // HDF5
 				{
-					mrInfos[ c + t*c  ] = N5ApiTools.setupBdvDatasetsHDF5(
+					mrInfos[ c + t*numChannels  ] = N5ApiTools.setupBdvDatasetsHDF5(
 							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
 				}
 			});
@@ -459,7 +459,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					IOFunctions.println( "Creating 3D " + storageType +" container '" + title + "' in '" + outPathURI + "' ... " );
 		
 					// setup multi-resolution pyramid
-					mrInfos[ c + t*c  ] = N5ApiTools.setupMultiResolutionPyramid(
+					mrInfos[ c + t*numChannels  ] = N5ApiTools.setupMultiResolutionPyramid(
 							driverVolumeWriter,
 							(level) -> title + "/s" + level,
 							dt,
