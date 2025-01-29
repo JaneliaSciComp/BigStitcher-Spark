@@ -427,7 +427,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
 			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
 
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(

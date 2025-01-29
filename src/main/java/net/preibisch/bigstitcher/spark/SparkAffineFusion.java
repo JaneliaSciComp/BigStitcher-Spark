@@ -150,28 +150,41 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
+ 
+		final BoundingBox bb = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
 		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
 		final double anisotropyFactor = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", double.class );
 		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
 
+		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "Input XML: " + xmlURI );
+		System.out.println( "BDV project: " + bdv );
+		System.out.println( "numTimepoints of fused dataset(s): " + numTimepoints );
+		System.out.println( "numChannels of fused dataset(s): " + numChannels );
+		System.out.println( "BoundingBox: " + bb );
+		System.out.println( "preserveAnisotropy: " + preserveAnisotropy );
+		System.out.println( "anisotropyFactor: " + anisotropyFactor );
+		System.out.println( "dataType: " + dataType );
 
 		final MultiResolutionLevelInfo[][] mrInfos =
 				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
 
-		/*
-		final SpimData2 dataGlobal = Spark.getJobSpimData2( loadFromContainer, 0 );
+		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
+
+		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
 
 		if ( dataGlobal == null )
 			return null;
+
+		/*
 
 		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
 
 		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 			return null;
 
-		BoundingBox boundingBox = loadFromContainer;
+ 		BoundingBox boundingBox = loadFromContainer;
 
 
 		if ( this.bdvString != null )
