@@ -84,20 +84,15 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
 	private String blockScaleString = "2,2,1";
 
-	@Option(names = { "--minIntensity" }, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
-	private Double minIntensity = null;
+	//@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
+	//private boolean masks = false;
 
-	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
-	private Double maxIntensity = null;
-
-	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
-	private boolean masks = false;
+	//@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
+	//private String maskOffset = "0.0,0.0,0.0";
 
 	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
 	private boolean firstTileWins = false;
 
-	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
-	private String maskOffset = "0.0,0.0,0.0";
 
 	URI outPathURI = null;
 	/**
@@ -157,6 +152,18 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		final double anisotropyFactor = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", double.class );
 		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
 
+		final double minIntensity, maxIntensity;
+
+		if ( driverVolumeWriter.listAttributes( "Bigstitcher-Spark").containsKey( "MinIntensity" ) )
+		{
+			minIntensity = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
+			maxIntensity = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
+		}
+		else
+		{
+			minIntensity = maxIntensity = Double.NaN;
+		}
+
 		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "Input XML: " + xmlURI );
 		System.out.println( "BDV project: " + bdv );
@@ -166,6 +173,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		System.out.println( "preserveAnisotropy: " + preserveAnisotropy );
 		System.out.println( "anisotropyFactor: " + anisotropyFactor );
 		System.out.println( "dataType: " + dataType );
+		System.out.println( "minIntensity: " + minIntensity );
+		System.out.println( "maxIntensity: " + maxIntensity );
 
 		final MultiResolutionLevelInfo[][] mrInfos =
 				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );

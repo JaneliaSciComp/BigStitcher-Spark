@@ -91,6 +91,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			description = "Data type, UINT8 [0...255], UINT16 [0...65535] and FLOAT32 are supported, when choosing UINT8 or UINT16 you must define min and max intensity (default: FLOAT32)")
 	private DataTypeFusion dataTypeFusion = null;
 
+	@Option(names = { "--minIntensity" }, description = "optionally adjust min intensity for scaling values to the desired range for UINT8 and UINT16 output, (default: 0)")
+	private Double minIntensity = null;
+
+	@Option(names = { "--maxIntensity" }, description = "optionally adjust max intensity for scaling values to the desired range for UINT8 and UINT16 output, (default: 255 for UINT8, 65535 for UINT16)")
+	private Double maxIntensity = null;
+
 	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset (default: false)")
 	private boolean bdv = false;
 
@@ -240,15 +246,30 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
 
 		final DataType dt;
+		Double minIntensity, maxIntensity;
 
 		if ( dataTypeFusion == DataTypeFusion.UINT8 )
+		{
 			dt = DataType.UINT8;
+			minIntensity = (this.minIntensity == null) ? 0 : this.minIntensity;
+			maxIntensity = (this.maxIntensity == null) ? 255 : this.maxIntensity;
+		}
 		else if ( dataTypeFusion == DataTypeFusion.UINT16 )
+		{
 			dt = DataType.UINT16;
+			minIntensity = (this.minIntensity == null) ? 0 : this.minIntensity;
+			maxIntensity = (this.maxIntensity == null) ? 65535 : this.maxIntensity;
+		}
 		else if ( dataTypeFusion == DataTypeFusion.FLOAT32 )
+		{
 			dt = DataType.FLOAT32;
+			minIntensity = maxIntensity = null;
+		}
 		else
+		{
 			dt = null;
+			minIntensity = maxIntensity = null;
+		}
 
 		System.out.println( "Data type: " + dt );
 
@@ -315,6 +336,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
+
+		if ( minIntensity != null && maxIntensity != null )
+		{
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MinIntensity", minIntensity );
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MaxIntensity", maxIntensity );
+		}
 
 		// setup datasets and metadata
 		MultiResolutionLevelInfo[][] mrInfos;
