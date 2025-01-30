@@ -258,9 +258,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		//
 		// final variables for Spark
 		//
-		final long[] minBB = boundingBox.minAsLongArray();
-		final long[] maxBB = boundingBox.maxAsLongArray();
-
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
 		// TODO: do we still need this?
@@ -352,7 +349,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			for ( int t = 0; t < numTimepoints; ++t )
 			{
 				System.out.println( "\nProcessing channel " + c + ", timepoint " + t );
-				System.out.println( "\n-----------------------------------" );
+				System.out.println( "-----------------------------------" );
 
 				final int tIndex = t;
 				final int cIndex = c;
@@ -362,12 +359,17 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 					final ViewDescription vd = sd.getViewDescription( viewId );
 
 					if ( tpIdToTpIndex.get( vd.getTimePointId() ) == tIndex && chIdToChIndex.get( vd.getViewSetup().getChannel().getId() ) == cIndex )
-						viewIds.add( viewId );
+						viewIds.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
 				});
 
 				System.out.println( "Fusing " + viewIds.size() + " views for this 3D volume ... " );
 
-				final MultiResolutionLevelInfo[] mrInfo = mrInfos[ c + t*numChannels  ];
+				final MultiResolutionLevelInfo[] mrInfo;
+
+				if ( storageType == StorageFormat.ZARR )
+					mrInfo = mrInfos[ 0 ];
+				else
+					mrInfo = mrInfos[ c + t*numChannels ];
 
 				// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
 				final int[] superBlockSize = new int[ 3 ];
@@ -385,7 +387,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 				final long time = System.currentTimeMillis();
 
 				//TODO: prefetchExecutor!!
-
 				rdd.foreach(
 						gridBlock ->
 						{
@@ -426,7 +427,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									firstTileWins ? FusionType.FIRST : FusionType.AVG_BLEND,//fusion.getFusionType(),
 									1, // linear interpolation
 									null, // intensity correction
-									boundingBox,
+									new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
 									(RealType & NativeType)type,
 									blockSize );
 

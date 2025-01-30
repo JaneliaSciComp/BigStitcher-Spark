@@ -244,8 +244,7 @@ public class Spark {
 			((ViewerImgLoader) imgLoader).setNumFetcherThreads( numFetcherThreads );
 		}
 
-		LOG.info("getSparkJobSpimData2: loaded {}, xmlPath={} on executorId={}",
-				 data, xmlPath, getSparkExecutorId());
+		//LOG.info("getSparkJobSpimData2: loaded {}, xmlPath={} on executorId={}", data, xmlPath, getSparkExecutorId());
 
 		return data;
 	}
