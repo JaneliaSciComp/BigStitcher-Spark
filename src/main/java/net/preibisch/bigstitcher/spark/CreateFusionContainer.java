@@ -87,7 +87,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = "--blockSize", description = "blockSize (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
-	@Option(names = {"-p", "--dataType"}, defaultValue = "FLOAT32", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+	@Option(names = {"-d", "--dataType"}, defaultValue = "FLOAT32", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Data type, UINT8 [0...255], UINT16 [0...65535] and FLOAT32 are supported, when choosing UINT8 or UINT16 you must define min and max intensity (default: FLOAT32)")
 	private DataTypeFusion dataTypeFusion = null;
 

@@ -26,9 +26,11 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -41,6 +43,7 @@ import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
+import ij.IJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -72,6 +75,7 @@ import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
@@ -345,6 +349,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		for ( int c = 0; c < sd.getAllChannelsOrdered().size(); ++c )
 			chIdToChIndex.put( sd.getAllChannelsOrdered().get( c ).getId(), c );
 
+		final long totalTime = System.currentTimeMillis();
+
 		for ( int c = 0; c < numChannels; ++c )
 			for ( int t = 0; t < numTimepoints; ++t )
 			{
@@ -384,7 +390,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 				final JavaRDD<long[][]> rdd = sc.parallelize( grid );
 
-				final long time = System.currentTimeMillis();
+				long time = System.currentTimeMillis();
 
 				//TODO: prefetchExecutor!!
 				rdd.foreach(
@@ -418,7 +424,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 								type = new FloatType();
 							}
 
-							RandomAccessibleInterval img = BlkAffineFusion.init(
+							final RandomAccessibleInterval img = BlkAffineFusion.init(
 									conv,
 									dataLocal.getSequenceDescription().getImgLoader(),
 									viewIds,
@@ -474,35 +480,70 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							if ( N5Util.sharedHDF5Writer == null )
 								driverVolumeWriterLocal.close();
 						} );
-				/*
-				if ( this.downsamplings != null )
+
+				System.out.println( new Date( System.currentTimeMillis() ) + ": Saved full resolution, took: " + (System.currentTimeMillis() - time ) + " ms." );
+
+				//
+				// save multiresolution pyramid (s1 ... sN)
+				//
+				for ( int level = 1; level < mrInfo.length; ++level )
 				{
-					// TODO: run common downsampling code (affine, non-rigid, downsampling-only)
-					Downsampling.createDownsampling(
-							n5PathURI,
-							n5Dataset,
-							driverVolumeWriter,
-							dimensions,
-							storageType,
-							blockSize,
-							dataType,
-							compression,
-							downsamplings,
-							bdvString != null,
-							sc );
+					final int s = level;
+					final List<long[][]> allBlocks = N5ApiTools.assembleJobs( mrInfo[ level ] );
+
+					System.out.println( new Date( System.currentTimeMillis() ) + ": Downsampling: " + Util.printCoordinates( mrInfo[ level ].absoluteDownsampling ) + " with relative downsampling of " + Util.printCoordinates( mrInfo[ level ].relativeDownsampling ));
+					System.out.println( new Date( System.currentTimeMillis() ) + ": s" + level + " num blocks=" + allBlocks.size() );
+					System.out.println( new Date( System.currentTimeMillis() ) + ": Loading '" + mrInfo[ level - 1 ].dataset + "', downsampled will be written as '" + mrInfo[ level ].dataset + "'." );
+
+					time = System.currentTimeMillis();
+
+					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks );
+
+					rddDS.foreach(
+							gridBlock ->
+							{
+								final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+
+								// 5D OME-ZARR CONTAINER
+								if ( storageType == StorageFormat.ZARR )
+								{
+									N5ApiTools.writeDownsampledBlock5dOMEZARR(
+											driverVolumeWriterLocal,
+											mrInfo[ s ],
+											mrInfo[ s - 1 ],
+											gridBlock,
+											cIndex,
+											tIndex );
+								}
+								else
+								{
+									N5ApiTools.writeDownsampledBlock(
+											driverVolumeWriterLocal,
+											mrInfo[ s ],
+											mrInfo[ s - 1 ],
+											gridBlock );
+								}
+
+								if ( N5Util.sharedHDF5Writer == null )
+									driverVolumeWriterLocal.close();
+
+							});
+
+					System.out.println( new Date( System.currentTimeMillis() ) + ": Saved level s " + level + ", took: " + (System.currentTimeMillis() - time ) + " ms." );
 				}
-
-				// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
-				driverVolumeWriter.close();
-
-				if ( multiRes )
-					System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
-				else
-					System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
-
-				System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
-				*/
 			}
+
+		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
+		driverVolumeWriter.close();
+
+		/*
+		if ( multiRes )
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
+		else
+			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
+		*/
+
+		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
 
 		sc.close();
 
