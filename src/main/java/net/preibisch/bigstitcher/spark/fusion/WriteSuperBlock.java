@@ -72,8 +72,6 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 
 	private final String n5Dataset;
 
-	private final String bdvString;
-
 	private final StorageFormat storageType;
 
 	private final int[][] serializedViewIds;
@@ -113,7 +111,6 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		this.minBB = minBB;
 		this.n5PathURI = n5PathURI;
 		this.n5Dataset = n5Dataset;
-		this.bdvString = bdvString;
 		this.storageType = storageType;
 		this.serializedViewIds = serializedViewIds;
 		this.uint8 = uint8;

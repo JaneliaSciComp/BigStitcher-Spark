@@ -336,6 +336,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/BlockSize", blockSize );
 
 		if ( minIntensity != null && maxIntensity != null )
 		{
