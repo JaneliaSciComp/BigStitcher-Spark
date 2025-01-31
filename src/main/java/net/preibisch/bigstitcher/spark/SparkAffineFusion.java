@@ -63,6 +63,7 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.fusion.GenerateComputeBlockMasks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
@@ -109,6 +110,33 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	private boolean firstTileWins = false;
 
 
+	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
+	private Integer timepointIndex = null;
+
+	@Option(names = { "-c", "--channelIndex" }, description = "specify a specific channel index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
+	private Integer channelIndex = null;
+
+
+	// To specify what goes into the current 3D volume
+	@Option(names = { "--angleId" }, description = "list the angle ids that should be processed, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
+	protected String angleIds = null;
+
+	@Option(names = { "--tileId" }, description = "list the tile ids that should be processed, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
+	protected String tileIds = null;
+
+	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be processed, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
+	protected String illuminationIds = null;
+
+	@Option(names = { "--channelId" }, description = "list the channel ids that should be processed, you can find them in the XML (usually just one when fusing), e.g. --channelId '0,1,2' (default: all channels)")
+	protected String channelIds = null;
+
+	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be processed, you can find them in the XML (usually just one when fusing), e.g. --timepointId '0,1,2' (default: all time points)")
+	protected String timepointIds = null;
+
+	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
+	protected String[] vi = null;
+
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
@@ -124,6 +152,19 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.exit( 0 );
 		}
 
+		if ( timepointIndex != null && channelIndex == null || timepointIndex == null && channelIndex != null )
+		{
+			System.out.println( "You have to specify timepointId and channelId together, one alone does not work. timepointId =" + timepointIndex + ", channelId=" + channelIndex );
+			return null;
+		}
+
+		if ( timepointIndex == null && ( vi != null || timepointIds != null || channelIds != null || illuminationIds != null || tileIds != null || angleIds != null ) )
+			
+		{
+			System.out.println( "You can only specify specify angles, tiles, ..., ViewIds if you provided a specific timepointIndex & channelIndex.");
+			return null;
+		}
+	
 		this.outPathURI = URITools.toURI( outputPathURIString );
 		System.out.println( "Fused volume: " + outPathURI );
 
@@ -155,8 +196,19 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
 
 		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
-		final int numTimepoints = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumTimepoints", int.class );
-		final int numChannels = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumChannels", int.class );
+
+		final int numTimepoints, numChannels;
+
+		if ( timepointIndex == null )
+		{
+			numTimepoints = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumTimepoints", int.class );
+			numChannels = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumChannels", int.class );
+		}
+		else
+		{
+			System.out.println( "Overriding numChannels and numTimepoints from metadata, instead processing timepointIndex=" + timepointIndex + ", channelIndex=" + channelIndex + " only.");
+			numTimepoints = numChannels = 1;
+		}
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
@@ -217,15 +269,11 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 					"The number of channels and timepoint in XML does not match the number in the export dataset.\n"
 					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into\n"
 					+ "a specific 3D volume in the fusion dataset:\n");
-			// TODO: support that
-			/*
-			final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
+
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
 
 			if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 				return null;
-			*/
-
-			return null;
 		}
 		else
 		{
@@ -242,12 +290,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.out.println( "Fusing to UINT16, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
 		else
 			System.out.println( "Fusing to FLOAT32" );
-
- 		/*
-		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
-		if ( masks )
-			System.out.println( "Fusing ONLY MASKS! Mask offset: " + Util.printCoordinates( maskOff ) );
-		*/
 
 		//
 		// final variables for Spark
@@ -290,14 +332,14 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 				System.out.println( "\nProcessing channel " + c + ", timepoint " + t );
 				System.out.println( "-----------------------------------" );
 
-				final int tIndex = t;
-				final int cIndex = c;
+				final int tIndex = (timepointIndex == null) ? t : timepointIndex;
+				final int cIndex = (channelIndex == null) ? c : channelIndex;
 
 				final ArrayList< ViewId > viewIds = new ArrayList<>();
 				viewIdsGlobal.forEach( viewId -> {
 					final ViewDescription vd = sd.getViewDescription( viewId );
 
-					if ( tpIdToTpIndex.get( vd.getTimePointId() ) == tIndex && chIdToChIndex.get( vd.getViewSetup().getChannel().getId() ) == cIndex )
+					if ( timepointIndex != null || tpIdToTpIndex.get( vd.getTimePointId() ) == tIndex && chIdToChIndex.get( vd.getViewSetup().getChannel().getId() ) == cIndex )
 						viewIds.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
 				});
 
