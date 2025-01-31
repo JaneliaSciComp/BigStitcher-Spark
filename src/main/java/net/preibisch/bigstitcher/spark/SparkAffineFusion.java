@@ -98,11 +98,11 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
 	private String blockScaleString = "2,2,1";
 
-	//@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
-	//private boolean masks = false;
+	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
+	private boolean masks = false;
 
-	//@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
-	//private String maskOffset = "0.0,0.0,0.0";
+	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
+	private String maskOffset = "0.0,0.0,0.0";
 
 	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
 	private boolean firstTileWins = false;
@@ -353,10 +353,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 								type = new FloatType();
 							}
 
-							//
-							// PREFETCHING
-							//
-
 							// The min coordinates of the block that this job renders (in pixels)
 							final int n = gridBlock[ 0 ].length;
 							final long[] superBlockOffset = new long[ n ];
@@ -374,32 +370,45 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
 							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 
-							final List< ViewId > overlappingViews = OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
-							final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
-							if ( overlappingBlocks.overlappingViews().isEmpty() )
-								return;
+							final RandomAccessibleInterval img;
 
-							System.out.println( "Prefetching: " + overlappingBlocks.overlappingViews().size() + " blocks from the input data." );
+							if ( masks )
+							{
+								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+								img = null;
+							}
+							else
+							{
+								//
+								// PREFETCHING, TODO: should be part of BlkAffineFusion.init
+								//
+								final List< ViewId > overlappingViews = OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+								if ( overlappingBlocks.overlappingViews().isEmpty() )
+									return;
+	
+								System.out.println( "Prefetching: " + overlappingBlocks.overlappingViews().size() + " blocks from the input data." );
+	
+								final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+								overlappingBlocks.prefetch(prefetchExecutor);
+								prefetchExecutor.shutdown();
 
-							final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
-							overlappingBlocks.prefetch(prefetchExecutor);
-							prefetchExecutor.shutdown();
+								System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
-							System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
-
-							// returns a zero-min interval
-							final RandomAccessibleInterval img = BlkAffineFusion.init(
-									conv,
-									dataLocal.getSequenceDescription().getImgLoader(),
-									viewIds,
-									registrations,
-									dataLocal.getSequenceDescription().getViewDescriptions(),
-									firstTileWins ? FusionType.FIRST : FusionType.AVG_BLEND,//fusion.getFusionType(),
-									1, // linear interpolation
-									null, // intensity correction
-									new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
-									(RealType & NativeType)type,
-									blockSize );
+								// returns a zero-min interval
+								img = BlkAffineFusion.init(
+										conv,
+										dataLocal.getSequenceDescription().getImgLoader(),
+										viewIds,
+										registrations,
+										dataLocal.getSequenceDescription().getViewDescriptions(),
+										firstTileWins ? FusionType.FIRST : FusionType.AVG_BLEND,//fusion.getFusionType(),
+										1, // linear interpolation
+										null, // intensity correction
+										new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
+										(RealType & NativeType)type,
+										blockSize );
+							}
 
 							final long[] blockOffset, blockSizeExport, gridOffset;
 
