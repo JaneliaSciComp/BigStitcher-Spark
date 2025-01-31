@@ -376,6 +376,21 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							{
 								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 								img = null;
+								/*
+								rdd.foreach( new WriteSuperBlockMasks(
+										xmlURI,
+										preserveAnisotropy,
+										anisotropyFactor,
+										minBB,
+										n5PathURI,
+										n5Dataset,
+										storageType,
+										serializedViewIds,
+										uint8,
+										uint16,
+										maskOff,
+										blockSize ) );
+										*/
 							}
 							else
 							{
