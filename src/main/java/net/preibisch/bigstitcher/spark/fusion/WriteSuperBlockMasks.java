@@ -167,7 +167,7 @@ public class WriteSuperBlockMasks implements VoidFunction< long[][] >
 		Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
 		Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 
-		final List< ViewId > overlappingViews = WriteSuperBlock.findOverlappingViews( dataLocal, viewIds, fusedBlock );
+		final List< ViewId > overlappingViews = OverlappingViews.findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
 		final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType); //URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 

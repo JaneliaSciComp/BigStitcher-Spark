@@ -31,6 +31,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -68,6 +70,8 @@ import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
+import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
 import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
@@ -378,10 +382,10 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 					mrInfo = mrInfos[ c + t*numChannels ];
 
 				// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-				final int[] superBlockSize = new int[ 3 ];
-				Arrays.setAll( superBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
+				final int[] computeBlockSize = new int[ 3 ];
+				Arrays.setAll( computeBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
 				final List<long[][]> grid = Grid.create(dimensions,
-						superBlockSize,
+						computeBlockSize,
 						blockSize);
 
 				System.out.println( "numJobs = " + grid.size() );
@@ -392,7 +396,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 				long time = System.currentTimeMillis();
 
-				//TODO: prefetchExecutor!!
 				rdd.foreach(
 						gridBlock ->
 						{
@@ -424,6 +427,41 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 								type = new FloatType();
 							}
 
+							//
+							// PREFETCHING
+							//
+
+							// The min coordinates of the block that this job renders (in pixels)
+							final int n = gridBlock[ 0 ].length;
+							final long[] superBlockOffset = new long[ n ];
+							Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + bbMin[ d ] );
+
+							// The size of the block that this job renders (in pixels)
+							final long[] superBlockSize = gridBlock[ 1 ];
+
+							//TODO: prefetchExecutor!!
+							final long[] fusedBlockMin = new long[ n ];
+							final long[] fusedBlockMax = new long[ n ];
+							final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
+
+							// pre-filter views that overlap the superBlock
+							Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
+							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
+
+							final List< ViewId > overlappingViews = OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+							final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+							if ( overlappingBlocks.overlappingViews().isEmpty() )
+								return;
+
+							System.out.println( "Prefetching: " + overlappingBlocks.overlappingViews().size() + " blocks from the input data." );
+
+							final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+							overlappingBlocks.prefetch(prefetchExecutor);
+							prefetchExecutor.shutdown();
+
+							System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+
+							// returns a zero-min interval
 							final RandomAccessibleInterval img = BlkAffineFusion.init(
 									conv,
 									dataLocal.getSequenceDescription().getImgLoader(),

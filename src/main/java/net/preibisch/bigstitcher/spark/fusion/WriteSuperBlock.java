@@ -121,37 +121,6 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		this.firstTileWins = firstTileWins;
 	}
 
-	/**
-	 * Find all views among the given {@code viewIds} that overlap the given {@code interval}.
-	 * The image interval of each view is transformed into world coordinates
-	 * and checked for overlap with {@code interval}, with a conservative
-	 * extension of 2 pixels in each direction.
-	 *
-	 * @param spimData contains bounds and registrations for all views
-	 * @param viewIds which views to check
-	 * @param interval interval in world coordinates
-	 * @return views that overlap {@code interval}
-	 */
-	public static List<ViewId> findOverlappingViews(
-			final SpimData spimData,
-			final List<ViewId> viewIds,
-			final Interval interval )
-	{
-		final List< ViewId > overlapping = new ArrayList<>();
-
-		// expand to be conservative ...
-		final Interval expandedInterval = Intervals.expand( interval, 2 );
-
-		for ( final ViewId viewId : viewIds )
-		{
-			final Interval bounds = ViewUtil.getTransformedBoundingBox( spimData, viewId );
-			if ( ViewUtil.overlaps( expandedInterval, bounds ) )
-				overlapping.add( viewId );
-		}
-
-		return overlapping;
-	}
-
 	@Override
 	public void call( final long[][] gridBlock ) throws Exception
 	{
@@ -212,7 +181,7 @@ public class WriteSuperBlock implements VoidFunction< long[][] >
 		// pre-filter views that overlap the superBlock
 		Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
 		Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
-		final List< ViewId > overlappingViews = findOverlappingViews( dataLocal, viewIds, fusedBlock );
+		final List< ViewId > overlappingViews = OverlappingViews.findOverlappingViews( dataLocal, viewIds, fusedBlock );
 
 		final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);//URITools.instantiateN5Writer( storageType, n5PathURI );//N5Util.createWriter( n5Path, storageType );
 		final ExecutorService prefetchExecutor = Executors.newCachedThreadPool(); //Executors.newFixedThreadPool( N_PREFETCH_THREADS );
