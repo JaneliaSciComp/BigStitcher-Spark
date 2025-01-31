@@ -266,9 +266,9 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
 		{
 			System.out.println(
-					"The number of channels and timepoint in XML does not match the number in the export dataset.\n"
-					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into\n"
-					+ "a specific 3D volume in the fusion dataset:\n");
+					"The number of channels and timepoint in XML does not match the number in the export dataset."
+					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
+					+ "a specific 3D volume in the fusion dataset:");
 
 			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
 
