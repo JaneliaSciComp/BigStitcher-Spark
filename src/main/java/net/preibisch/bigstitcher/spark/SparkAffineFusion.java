@@ -21,7 +21,6 @@
  */
 package net.preibisch.bigstitcher.spark;
 
-import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
@@ -30,27 +29,22 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
-import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
-import ij.IJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
@@ -69,29 +63,18 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
-import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
-import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
-import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
-import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
-import net.preibisch.mvrecon.process.fusion.transformed.FusedRandomAccessibleInterval.Fusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
-import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
-import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
-import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.Grid;
@@ -276,63 +259,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			new N5FSWriter(null);
 		}
 		catch (Exception e ) {}
-
-		/*
-		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : N5ApiTools.createBDVPath( this.bdvString, 0, this.storageType );
-
-		// TODO: expose
-		final Compression compression = new ZstandardCompression( 3 );// new GzipCompression( 1 );
-
-		final double minIntensity = ( dataTypeFusion != DataTypeFusion.FLOAT32 ) ? this.minIntensity : 0;
-
-		System.out.println( "Format being written: " + storageType );
-		final N5Writer driverVolumeWriter = N5Util.createN5Writer( n5PathURI, storageType );
-
-		driverVolumeWriter.createDataset(
-				n5Dataset,
-				dimensions,
-				blockSize,
-				dataType,
-				compression );
-
-		// saving metadata if it is bdv-compatible (we do this first since it might fail)
-		if ( bdvString != null )
-		{
-			// A Functional Interface that converts a ViewId to a ViewSetup, only called if the ViewSetup does not exist
-			final InstantiateViewSetup instantiate =
-					new BDVSparkInstantiateViewSetup( angleIds, illuminationIds, channelIds, tileIds );
-
-			final ViewId viewId = Import.getViewId( bdvString );
-
-			try
-			{
-				if ( SpimData2Tools.writeBDVMetaData(
-						driverVolumeWriter,
-						storageType,
-						dataType,
-						dimensions,
-						compression,
-						blockSize,
-						downsamplings,
-						viewId,
-						n5PathURI,
-						xmlOutURI,
-						instantiate ) == null )
-				{
-					System.out.println( "Failed to write metadata for '" + n5Dataset + "'." );
-					return null;
-				}
-			}
-			catch (SpimDataException | IOException e)
-			{
-				e.printStackTrace();
-				System.out.println( "Failed to write metadata for '" + n5Dataset + "': " + e );
-				return null;
-			}
-
-			System.out.println( "Done writing BDV metadata.");
-		}
-		*/
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
 
