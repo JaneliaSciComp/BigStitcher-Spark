@@ -301,7 +301,10 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 						viewIds.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
 				});
 
-				System.out.println( "Fusing " + viewIds.size() + " views for this 3D volume ... " );
+				if ( masks )
+					System.out.println( "Creating masks for " + viewIds.size() + " views of this 3D volume ... " );
+				else
+					System.out.println( "Fusing " + viewIds.size() + " views for this 3D volume ... " );
 
 				final MultiResolutionLevelInfo[] mrInfo;
 
@@ -389,15 +392,16 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							{
 								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
-								img = new GenerateComputeBlockMasks(
-										dataLocal,
-										registrations,
-										overlappingViews,
-										bbMin,
-										bbMax,
-										uint8,
-										uint16,
-										maskOff ).call( gridBlock );
+								img = Views.zeroMin(
+										new GenerateComputeBlockMasks(
+												dataLocal,
+												registrations,
+												overlappingViews,
+												bbMin,
+												bbMax,
+												uint8,
+												uint16,
+												maskOff ).call( gridBlock ) );
 							}
 							else
 							{
