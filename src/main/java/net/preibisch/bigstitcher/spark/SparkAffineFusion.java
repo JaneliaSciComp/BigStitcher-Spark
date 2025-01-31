@@ -63,6 +63,7 @@ import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
+import net.preibisch.bigstitcher.spark.fusion.GenerateComputeBlockMasks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -198,6 +199,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
 
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
+
+		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
 
 		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
 
@@ -336,21 +339,28 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 							final Converter conv;
 							final Type type;
+							final boolean uint8, uint16;
 
 							if ( dataType == DataType.UINT8 )
 							{
 								conv = new RealUnsignedByteConverter<>( minIntensity, maxIntensity );
 								type = new UnsignedByteType();
+								uint8 = true;
+								uint16 = false;
 							}
 							else if ( dataType == DataType.UINT16 )
 							{
 								conv = new RealUnsignedShortConverter<>( minIntensity, maxIntensity );
 								type = new UnsignedShortType();
+								uint8 = false;
+								uint16 = true;
 							}
 							else
 							{
 								conv = null;
 								type = new FloatType();
+								uint8 = false;
+								uint16 = false;
 							}
 
 							// The min coordinates of the block that this job renders (in pixels)
@@ -370,34 +380,30 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
 							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 
+							final List< ViewId > overlappingViews =
+									OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+
 							final RandomAccessibleInterval img;
 
 							if ( masks )
 							{
 								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
-								img = null;
-								/*
-								rdd.foreach( new WriteSuperBlockMasks(
-										xmlURI,
-										preserveAnisotropy,
-										anisotropyFactor,
-										minBB,
-										n5PathURI,
-										n5Dataset,
-										storageType,
-										serializedViewIds,
+
+								img = new GenerateComputeBlockMasks(
+										dataLocal,
+										registrations,
+										overlappingViews,
+										bbMin,
+										bbMax,
 										uint8,
 										uint16,
-										maskOff,
-										blockSize ) );
-										*/
+										maskOff ).call( gridBlock );
 							}
 							else
 							{
 								//
 								// PREFETCHING, TODO: should be part of BlkAffineFusion.init
 								//
-								final List< ViewId > overlappingViews = OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
 								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
 								if ( overlappingBlocks.overlappingViews().isEmpty() )
 									return;
