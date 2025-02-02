@@ -36,11 +36,13 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.N5Exception;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
 
+import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -52,6 +54,8 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converter;
 import net.imglib2.converter.RealUnsignedByteConverter;
 import net.imglib2.converter.RealUnsignedShortConverter;
+import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.NativeType;
 import net.imglib2.type.Type;
@@ -75,6 +79,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
@@ -232,20 +237,22 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		System.out.println( "blockSize: " + Arrays.toString( blockSize ) );
 		System.out.println( "dataType: " + dataType );
 
-		final double minIntensity, maxIntensity;
-
-		if ( driverVolumeWriter.listAttributes( "Bigstitcher-Spark").containsKey( "MinIntensity" ) )
+		double minI = Double.NaN, maxI = Double.NaN;
+		try
 		{
-			minIntensity = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
-			maxIntensity = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
-
-			System.out.println( "minIntensity: " + minIntensity );
-			System.out.println( "maxIntensity: " + maxIntensity );
+			minI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
+			maxI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
 		}
-		else
+		catch ( N5Exception e )
 		{
-			minIntensity = maxIntensity = Double.NaN;
+			System.out.println( "Min/Max intensity not stored." );
 		}
+
+		final double minIntensity = minI;
+		final double maxIntensity = maxI;
+
+		System.out.println( "minIntensity: " + minI );
+		System.out.println( "maxIntensity: " + maxI );
 
 		final MultiResolutionLevelInfo[][] mrInfos =
 				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
@@ -329,11 +336,11 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		for ( int c = 0; c < numChannels; ++c )
 			for ( int t = 0; t < numTimepoints; ++t )
 			{
-				System.out.println( "\nProcessing channel " + c + ", timepoint " + t );
-				System.out.println( "-----------------------------------" );
-
 				final int tIndex = (timepointIndex == null) ? t : timepointIndex;
 				final int cIndex = (channelIndex == null) ? c : channelIndex;
+
+				System.out.println( "\nProcessing channel " + cIndex + ", timepoint " + tIndex );
+				System.out.println( "-----------------------------------" );
 
 				final ArrayList< ViewId > viewIds = new ArrayList<>();
 				viewIdsGlobal.forEach( viewId -> {
@@ -348,12 +355,13 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 				else
 					System.out.println( "Fusing " + viewIds.size() + " views for this 3D volume ... " );
 
+				viewIds.forEach( vd -> System.out.println( Group.pvid( vd ) ) );
 				final MultiResolutionLevelInfo[] mrInfo;
 
 				if ( storageType == StorageFormat.ZARR )
 					mrInfo = mrInfos[ 0 ];
 				else
-					mrInfo = mrInfos[ c + t*numChannels ];
+					mrInfo = mrInfos[ cIndex + tIndex*numChannels ];
 
 				// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
 				final int[] computeBlockSize = new int[ 3 ];
@@ -454,7 +462,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 								if ( overlappingBlocks.overlappingViews().isEmpty() )
 									return;
 	
-								System.out.println( "Prefetching: " + overlappingBlocks.overlappingViews().size() + " blocks from the input data." );
+								System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
 	
 								final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
 								overlappingBlocks.prefetch(prefetchExecutor);

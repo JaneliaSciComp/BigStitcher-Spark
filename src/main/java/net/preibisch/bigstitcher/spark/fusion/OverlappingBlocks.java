@@ -120,6 +120,8 @@ public class OverlappingBlocks
 		this.prefetchBlocks = prefetchBlocks;
 	}
 
+	public int numPrefetchBlocks() { return prefetchBlocks.size(); }
+
 	/**
 	 * Result of {@link OverlappingBlocks#prefetch}. Holds strong
 	 * references to prefetched data, until it is {@link #close()
