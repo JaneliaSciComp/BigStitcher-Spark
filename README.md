@@ -6,20 +6,21 @@
 
 [![install4j](https://www.ej-technologies.com/images/product_banners/install4j_small.png)](https://www.ej-technologies.com/products/install4j/overview.html)
 
-This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark listed as `JavaClassName`/`cmd-line-tool-name` (you can find documentation below, but a good start is also to just check out the cmd-line arguments, they mostly follow the BigStitcher GUI; each module takes an existing XML):
+This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark listed as `JavaClassName`/**`cmd-line-tool-name`** (you can find documentation below, but a good start is also to just check out the cmd-line arguments, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
-* `SparkResaveN5`/`resave` (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
-* `SparkInterestPointDetection`/`detect-interestpoints` (detect interest points for alignment)
-* `SparkGeometricDescriptorMatching`/`match-interestpoints` (perform pair-wise interest point matching)
-* `SparkPairwiseStitching`/`stitching` (run pairwise stitching between overlapping tiles)
-* `Solver`/`solver` (perform the global solve, works with interest points and stitching)
-* `SparkAffineFusion`/`affine-fusion` (fuse the aligned dataset using affine models, including translation)
-* `SparkNonRigidFusion`/`nonrigid-fusion` (fuse the aligned dataset using non-rigid models)
+* `SparkResaveN5`/**`resave`** (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
+* `SparkInterestPointDetection`/**`detect-interestpoints`** (detect interest points for alignment)
+* `SparkGeometricDescriptorMatching`/**`match-interestpoints`** (perform pair-wise interest point matching)
+* `SparkPairwiseStitching`/**`stitching`** (run pairwise stitching between overlapping tiles)
+* `Solver`/**`solver`** (perform the global solve, works with interest points and stitching)
+* `CreateFusionContainer`/**`create-fusion-container`** (set up the container into which the affine fusion will write it's data, now supports OME-ZARR)
+* `SparkAffineFusion`/**`affine-fusion`** (fuse the aligned dataset using interpolated affine/rigid/translation models)
+* `SparkNonRigidFusion`/**`nonrigid-fusion`** (fuse the aligned dataset using non-rigid models)
 
 Additonally there are some utility methods:
-* `SparkDownsample`/`downsample` (perform downsampling of existing volumes)
-* `ClearInterestPoints`/`clear-interestpoints` (clears interest points)
-* `ClearRegistrations`/`clear-registrations` (clears registrations)
+* `SparkDownsample`/**`downsample`** (perform downsampling of existing volumes)
+* `ClearInterestPoints`/**`clear-interestpoints`** (clears interest points)
+* `ClearRegistrations`/**`clear-registrations`** (clears registrations)
 
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.** You can always verify the results of each step BigStitcher-Spark step interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below (typically BigStitcher-Spark supports a specific feature that was hard to implement in BigStitcher and vice-versa).*
 
