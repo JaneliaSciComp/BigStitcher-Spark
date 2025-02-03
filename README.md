@@ -13,7 +13,8 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 * `SparkGeometricDescriptorMatching`/`match-interestpoints` (perform pair-wise interest point matching)
 * `SparkPairwiseStitching`/`stitching` (run pairwise stitching between overlapping tiles)
 * `Solver`/`solver` (perform the global solve, works with interest points and stitching)
-* `SparkAffineFusion`/`affine-fusion` (fuse the aligned dataset using affine models, including translation)
+* `CreateFusionContainer`/`create-fusion-container` (set up the container into which the affine fusion will write it's data, now supports OME-ZARR)
+* `SparkAffineFusion`/`affine-fusion` (fuse the aligned dataset using interpolated affine/rigid/translation models)
 * `SparkNonRigidFusion`/`nonrigid-fusion` (fuse the aligned dataset using non-rigid models)
 
 Additonally there are some utility methods:
