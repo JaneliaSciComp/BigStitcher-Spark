@@ -223,7 +223,11 @@ Performs **fusion using affine transformation models** computed by the [solve](#
 
 #### Create Fusion Container<a name="create-fusion-container">
 
-The first step in the fusion is to create an empty output container that also contains all the metadata and multi-resolution pyramids. By default an **OME-ZARR** is created, **N5** and **HDF5** are also supported, but HDF5 only if Spark is not run in a distributed fashion but multi-threaded on a local computer.
+The first step in the fusion is to create an empty output container that also contains all the metadata and still empty multi-resolution pyramids. By default an **OME-ZARR** is created, **N5** and **HDF5** are also supported, but HDF5 only if Spark is not run in a distributed fashion but multi-threaded on a local computer. A typical call for creating an output container for e.g. the **stitching** dataset is (e.g. [this dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing)):
+
+<code>./create-fusion-container -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/Stitching/fused-8bit.zarr --preserveAnisotropy --multiRes -d UINT8</code>
+
+
 
 #### Run Affine Fusion<a name="run-affine-fusion">
 
