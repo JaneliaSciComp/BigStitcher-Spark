@@ -223,6 +223,7 @@ Performs **fusion using affine transformation models** computed by the [solve](#
 
 #### Create Fusion Container<a name="create-fusion-container">
 
+The first step in the fusion is to create an empty output container that also contains all the metadata and multi-resolution pyramids. By default an **OME-ZARR** is created, **N5** and **HDF5** are also supported, but HDF5 only if Spark is not run in a distributed fashion but multi-threaded on a local computer.
 
 #### Run Affine Fusion<a name="run-affine-fusion">
 
