@@ -219,16 +219,15 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 
 ### Affine Fusion<a name="affine-fusion">
 
-## Create Fusion Container<a name="create-fusion-container">
+Performs **fusion using affine transformation models** computed by the [solve](#solver) (also supports translations, rigid, interpolated models) that are stored in the XML (*Warning: not tested on 2D*). By default the affine fusion will create an output image that encompasses all transformed input views/images. While this is good in some cases such as tiled stitching tasks, the output volume can be unnecessarily large for e.g. multi-view datasets. Thus, prior to running the fusion it might be useful to [**define a custom bounding box**](https://imagej.net/plugins/bigstitcher/boundingbox) in BigStitcher.
+
+#### Create Fusion Container<a name="create-fusion-container">
+
+
+#### Run Affine Fusion<a name="run-affine-fusion">
 
 bla bla 
 
-## Run Affine Fusion<a name="run-affine-fusion">
-
-bla bla 
-
-
-Performs **fusion using affine transformation models** computed by the [solve](#solver) (including translations) that are stored in the XML (*Warning: not tested on 2D*). By default the affine fusion will create an output image that contains all transformed input views/images. While this is good in some cases such as tiled stitching tasks, the output volume can be unnecessarily large for e.g. multi-view datasets. Thus, prior to running the fusion it might be useful to [**define a custom bounding box**](https://imagej.net/plugins/bigstitcher/boundingbox) in BigStitcher.
 
 A typical set of calls (because it is three channels) for affine fusion into a multi-resolution ZARR using only translations on the **stitching** dataset is (e.g. [this dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing)):
 
