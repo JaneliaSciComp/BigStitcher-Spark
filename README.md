@@ -227,7 +227,7 @@ The first step in the fusion is to create an empty output container that also co
 
 <code>./create-fusion-container -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/Stitching/fused.zarr --preserveAnisotropy --multiRes -d UINT8</code>
 
-This will create an output container that contains a 3D volume for all channels and timepoints present in the dataset. In the case of OME-ZARR, it is a single 5D container, for N5 and HDF5 it is a series of 3D datasets. *Note: if you do not want to export the entire project, or want to specify which views/images go into which volume, please check the details below.*
+By default, this will create an output container that contains a 3D volume for all channels and timepoints present in the dataset. In the case of OME-ZARR, it is a single 5D container, for N5 and HDF5 it is a series of 3D datasets. ***Note: if you do NOT want to export the entire project, or want to specify fusion assignments (which views/images are fused into which volume), please check the details below. In short, you can specify the dimensions of the output container here, and the fusion assignments in the affine-fusion step below.***
 
 The fusion container for the [dataset that was aligned using interest points](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) can be created in the same way, except that we choose to use the bounding box `embryo` that was specified using BigStitcher and we choose to save as an BDV/BigStitcher project using N5 as underlying export data format:
 
