@@ -63,7 +63,7 @@ public class N5Util
 		}
 		catch ( Exception e )
 		{
-			IOFunctions.println( "Couldn't create " + storageType + " container '" + n5PathURI + "': " + e );
+			IOFunctions.println( "Couldn't create/open " + storageType + " container '" + n5PathURI + "': " + e );
 			return null;
 		}
 

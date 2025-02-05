@@ -34,7 +34,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import picocli.CommandLine.Option;
 import util.URITools;
 
-public abstract class AbstractBasic implements Callable<Void>, Serializable
+public abstract class AbstractBasic extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -4916959775650710928L;
 
@@ -44,12 +44,6 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 	// will be assigned in loadSpimData2()
 	protected URI xmlURI = null;
 
-	@Option(names = { "--dryRun" }, description = "perform a 'dry run', i.e. do not save any results (default: false)")
-	protected boolean dryRun = false;
-
-	@Option(names = "--localSparkBindAddress", description = "specify Spark bind address as localhost")
-	protected boolean localSparkBindAddress = false;
-
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
 		System.out.println( "xml: " + (xmlURI = URITools.toURI(xmlURIString)) );
@@ -58,7 +52,7 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 		return dataGlobal;
 	}
 
-	public SpimData2 loadSpimData2( final int numThreads ) throws SpimDataException
+	public SpimData2 loadSpimData2( final int numFetcherThreads ) throws SpimDataException
 	{
 		final SpimData2 data = loadSpimData2();
 
@@ -67,7 +61,7 @@ public abstract class AbstractBasic implements Callable<Void>, Serializable
 		// set number of fetcher threads (by default set to 0 for spark)
 		final BasicImgLoader imgLoader = sequenceDescription.getImgLoader();
 		if (imgLoader instanceof ViewerImgLoader)
-			((ViewerImgLoader) imgLoader).setNumFetcherThreads( numThreads);
+			((ViewerImgLoader) imgLoader).setNumFetcherThreads( numFetcherThreads );
 
 		return data;
 	}

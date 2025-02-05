@@ -109,6 +109,18 @@ public class ViewUtil
 		return Intervals.smallestContainingInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
 	}
 
+	/**
+	 * Get the estimated bounding box of the specified view in world coordinates.
+	 * This transforms the image dimension for {@code viewId} with the {@code
+	 * ViewRegistration} for {@code viewId}, and takes the bounding box.
+	 */
+	public static Interval getTransformedBoundingBox( final SpimData data, final ViewId viewId, final AffineTransform3D t ) throws IllegalArgumentException
+	{
+		final Dimensions dim = getDimensions( data, viewId );
+
+		return Intervals.smallestContainingInterval( t.estimateBounds( new FinalInterval( dim ) ) );
+	}
+
 	public static String viewIdToString(final ViewId viewId) {
 		return viewId == null ?
 			   null : "{\"setupId\": " + viewId.getViewSetupId() + ", \"timePointId\": " + viewId.getTimePointId() + "}";

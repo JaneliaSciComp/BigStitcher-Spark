@@ -21,121 +21,128 @@
  */
 package net.preibisch.bigstitcher.spark;
 
-import java.io.File;
-import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.N5Exception;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
-import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
+import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.sequence.SequenceDescription;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
+import net.imglib2.Interval;
+import net.imglib2.RandomAccessible;
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.converter.Converter;
+import net.imglib2.converter.RealUnsignedByteConverter;
+import net.imglib2.converter.RealUnsignedShortConverter;
+import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.multithreading.SimpleMultiThreading;
+import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.NativeType;
+import net.imglib2.type.Type;
+import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.integer.UnsignedByteType;
+import net.imglib2.type.numeric.integer.UnsignedShortType;
+import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
+import net.imglib2.view.Views;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
-import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlock;
-import net.preibisch.bigstitcher.spark.fusion.WriteSuperBlockMasks;
-import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
-import net.preibisch.bigstitcher.spark.util.Downsampling;
+import net.preibisch.bigstitcher.spark.fusion.GenerateComputeBlockMasks;
+import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
+import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
-import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.process.export.ExportN5Api;
-import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
+import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
-import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
-import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
-public class SparkAffineFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
+public class SparkAffineFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
+	public static enum DataTypeFusion
+	{
+		UINT8, UINT16, FLOAT32
+	}
+
 	private static final long serialVersionUID = -6103761116219617153L;
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
-	private String n5PathURIString = null;
+	private String outputPathURIString = null;
 
-	@Option(names = { "-d", "--n5Dataset" }, required = false, description = "Custom N5/ZARR/HDF5 dataset - it must end with '/s0' to be able to compute a multi-resolution pyramid, e.g. -d /ch488/s0")
-	private String n5Dataset = null;
-
-	@Option(names = { "--bdv" }, required = false, description = "Write a BigDataViewer-compatible dataset specifying TimepointID, ViewSetupId, e.g. --bdv 0,0 or --bdv 4,1")
-	private String bdvString = null;
-
-	@Option(names = { "-xo", "--xmlout" }, required = false, description = "path to the new BigDataViewer xml project (only valid if --bdv was selected), "
-			+ "e.g. -xo /home/project.xml or -xo s3://myBucket/project.xml (default: dataset.xml in basepath for H5, dataset.xml one directory level above basepath for N5)")
-	private String xmlOutURIString = null;
-
-	@Option(names = {"-s", "--storage"}, defaultValue = "N5", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type, currently supported N5, ZARR (and ONLY for local, multithreaded Spark: HDF5)")
+	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending)")
 	private StorageFormat storageType = null;
-
-	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,128)")
-	private String blockSizeString = "128,128,128";
 
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
 	private String blockScaleString = "2,2,1";
 
-	@Option(names = { "-b", "--boundingBox" }, description = "fuse a specific bounding box listed in the XML (default: fuse everything)")
-	private String boundingBoxName = null;
-
-	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
-	private boolean multiRes = false;
-
-	@Option(names = { "-ds", "--downsampling" }, split = ";", required = false, description = "Manually define steps to create of a multi-resolution pyramid (e.g. -ds 2,2,1; 2,2,1; 2,2,2; 2,2,2)")
-	private List<String> downsampling = null;
-
-	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
-	private boolean preserveAnisotropy = false;
-
-	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
-	private double anisotropyFactor = Double.NaN;
-
-	// TODO: make a variable just as -s is
-	@Option(names = { "--UINT16" }, description = "save as UINT16 [0...65535], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
-	private boolean uint16 = false;
-
-	@Option(names = { "--UINT8" }, description = "save as UINT8 [0...255], if you choose it you must define min and max intensity (default: fuse as 32 bit float)")
-	private boolean uint8 = false;
-
-	@Option(names = { "--minIntensity" }, description = "min intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 0.0")
-	private Double minIntensity = null;
-
-	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
-	private Double maxIntensity = null;
-
 	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
 	private boolean masks = false;
-
-	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
-	private boolean firstTileWins = false;
 
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	// null is fine for now (used by multiRes later)
-	private int[][] downsamplings;
+	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
+	private boolean firstTileWins = false;
 
-	URI n5PathURI = null, xmlOutURI = null;
 
+	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
+	private Integer timepointIndex = null;
+
+	@Option(names = { "-c", "--channelIndex" }, description = "specify a specific channel index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
+	private Integer channelIndex = null;
+
+
+	// To specify what goes into the current 3D volume
+	@Option(names = { "--angleId" }, description = "list the angle ids that should be processed, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
+	protected String angleIds = null;
+
+	@Option(names = { "--tileId" }, description = "list the tile ids that should be processed, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
+	protected String tileIds = null;
+
+	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be processed, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
+	protected String illuminationIds = null;
+
+	@Option(names = { "--channelId" }, description = "list the channel ids that should be processed, you can find them in the XML (usually just one when fusing), e.g. --channelId '0,1,2' (default: all channels)")
+	protected String channelIds = null;
+
+	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be processed, you can find them in the XML (usually just one when fusing), e.g. --timepointId '0,1,2' (default: all time points)")
+	protected String timepointIds = null;
+
+	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
+	protected String[] vi = null;
+
+
+	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
@@ -150,130 +157,153 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			System.exit( 0 );
 		}
 
-		if ( (this.n5Dataset == null && this.bdvString == null) || (this.n5Dataset != null && this.bdvString != null) )
+		if ( timepointIndex != null && channelIndex == null || timepointIndex == null && channelIndex != null )
 		{
-			System.out.println( "You must define either the n5dataset (e.g. -d /ch488/s0) - OR - the BigDataViewer specification (e.g. --bdv 0,1)");
+			System.out.println( "You have to specify timepointId and channelId together, one alone does not work. timepointId =" + timepointIndex + ", channelId=" + channelIndex );
 			return null;
 		}
 
-		if ( this.bdvString != null && xmlOutURIString == null )
+		if ( timepointIndex == null && ( vi != null || timepointIds != null || channelIds != null || illuminationIds != null || tileIds != null || angleIds != null ) )
+			
 		{
-			System.out.println( "Please specify the output XML for the BDV dataset: -xo");
+			System.out.println( "You can only specify specify angles, tiles, ..., ViewIds if you provided a specific timepointIndex & channelIndex.");
 			return null;
 		}
+	
+		this.outPathURI = URITools.toURI( outputPathURIString );
+		System.out.println( "Fused volume: " + outPathURI );
 
-		Import.validateInputParameters(uint8, uint16, minIntensity, maxIntensity);
+		if ( storageType == null )
+		{
+			if ( outputPathURIString.toLowerCase().endsWith( ".zarr" ) )
+				storageType = StorageFormat.ZARR;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".n5" ) )
+				storageType = StorageFormat.N5;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".h5" ) || outPathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
+				storageType = StorageFormat.HDF5;
+			else
+			{
+				System.out.println( "Unable to guess format from URI '" + outPathURI + "', please specify using '-s'");
+				return null;
+			}
 
-		final SpimData2 dataGlobal = this.loadSpimData2();
+			System.out.println( "Guessed format " + storageType + " will be used to open URI '" + outPathURI + "', you can override it using '-s'");
+		}
+		else
+		{
+			System.out.println( "Format " + storageType + " will be used to open " + outPathURI );
+		}
+
+		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
+
+		final String fusionFormat = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/FusionFormat", String.class );
+
+		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
+
+		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
+
+		final int numTimepoints, numChannels;
+
+		if ( timepointIndex == null )
+		{
+			numTimepoints = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumTimepoints", int.class );
+			numChannels = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumChannels", int.class );
+		}
+		else
+		{
+			System.out.println( "Overriding numChannels and numTimepoints from metadata, instead processing timepointIndex=" + timepointIndex + ", channelIndex=" + channelIndex + " only.");
+			numTimepoints = numChannels = 1;
+		}
+
+		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
+		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
+ 
+		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
+
+		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
+		final double anisotropyFactor = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", double.class );
+		final int[] blockSize = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/BlockSize", int[].class );
+
+		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
+
+		System.out.println( "FusionFormat: " + fusionFormat );
+		System.out.println( "Input XML: " + xmlURI );
+		System.out.println( "BDV project: " + bdv );
+		System.out.println( "numTimepoints of fused dataset(s): " + numTimepoints );
+		System.out.println( "numChannels of fused dataset(s): " + numChannels );
+		System.out.println( "BoundingBox: " + boundingBox );
+		System.out.println( "preserveAnisotropy: " + preserveAnisotropy );
+		System.out.println( "anisotropyFactor: " + anisotropyFactor );
+		System.out.println( "blockSize: " + Arrays.toString( blockSize ) );
+		System.out.println( "dataType: " + dataType );
+
+		double minI = Double.NaN, maxI = Double.NaN;
+		try
+		{
+			minI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
+			maxI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
+		}
+		catch ( N5Exception e )
+		{
+			System.out.println( "Min/Max intensity not stored." );
+		}
+
+		final double minIntensity = minI;
+		final double maxIntensity = maxI;
+
+		System.out.println( "minIntensity: " + minI );
+		System.out.println( "maxIntensity: " + maxI );
+
+		final MultiResolutionLevelInfo[][] mrInfos =
+				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
+
+		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
+
+		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
+
+		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
 
 		if ( dataGlobal == null )
 			return null;
 
-		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
+		final ArrayList< ViewId > viewIdsGlobal;
 
-		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
-			return null;
-
-		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
-
-		this.n5PathURI = URITools.toURI( n5PathURIString );
-		System.out.println( "Fused volume: " + n5PathURI );
-
-		if ( this.bdvString != null )
+		if (
+			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels || 
+			dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
 		{
-			this.xmlOutURI = URITools.toURI( xmlOutURIString );
-			System.out.println( "XML: " + xmlOutURI );
+			System.out.println(
+					"The number of channels and timepoint in XML does not match the number in the export dataset."
+					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
+					+ "a specific 3D volume in the fusion dataset:");
+
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
+
+			if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
+				return null;
+		}
+		else
+		{
+			viewIdsGlobal = Import.getViewIds( dataGlobal );
 		}
 
-		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
 		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
 				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
 
-		final DataType dataType;
-
-		if ( uint8 )
-		{
+		if ( dataType == DataType.UINT8 )
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
-			dataType = DataType.UINT8;
-		}
-		else if ( uint16 )
-		{
+		else if ( dataType == DataType.UINT16 )
 			System.out.println( "Fusing to UINT16, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
-			dataType = DataType.UINT16;
-		}
 		else
-		{
 			System.out.println( "Fusing to FLOAT32" );
-			dataType = DataType.FLOAT32;
-		}
-
-		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
-		if ( masks )
-			System.out.println( "Fusing ONLY MASKS! Mask offset: " + Util.printCoordinates( maskOff ) );
 
 		//
 		// final variables for Spark
 		//
-		final long[] minBB = boundingBox.minAsLongArray();
-		final long[] maxBB = boundingBox.maxAsLongArray();
-
-		if ( preserveAnisotropy )
-		{
-			System.out.println( "Preserving anisotropy.");
-
-			if ( Double.isNaN( anisotropyFactor ) )
-			{
-				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( dataGlobal, viewIdsGlobal );
-
-				System.out.println( "Anisotropy factor [computed from data]: " + anisotropyFactor );
-			}
-			else
-			{
-				System.out.println( "Anisotropy factor [provided]: " + anisotropyFactor );
-			}
-
-			// prepare downsampled boundingbox
-			minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
-			maxBB[ 2 ] = Math.round( Math.ceil( maxBB[ 2 ] / anisotropyFactor ) );
-
-			boundingBox = new BoundingBox( new FinalInterval(minBB, maxBB) );
-
-			System.out.println( "Adjusted bounding box (anisotropy preserved: " + Util.printInterval( boundingBox ) );
-		}
-
-		//
-		// set up downsampling (if wanted)
-		//
-		if ( !Downsampling.testDownsamplingParameters( this.multiRes, this.downsampling, this.n5Dataset ) )
-			return null;
-
-		if ( multiRes )
-			downsamplings = ExportN5Api.estimateMultiResPyramid( new FinalDimensions( boundingBox ), anisotropyFactor );
-		else if ( this.downsampling != null )
-			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
-		else
-			downsamplings = null;// for new code: new int[][]{{ 1, 1, 1 }};
-
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
 
-		final String n5Dataset = this.n5Dataset != null ? this.n5Dataset : N5ApiTools.createBDVPath( this.bdvString, 0, this.storageType );
-
-		// TODO: expose
-		final Compression compression = new ZstandardCompression( 3 );// new GzipCompression( 1 );
-
-		final double minIntensity = ( uint8 || uint16 ) ? this.minIntensity : 0;
-		final double range;
-		if ( uint8 )
-			range = ( this.maxIntensity - this.minIntensity ) / 255.0;
-		else if ( uint16 )
-			range = ( this.maxIntensity - this.minIntensity ) / 65535.0;
-		else
-			range = 0;
-
-		// TODO: improve (e.g. make ViewId serializable)
-		final int[][] serializedViewIds = Spark.serializeViewIds(viewIdsGlobal);
-
+		// TODO: do we still need this?
 		try
 		{
 			// trigger the N5-blosc error, because if it is triggered for the first
@@ -281,65 +311,6 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 			new N5FSWriter(null);
 		}
 		catch (Exception e ) {}
-
-		System.out.println( "Format being written: " + storageType );
-		final N5Writer driverVolumeWriter = N5Util.createN5Writer( n5PathURI, storageType );
-
-		driverVolumeWriter.createDataset(
-				n5Dataset,
-				dimensions,
-				blockSize,
-				dataType,
-				compression );
-
-		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-		final int[] superBlockSize = new int[ 3 ];
-		Arrays.setAll( superBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
-		final List<long[][]> grid = Grid.create(dimensions,
-				superBlockSize,
-				blockSize);
-
-		System.out.println( "numJobs = " + grid.size() );
-
-		driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
-
-		// saving metadata if it is bdv-compatible (we do this first since it might fail)
-		if ( bdvString != null )
-		{
-			// A Functional Interface that converts a ViewId to a ViewSetup, only called if the ViewSetup does not exist
-			final InstantiateViewSetup instantiate =
-					new BDVSparkInstantiateViewSetup( angleIds, illuminationIds, channelIds, tileIds );
-
-			final ViewId viewId = Import.getViewId( bdvString );
-
-			try
-			{
-				if ( SpimData2Tools.writeBDVMetaData(
-						driverVolumeWriter,
-						storageType,
-						dataType,
-						dimensions,
-						compression,
-						blockSize,
-						downsamplings,
-						viewId,
-						n5PathURI,
-						xmlOutURI,
-						instantiate ) == null )
-				{
-					System.out.println( "Failed to write metadata for '" + n5Dataset + "'." );
-					return null;
-				}
-			}
-			catch (SpimDataException | IOException e)
-			{
-				e.printStackTrace();
-				System.out.println( "Failed to write metadata for '" + n5Dataset + "': " + e );
-				return null;
-			}
-
-			System.out.println( "Done writing BDV metadata.");
-		}
 
 		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
 
@@ -349,70 +320,280 @@ public class SparkAffineFusion extends AbstractSelectableViews implements Callab
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<long[][]> rdd = sc.parallelize( grid );
+		final SequenceDescription sd = dataGlobal.getSequenceDescription();
 
-		final long time = System.currentTimeMillis();
+		final HashMap< Integer, Integer > tpIdToTpIndex = new HashMap<>();
+		final HashMap< Integer, Integer > chIdToChIndex = new HashMap<>();
 
-		if ( masks )
-			rdd.foreach( new WriteSuperBlockMasks(
-					xmlURI,
-					preserveAnisotropy,
-					anisotropyFactor,
-					minBB,
-					n5PathURI,
-					n5Dataset,
-					storageType,
-					serializedViewIds,
-					uint8,
-					uint16,
-					maskOff,
-					blockSize ) );
-		else
-			rdd.foreach( new WriteSuperBlock(
-					xmlURI,
-					preserveAnisotropy,
-					anisotropyFactor,
-					minBB,
-					n5PathURI,
-					n5Dataset,
-					bdvString,
-					storageType,
-					serializedViewIds,
-					uint8,
-					uint16,
-					minIntensity,
-					range,
-					blockSize,
-					firstTileWins ) );
+		for ( int t = 0; t < sd.getTimePoints().getTimePointsOrdered().size(); ++t )
+			tpIdToTpIndex.put( sd.getTimePoints().getTimePointsOrdered().get( t ).getId(), t );
 
-		if ( this.downsamplings != null )
-		{
-			// TODO: run common downsampling code (affine, non-rigid, downsampling-only)
-			Downsampling.createDownsampling(
-					n5PathURI,
-					n5Dataset,
-					driverVolumeWriter,
-					dimensions,
-					storageType,
-					blockSize,
-					dataType,
-					compression,
-					downsamplings,
-					bdvString != null,
-					sc );
-		}
+		for ( int c = 0; c < sd.getAllChannelsOrdered().size(); ++c )
+			chIdToChIndex.put( sd.getAllChannelsOrdered().get( c ).getId(), c );
 
-		sc.close();
+		final long totalTime = System.currentTimeMillis();
+
+		for ( int c = 0; c < numChannels; ++c )
+			for ( int t = 0; t < numTimepoints; ++t )
+			{
+				final int tIndex = (timepointIndex == null) ? t : timepointIndex;
+				final int cIndex = (channelIndex == null) ? c : channelIndex;
+
+				System.out.println( "\nProcessing channel " + cIndex + ", timepoint " + tIndex );
+				System.out.println( "-----------------------------------" );
+
+				final ArrayList< ViewId > viewIds = new ArrayList<>();
+				viewIdsGlobal.forEach( viewId -> {
+					final ViewDescription vd = sd.getViewDescription( viewId );
+
+					if ( timepointIndex != null || tpIdToTpIndex.get( vd.getTimePointId() ) == tIndex && chIdToChIndex.get( vd.getViewSetup().getChannel().getId() ) == cIndex )
+						viewIds.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+				});
+
+				if ( masks )
+					System.out.println( "Creating masks for " + viewIds.size() + " views of this 3D volume ... " );
+				else
+					System.out.println( "Fusing " + viewIds.size() + " views for this 3D volume ... " );
+
+				viewIds.forEach( vd -> System.out.println( Group.pvid( vd ) ) );
+				final MultiResolutionLevelInfo[] mrInfo;
+
+				if ( storageType == StorageFormat.ZARR )
+					mrInfo = mrInfos[ 0 ];
+				else
+					mrInfo = mrInfos[ cIndex + tIndex*numChannels ];
+
+				// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
+				final int[] computeBlockSize = new int[ 3 ];
+				Arrays.setAll( computeBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
+				final List<long[][]> grid = Grid.create(dimensions,
+						computeBlockSize,
+						blockSize);
+
+				System.out.println( "numJobs = " + grid.size() );
+
+				//driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
+
+				final JavaRDD<long[][]> rdd = sc.parallelize( grid );
+
+				long time = System.currentTimeMillis();
+
+				rdd.foreach(
+						gridBlock ->
+						{
+							final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
+
+							final HashMap< ViewId, AffineTransform3D > registrations =
+									TransformVirtual.adjustAllTransforms(
+											viewIds,
+											dataLocal.getViewRegistrations().getViewRegistrations(),
+											anisotropyFactor,
+											Double.NaN );
+
+							final Converter conv;
+							final Type type;
+							final boolean uint8, uint16;
+
+							if ( dataType == DataType.UINT8 )
+							{
+								conv = new RealUnsignedByteConverter<>( minIntensity, maxIntensity );
+								type = new UnsignedByteType();
+								uint8 = true;
+								uint16 = false;
+							}
+							else if ( dataType == DataType.UINT16 )
+							{
+								conv = new RealUnsignedShortConverter<>( minIntensity, maxIntensity );
+								type = new UnsignedShortType();
+								uint8 = false;
+								uint16 = true;
+							}
+							else
+							{
+								conv = null;
+								type = new FloatType();
+								uint8 = false;
+								uint16 = false;
+							}
+
+							// The min coordinates of the block that this job renders (in pixels)
+							final int n = gridBlock[ 0 ].length;
+							final long[] superBlockOffset = new long[ n ];
+							Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + bbMin[ d ] );
+
+							// The size of the block that this job renders (in pixels)
+							final long[] superBlockSize = gridBlock[ 1 ];
+
+							//TODO: prefetchExecutor!!
+							final long[] fusedBlockMin = new long[ n ];
+							final long[] fusedBlockMax = new long[ n ];
+							final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
+
+							// pre-filter views that overlap the superBlock
+							Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
+							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
+
+							final List< ViewId > overlappingViews =
+									OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+
+							final RandomAccessibleInterval img;
+
+							if ( masks )
+							{
+								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+
+								img = Views.zeroMin(
+										new GenerateComputeBlockMasks(
+												dataLocal,
+												registrations,
+												overlappingViews,
+												bbMin,
+												bbMax,
+												uint8,
+												uint16,
+												maskOff ).call( gridBlock ) );
+							}
+							else
+							{
+								//
+								// PREFETCHING, TODO: should be part of BlkAffineFusion.init
+								//
+								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+								if ( overlappingBlocks.overlappingViews().isEmpty() )
+									return;
+	
+								System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
+	
+								final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+								overlappingBlocks.prefetch(prefetchExecutor);
+								prefetchExecutor.shutdown();
+
+								System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+
+								// returns a zero-min interval
+								img = BlkAffineFusion.init(
+										conv,
+										dataLocal.getSequenceDescription().getImgLoader(),
+										viewIds,
+										registrations,
+										dataLocal.getSequenceDescription().getViewDescriptions(),
+										firstTileWins ? FusionType.FIRST : FusionType.AVG_BLEND,//fusion.getFusionType(),
+										1, // linear interpolation
+										null, // intensity correction
+										new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
+										(RealType & NativeType)type,
+										blockSize );
+							}
+
+							final long[] blockOffset, blockSizeExport, gridOffset;
+
+							final RandomAccessible image;
+
+							// 5D OME-ZARR CONTAINER
+							if ( storageType == StorageFormat.ZARR )
+							{
+								// gridBlock is 3d, make it 5d
+								blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
+								blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
+								gridOffset = new long[] { gridBlock[2][0], gridBlock[2][1], gridBlock[2][2], cIndex, tIndex }; // because blocksize in C & T is 1
+
+								// img is 3d, make it 5d
+								// the same information is returned no matter which index is queried in C and T
+								image = Views.addDimension( Views.addDimension( img ) );
+							}
+							else
+							{
+								blockOffset = gridBlock[0];
+								blockSizeExport = gridBlock[1];
+								gridOffset = gridBlock[2];
+
+								image = img;
+							}
+
+							final Interval block =
+									Intervals.translate(
+											new FinalInterval( blockSizeExport ),
+											blockOffset );
+
+							final RandomAccessibleInterval source =
+									Views.interval( image, block );
+
+							final RandomAccessibleInterval sourceGridBlock =
+									Views.offsetInterval(source, blockOffset, blockSizeExport);
+
+							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+
+							N5Utils.saveBlock(sourceGridBlock, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
+
+							if ( N5Util.sharedHDF5Writer == null )
+								driverVolumeWriterLocal.close();
+						} );
+
+				System.out.println( new Date( System.currentTimeMillis() ) + ": Saved full resolution, took: " + (System.currentTimeMillis() - time ) + " ms." );
+
+				//
+				// save multiresolution pyramid (s1 ... sN)
+				//
+				for ( int level = 1; level < mrInfo.length; ++level )
+				{
+					final int s = level;
+					final List<long[][]> allBlocks = N5ApiTools.assembleJobs( mrInfo[ level ] );
+
+					System.out.println( new Date( System.currentTimeMillis() ) + ": Downsampling: " + Util.printCoordinates( mrInfo[ level ].absoluteDownsampling ) + " with relative downsampling of " + Util.printCoordinates( mrInfo[ level ].relativeDownsampling ));
+					System.out.println( new Date( System.currentTimeMillis() ) + ": s" + level + " num blocks=" + allBlocks.size() );
+					System.out.println( new Date( System.currentTimeMillis() ) + ": Loading '" + mrInfo[ level - 1 ].dataset + "', downsampled will be written as '" + mrInfo[ level ].dataset + "'." );
+
+					time = System.currentTimeMillis();
+
+					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks );
+
+					rddDS.foreach(
+							gridBlock ->
+							{
+								final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+
+								// 5D OME-ZARR CONTAINER
+								if ( storageType == StorageFormat.ZARR )
+								{
+									N5ApiTools.writeDownsampledBlock5dOMEZARR(
+											driverVolumeWriterLocal,
+											mrInfo[ s ],
+											mrInfo[ s - 1 ],
+											gridBlock,
+											cIndex,
+											tIndex );
+								}
+								else
+								{
+									N5ApiTools.writeDownsampledBlock(
+											driverVolumeWriterLocal,
+											mrInfo[ s ],
+											mrInfo[ s - 1 ],
+											gridBlock );
+								}
+
+								if ( N5Util.sharedHDF5Writer == null )
+									driverVolumeWriterLocal.close();
+
+							});
+
+					System.out.println( new Date( System.currentTimeMillis() ) + ": Saved level s " + level + ", took: " + (System.currentTimeMillis() - time ) + " ms." );
+				}
+			}
 
 		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
 		driverVolumeWriter.close();
 
+		/*
 		if ( multiRes )
 			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
 		else
 			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
+		*/
 
-		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
+		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
+
+		sc.close();
 
 		return null;
 	}

@@ -29,6 +29,7 @@ import java.util.List;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
@@ -65,17 +66,12 @@ public class Import {
 	}
 
 	public static void validateInputParameters(
-			final boolean uint8,
-			final boolean uint16,
+			final DataTypeFusion datatype,
 			final Double minIntensity,
 			final Double maxIntensity )
 			throws IllegalArgumentException
 	{
-		if ( uint8 && uint16 ) {
-			throw new IllegalArgumentException( "Please only select UINT8, UINT16 or nothing (FLOAT32)." );
-		}
-
-		if ( ( uint8 || uint16 ) && (minIntensity == null || maxIntensity == null ) ) {
+		if ( ( datatype == DataTypeFusion.UINT8 || datatype == DataTypeFusion.UINT16 ) && (minIntensity == null || maxIntensity == null ) ) {
 			throw new IllegalArgumentException( "When selecting UINT8 or UINT16 you need to specify minIntensity and maxIntensity." );
 		}
 	}
@@ -262,11 +258,30 @@ public class Import {
 	 * @param csvString
 	 * @return
 	 */
-	public static int[][] csvStringListToDownsampling(final List<String> csvString) {
-
+	public static int[][] csvStringListToDownsampling(final List<String> csvString)
+	{
+		if ( csvString == null || csvString.size() < 1 )
+		{
+			System.out.println( "List of strings for downsampling is empty/null.");
+			return null;
+		}
+		
 		final int[][] downsampling = new int[csvString.size()][];
 		for ( int i = 0; i < csvString.size(); ++i )
+		{
 			downsampling[ i ] = Arrays.stream(csvString.get( i ).split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
+			if ( downsampling[ i ].length != 3 )
+			{
+				System.out.println( "dimensions of downsampling entry is not 3: " + csvString.get( i ) );
+				return null;
+			}
+		}
+
+		if ( !Arrays.equals( downsampling[ 0 ], new int[] { 1, 1, 1 }))
+		{
+			System.out.println( "first entry is not [1,1,1], but must be: " + csvString.get( 0 ) );
+			return null;
+		}
 
 		return downsampling;
 	}

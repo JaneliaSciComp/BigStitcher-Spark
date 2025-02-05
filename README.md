@@ -38,6 +38,8 @@ Additonally there are some utility methods:
   * [Match Interest Points](#ip-match)
   * [Solver](#solver)
   * [Affine Fusion](#affine-fusion)
+    * [Create Fusion Container](#create-fusion-container)
+    * [Run Affine Fusion](#run-affine-fusion)
   * [Non-Rigid Fusion](#nonrigid-fusion)
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/bs-spark.png" alt="Overview of the BigStitcher-Spark pipeline">
@@ -73,7 +75,7 @@ Please ask your sysadmin for help how to run it on your **cluster**, below are h
 
 `mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
 
-For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html). An implementations of image readers and writers that support cloud storage can be found [here](https://github.com/bigdataviewer/bigdataviewer-omezarr). Note that running it on the cloud is an ongoing effort with [@kgabor](https://github.com/kgabor), [@tpietzsch](https://github.com/tpietzsch) and the AWS team that currently works as a prototype but is further being optimized. We will provide an updated documentation in due time. Note that some modules support prefetching `--prefetch`, which is important for cloud execution due to its delays as it pre-loads all image blocks in parallel before processing.
+BigStitcher-Spark is now fully "cloud-native". For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html) and [Google Serverless Batches](https://cloud.google.com/dataproc-serverless/docs/quickstarts/spark-batch). Note that some modules support prefetching `--prefetch`, which is important for cloud execution due to its delays as it pre-loads all image blocks in parallel before processing. We will soon add detailled information on how to run the examples on both cloud platforms (it works - if you need help now, please contact @StephanPreibisch).
 
 ## Example Datasets<a name="examples">
 
@@ -217,7 +219,24 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 
 ### Affine Fusion<a name="affine-fusion">
 
-Performs **fusion using affine transformation models** computed by the [solve](#solver) (including translations) that are stored in the XML (*Warning: not tested on 2D*). By default the affine fusion will create an output image that contains all transformed input views/images. While this is good in some cases such as tiled stitching tasks, the output volume can be unnecessarily large for e.g. multi-view datasets. Thus, prior to running the fusion it might be useful to [**define a custom bounding box**](https://imagej.net/plugins/bigstitcher/boundingbox) in BigStitcher.
+Performs **fusion using affine transformation models** computed by the [solve](#solver) (also supports translations, rigid, interpolated models) that are stored in the XML (*Warning: not tested on 2D*). By default the affine fusion will create an output image that encompasses all transformed input views/images. While this is good in some cases such as tiled stitching tasks, the output volume can be unnecessarily large for e.g. multi-view datasets. Thus, prior to running the fusion it might be useful to [**define a custom bounding box**](https://imagej.net/plugins/bigstitcher/boundingbox) in BigStitcher.
+
+#### Create Fusion Container<a name="create-fusion-container">
+
+The first step in the fusion is to create an empty output container that also contains all the metadata and still empty multi-resolution pyramids. By default an **OME-ZARR** is created, **N5** and **HDF5** are also supported, but HDF5 only if Spark is not run in a distributed fashion but multi-threaded on a local computer. A typical call for creating an output container for e.g. the **stitching** dataset is (e.g. [this dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing)):
+
+<code>./create-fusion-container -x ~/SparkTest/Stitching/dataset.xml -o ~/SparkTest/Stitching/Stitching/fused.zarr --preserveAnisotropy --multiRes -d UINT8</code>
+
+By default, this will create an output container that contains a 3D volume for all channels and timepoints present in the dataset. In the case of OME-ZARR, it is a single 5D container, for N5 and HDF5 it is a series of 3D datasets. ***Note: if you do NOT want to export the entire project, or want to specify fusion assignments (which views/images are fused into which volume), please check the details below. In short, you can specify the dimensions of the output container here, and the fusion assignments in the affine-fusion step below.***
+
+The fusion container for the [dataset that was aligned using interest points](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) can be created in the same way, except that we choose to use the bounding box `embryo` that was specified using BigStitcher and we choose to save as an BDV/BigStitcher project using N5 as underlying export data format:
+
+<code>./create-fusion-container -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -xo ~/SparkTest/IP/dataset-fused.xml -s N5 -b embryo --bdv --multiRes -d UINT8</code>
+
+#### Run Affine Fusion<a name="run-affine-fusion">
+
+bla bla 
+
 
 A typical set of calls (because it is three channels) for affine fusion into a multi-resolution ZARR using only translations on the **stitching** dataset is (e.g. [this dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing)):
 
