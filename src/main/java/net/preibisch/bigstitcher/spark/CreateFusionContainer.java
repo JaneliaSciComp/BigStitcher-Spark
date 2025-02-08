@@ -44,6 +44,7 @@ import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -222,25 +223,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
 
 		// compression and data type
-		final Compression compression;
-
-		//Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
-		if ( this.compression == Compressions.Lz4 )
-			compression = new Lz4Compression();
-		else if ( this.compression == Compressions.Gzip )
-			compression = new GzipCompression( compressionLevel == null ? 1 : compressionLevel );
-		else if ( this.compression == Compressions.Zstandard )
-			compression = new ZstandardCompression( compressionLevel == null ? 3 : compressionLevel );
-		else if ( this.compression == Compressions.Blosc )
-			compression = new BloscCompression();
-		else if ( this.compression == Compressions.Bzip2 )
-			compression = new Bzip2Compression();
-		else if ( this.compression == Compressions.Xz )
-			compression = new XzCompression( compressionLevel == null ? 6 : compressionLevel );
-		else if ( this.compression == Compressions.Raw )
-			compression = new RawCompression();
-		else
-			compression = null;
+		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
 
 		System.out.println( "Compression: " + this.compression );
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );

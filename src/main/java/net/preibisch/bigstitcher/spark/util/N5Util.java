@@ -24,10 +24,19 @@ package net.preibisch.bigstitcher.spark.util;
 import java.io.File;
 import java.net.URI;
 
+import org.janelia.saalfeldlab.n5.Bzip2Compression;
+import org.janelia.saalfeldlab.n5.Compression;
+import org.janelia.saalfeldlab.n5.GzipCompression;
+import org.janelia.saalfeldlab.n5.Lz4Compression;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.RawCompression;
+import org.janelia.saalfeldlab.n5.XzCompression;
+import org.janelia.saalfeldlab.n5.blosc.BloscCompression;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
+import net.preibisch.bigstitcher.spark.CreateFusionContainer.Compressions;
 import net.preibisch.legacy.io.IOFunctions;
 import util.URITools;
 
@@ -70,6 +79,30 @@ public class N5Util
 		return driverVolumeWriter;
 	}
 
+	public static Compression getCompression( Compressions compressionType, Integer compressionLevel )
+	{
+		final Compression compression;
+
+		//Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
+		if ( compressionType == Compressions.Lz4 )
+			compression = new Lz4Compression();
+		else if ( compressionType == Compressions.Gzip )
+			compression = new GzipCompression( compressionLevel == null ? 1 : compressionLevel );
+		else if ( compressionType == Compressions.Zstandard )
+			compression = new ZstandardCompression( compressionLevel == null ? 3 : compressionLevel );
+		else if ( compressionType == Compressions.Blosc )
+			compression = new BloscCompression();
+		else if ( compressionType == Compressions.Bzip2 )
+			compression = new Bzip2Compression();
+		else if ( compressionType == Compressions.Xz )
+			compression = new XzCompression( compressionLevel == null ? 6 : compressionLevel );
+		else if ( compressionType == Compressions.Raw )
+			compression = new RawCompression();
+		else
+			compression = null;
+
+		return compression;
+	}
 	/*
 	// only supported for local spark HDF5 writes, needs to share a writer instance
 	public static N5HDF5Writer hdf5DriverVolumeWriter = null;
