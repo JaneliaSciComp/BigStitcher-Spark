@@ -240,7 +240,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			minI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
 			maxI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
 		}
-		catch ( N5Exception e )
+		catch ( Exception e )
 		{
 			System.out.println( "Min/Max intensity not stored." );
 		}
