@@ -138,6 +138,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	protected String[] vi = null;
 
+	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
+	protected boolean prefetch = false;
 
 	URI outPathURI = null;
 	/**
@@ -458,12 +460,15 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
 								if ( overlappingBlocks.overlappingViews().isEmpty() )
 									return;
-	
-								System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
-	
-								final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
-								overlappingBlocks.prefetch(prefetchExecutor);
-								prefetchExecutor.shutdown();
+
+								if ( prefetch )
+								{
+									System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
+
+									final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+									overlappingBlocks.prefetch(prefetchExecutor);
+									prefetchExecutor.shutdown();
+								}
 
 								System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
