@@ -49,6 +49,8 @@ public class ClearRegistrations extends AbstractSelectableViews
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		if ( keep == null && remove == null || keep != null && remove != null || keep != null && keep < 0 || remove != null && remove < 0 )
 		{
 			System.out.println( "Please specify --keep OR --remove as >=0." );

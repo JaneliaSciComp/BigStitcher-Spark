@@ -51,6 +51,8 @@ public class ClearInterestPoints extends AbstractBasic
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )

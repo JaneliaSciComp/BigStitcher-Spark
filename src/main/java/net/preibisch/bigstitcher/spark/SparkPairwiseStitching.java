@@ -108,6 +108,8 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )

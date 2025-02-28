@@ -157,6 +157,7 @@ public class Solver extends AbstractRegistration
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
 		initRegistrationParameters();
 
 		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )

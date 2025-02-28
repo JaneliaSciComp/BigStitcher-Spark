@@ -164,6 +164,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		if ( maxSpotsPerOverlap && ( !overlappingOnly || maxSpots <= 0 ) )
 		{
 			System.out.println( "--maxSpotsPerOverlap only works when --overlappingOnly AND --maxSpots is set.");

@@ -79,6 +79,8 @@ public class SparkDownsample extends AbstractBasic implements Callable<Void>, Se
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for downsampling.");

@@ -150,6 +150,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for affine fusion.");

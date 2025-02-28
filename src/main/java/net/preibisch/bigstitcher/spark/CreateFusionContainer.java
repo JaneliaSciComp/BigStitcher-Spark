@@ -125,6 +125,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for CreateFusionContainer.");

@@ -106,6 +106,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		//System.out.println( com.google.common.collect.ImmutableList.class.getProtectionDomain().getCodeSource().getLocation() );
 		//System.exit( 0 );
 

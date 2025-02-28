@@ -128,6 +128,8 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for non-rigid fusion.");

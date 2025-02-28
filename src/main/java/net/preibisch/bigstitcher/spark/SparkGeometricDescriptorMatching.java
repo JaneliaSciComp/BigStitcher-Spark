@@ -160,6 +160,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Override
 	public Void call() throws Exception
 	{
+		this.setRegion();
+
 		initRegistrationParameters();
 
 		if ( this.numNeighbors != 3 && registrationMethod != Method.PRECISE_TRANSLATION )
