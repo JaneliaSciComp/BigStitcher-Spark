@@ -72,6 +72,7 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract;
+import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
@@ -229,6 +230,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		long maxIntervalSize = 0;
 
+		// TODO: parallelize with Spark
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
 			final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
@@ -250,7 +252,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				final AffineTransform3D mipmapTransform = input.getB(); // maps downsampled image into global coordinate system
 				final AffineTransform3D t1 = mipmapTransform.inverse(); // maps global coordinates into coordinate system of the downsampled image
 
-				for ( final ViewId otherViewId : viewIdsGlobal )
+				// pre-sort the pairs that actually overlap
+				for ( final ViewId otherViewId : OverlappingViews.findAllOverlappingViewsFor(viewId, dataGlobal, viewIdsGlobal) )
 				{
 					if ( otherViewId.equals( viewId ) )
 						continue;
@@ -338,7 +341,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess ).repartition( sparkProcess.size()  );
+		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess ).repartition( sparkProcess.size() );
 
 		// return ViewId, interval, locations, intensities
 		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->

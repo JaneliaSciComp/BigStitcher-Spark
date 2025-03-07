@@ -75,4 +75,27 @@ public class OverlappingViews
 
 		return overlapping;
 	}
+
+	public static ArrayList< ViewId > findAllOverlappingViewsFor(
+			final ViewId viewIdA,
+			final SpimData spimData,
+			final List<ViewId> viewIds)
+	{
+		final ArrayList< ViewId > overlappingViews = new ArrayList<>();
+
+		for ( final ViewId viewIdB : viewIds )
+		{
+			if ( viewIdA.equals( viewIdB ) )
+				continue;
+
+			final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA );
+			final Interval bounds2 = ViewUtil.getTransformedBoundingBox( spimData, viewIdB );
+
+			if ( ViewUtil.overlaps( bounds1, bounds2 ) )
+				overlappingViews.add( viewIdB );
+		}
+
+		return overlappingViews;
+	}
+
 }
