@@ -718,6 +718,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			}
 			else
 			{
+				interestPoints.put(viewId, new ArrayList<>());
+
 				System.out.println( Group.pvid( viewId ) + ": no points found." );
 			}
 		}
