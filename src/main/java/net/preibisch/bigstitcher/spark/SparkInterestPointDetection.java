@@ -733,7 +733,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				
 				final InterestPoints ipl = InterestPoints.newInstance( dataGlobal.getBasePathURI(), viewId, label );
 
-				ipl.setInterestPoints( interestPoints.get( viewId ) == null ? new ArrayList<>() : interestPoints.get( viewId ) );
+				// otherwise they are not saved into the XML and into the N5
+				if ( interestPoints.get( viewId ) == null )
+					interestPoints.put( viewId, new ArrayList<>() );
+
+				ipl.setInterestPoints( interestPoints.get( viewId ) );
 				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
 
 				ipl.saveInterestPoints( true );
