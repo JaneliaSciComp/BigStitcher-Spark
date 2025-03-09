@@ -108,8 +108,11 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy (default: false - using weighted average blending fusion)")
+	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy, with lowest ViewIds winning (default: false - using weighted average blending fusion)")
 	private boolean firstTileWins = false;
+
+	@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
+	private boolean firstTileWinsInverse = false;
 
 
 	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
@@ -155,7 +158,13 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for affine fusion.");
-			System.exit( 0 );
+			return null;
+		}
+
+		if ( firstTileWins && firstTileWinsInverse )
+		{
+			System.out.println( "You can only choose one of the two firstTileWins or firstTileWinsInverse.");
+			return null;
 		}
 
 		if ( timepointIndex != null && channelIndex == null || timepointIndex == null && channelIndex != null )
@@ -474,6 +483,15 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 								System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
+								final FusionType fusionType;
+
+								if ( firstTileWins )
+									fusionType = FusionType.FIRST_LOW;
+								else if ( firstTileWinsInverse )
+									fusionType = FusionType.FIRST_HIGH;
+								else
+									fusionType = FusionType.AVG_BLEND;
+
 								// returns a zero-min interval
 								img = BlkAffineFusion.init(
 										conv,
@@ -481,7 +499,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 										viewIds,
 										registrations,
 										dataLocal.getSequenceDescription().getViewDescriptions(),
-										firstTileWins ? FusionType.FIRST : FusionType.AVG_BLEND,//fusion.getFusionType(),
+										fusionType,//fusion.getFusionType(),
 										1, // linear interpolation
 										null, // intensity correction
 										new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
