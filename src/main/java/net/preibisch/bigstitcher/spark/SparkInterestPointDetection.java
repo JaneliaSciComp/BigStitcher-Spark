@@ -341,7 +341,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess ).repartition( sparkProcess.size() );
+		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess ).repartition( Math.min( 100_000, sparkProcess.size() ) );
 
 		// return ViewId, interval, locations, intensities
 		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
