@@ -50,6 +50,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 
 public class Spark {
 
+	public static final int maxPartitions = 100_000;
+
 	public static List< ViewId > deserializeViewIds( final int[][] serializedViewIds )
 	{
 		final List< ViewId > viewIds = new ArrayList<>( serializedViewIds.length );

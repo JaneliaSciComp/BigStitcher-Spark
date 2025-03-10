@@ -50,7 +50,6 @@ import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.Spark;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -247,7 +246,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		time = System.currentTimeMillis();
 
-		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0 );
+		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0 ).repartition( Math.min( Spark.maxPartitions, gridS0.size() ) );
 
 		rdds0.foreach(
 				gridBlock ->
@@ -281,10 +280,10 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 									viewId,
 									viewIdToMrInfo.get(viewId)[s] )).flatMap(List::stream).collect( Collectors.toList() );
 
-			IOFunctions.println( "Downsampling level " + (useN5 ? "s" : "") + s + "... " );
-			IOFunctions.println( "Number of compute blocks: " + allBlocks.size() );
+			System.out.println( "Downsampling level " + (useN5 ? "s" : "") + s + "... " );
+			System.out.println( "Number of compute blocks: " + allBlocks.size() );
 
-			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks);
+			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks).repartition( Math.min( Spark.maxPartitions, allBlocks.size() ) );
 
 			final long timeS = System.currentTimeMillis();
 

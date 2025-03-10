@@ -24,7 +24,6 @@ package net.preibisch.bigstitcher.spark;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -59,7 +58,6 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherP
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools.MatchingTask;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
@@ -258,7 +256,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			setup.getPairs().forEach( pair -> System.out.println( "\t" + Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) ) );
 			System.out.println( "In total: " + tasksList.size() + " pair(s) across labels: " + labels);
 
-			final JavaRDD<MatchingTask<ViewId>> rdd = sc.parallelize( tasksList );
+			final JavaRDD<MatchingTask<ViewId>> rdd = sc.parallelize( tasksList ).repartition( Math.min( Spark.maxPartitions, tasksList.size() ) );
 
 			rddResults = rdd.map( task ->
 			{
@@ -357,7 +355,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			groupedPairs.forEach( pair -> System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() ) );
 			System.out.println( "In total: " + groupedPairs.size() + " pair(s).");
 
-			final JavaRDD<MatchingTask<Group<ViewId>>> rdd = sc.parallelize( tasksList );
+			final JavaRDD<MatchingTask<Group<ViewId>>> rdd = sc.parallelize( tasksList ).repartition( Math.min( Spark.maxPartitions, tasksList.size() ) );
 
 			rddResults = rdd.map( task ->
 			{

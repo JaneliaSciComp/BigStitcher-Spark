@@ -384,7 +384,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 				//driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
 
-				final JavaRDD<long[][]> rdd = sc.parallelize( grid ).repartition( Math.min( 100_000, grid.size() ) );
+				final JavaRDD<long[][]> rdd = sc.parallelize( grid ).repartition( Math.min( Spark.maxPartitions, grid.size() ) );
 
 				long time = System.currentTimeMillis();
 
@@ -564,18 +564,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							new long[] { mrInfo[ level ].dimensions[ 0 ], mrInfo[ level ].dimensions[ 1 ], mrInfo[ level ].dimensions[ 2 ] },
 							computeBlockSize,
 							blockSize);
-					/*
-					final List<long[][]> allBlocks = 
-							N5ApiTools.assembleJobs(
-									null, // no need to go across ViewIds (for now)
-									new long[] { mrInfo[ level ].dimensions[ 0 ], mrInfo[ level ].dimensions[ 1 ], mrInfo[ level ].dimensions[ 2 ] },
-									new int[] { mrInfo[ level ].blockSize[ 0 ], mrInfo[ level ].blockSize[ 1 ], mrInfo[ level ].blockSize[ 2 ] },
-									new int[] {
-											mrInfo[ level ].blockSize[ 0 ] * computeBlocksizeFactor()[ 0 ],
-											mrInfo[ level ].blockSize[ 1 ] * computeBlocksizeFactor()[ 1 ],
-											mrInfo[ level ].blockSize[ 2 ] * computeBlocksizeFactor()[ 2 ] }
-									);//N5ApiTools.assembleJobs( mrInfo[ level ] );
-					*/
 
 					System.out.println( new Date( System.currentTimeMillis() ) + ": Downsampling: " + Util.printCoordinates( mrInfo[ level ].absoluteDownsampling ) + " with relative downsampling of " + Util.printCoordinates( mrInfo[ level ].relativeDownsampling ));
 					System.out.println( new Date( System.currentTimeMillis() ) + ": s" + level + " num blocks=" + allBlocks.size() );
@@ -583,7 +571,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 					time = System.currentTimeMillis();
 
-					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks ).repartition( Math.min( 100_000, allBlocks.size() ) );;
+					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks ).repartition( Math.min( Spark.maxPartitions, allBlocks.size() ) );
 
 					rddDS.foreach(
 							gridBlock ->
