@@ -59,6 +59,7 @@ public class TestCloudFunctions implements Callable<Void>
 		final String readDataset = "Stitching/dataset.xml";
 
 		System.out.println( "Trying to get KeyValueAccess for " + URI.create( readBucket ) );
+		URITools.s3Region = "us-east-1";
 		final KeyValueAccess kva = URITools.getKeyValueAccess( URI.create( readBucket ) );
 
 		System.out.print( "Does " + readDataset + " exist? " );
@@ -75,6 +76,8 @@ public class TestCloudFunctions implements Callable<Void>
 		{
 			if ( !testBucketWriting.endsWith( "/") )
 				testBucketWriting = testBucketWriting + "/";
+
+			URITools.s3Region = null;
 
 			System.out.println( "Trying to get KeyValueAccess for " + URI.create( testBucketWriting ) );
 			final KeyValueAccess kvaWrite = URITools.getKeyValueAccess( URI.create( testBucketWriting ) );
