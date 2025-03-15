@@ -169,6 +169,12 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		groupedPairs.forEach( pair -> System.out.println( "\t" + pair.getA() + " <=> " + pair.getB() ) );
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): In total: " + groupedPairs.size() + " pair(s).");
 
+		if ( groupedPairs.size() == 0 )
+		{
+			System.out.println( "no pairs to compare, stopping.");
+			return null;
+		}
+
 		// setup parameters
 		final boolean doSubpixel = !disableSubpixelResolution;
 		final int numPeaks = this.peaksToCheck;
