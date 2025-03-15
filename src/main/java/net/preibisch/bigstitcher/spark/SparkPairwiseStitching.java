@@ -121,6 +121,17 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 			return null;
 
+		System.out.println( "\nDebugging ViewDescriptions ... " );
+		for ( final ViewId v : viewIdsGlobal )
+		{
+			System.out.println( "ViewId=" + Group.pvid( v ) );
+			ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( v );
+			System.out.println( "ViewDescription=" + Group.pvid( vd ) );
+			System.out.println( "ViewSetup=" + vd.getViewSetup() );
+			System.out.println( "ViewSetup.getAttributes()=" + vd.getViewSetup().getAttributes() );
+			System.out.println( "ViewSetup.getAttributes().size()=" + vd.getViewSetup().getAttributes().size() );
+		}
+
 		final long[] ds = Arrays.stream(downsampling.split(",")).map( st -> st.trim() ).mapToLong(Long::parseLong).toArray();
 
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Downsampling used for stitching: " + Util.printCoordinates( ds ) );
