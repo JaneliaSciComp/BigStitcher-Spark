@@ -233,7 +233,7 @@ The fusion container for the [dataset that was aligned using interest points](ht
 
 <code>./create-fusion-container -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -xo ~/SparkTest/IP/dataset-fused.xml -s N5 -b embryo --bdv --multiRes -d UINT8</code>
 
-**Note: this is NOT a Spark call, just plain Java code.**
+**Note: creating a container for the fusion is NOT Spark code (i.e. not distributed), just plain Java code, the fusion itself below is Spark code.**
 
 #### Run Affine Fusion<a name="run-affine-fusion">
 
