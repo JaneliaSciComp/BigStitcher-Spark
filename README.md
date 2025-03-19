@@ -233,10 +233,15 @@ The fusion container for the [dataset that was aligned using interest points](ht
 
 <code>./create-fusion-container -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -xo ~/SparkTest/IP/dataset-fused.xml -s N5 -b embryo --bdv --multiRes -d UINT8</code>
 
+**Note: this is NOT a Spark call, just plain Java code.**
+
 #### Run Affine Fusion<a name="run-affine-fusion">
 
-bla bla 
+This is not updated yet, in short you just need to run <code>./affine-fusion -o ~/SparkTest/Stitching/Stitching/fused.zarr</code> that points to the container you created before. 
 
+
+
+OLD DOCUMENTATION:
 
 A typical set of calls (because it is three channels) for affine fusion into a multi-resolution ZARR using only translations on the **stitching** dataset is (e.g. [this dataset](https://drive.google.com/file/d/1ajjk4piENbRrhPWlR6HqoUfD7U7d9zlZ/view?usp=sharing)):
 
