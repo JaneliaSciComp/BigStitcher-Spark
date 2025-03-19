@@ -237,7 +237,7 @@ The fusion container for the [dataset that was aligned using interest points](ht
 
 #### Run Affine Fusion<a name="run-affine-fusion">
 
-This is not updated yet, in short you just need to run <code>./affine-fusion -o ~/SparkTest/Stitching/Stitching/fused.zarr</code> that points to the container you created before. 
+This is not updated yet, in short you just need to run e.g. <code>./affine-fusion -o ~/SparkTest/Stitching/Stitching/fused.zarr</code> that points to the container you created before. 
 
 
 
