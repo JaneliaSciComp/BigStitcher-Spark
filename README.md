@@ -233,13 +233,26 @@ The **output container** for the [dataset that was aligned using interest points
 
 <code>./create-fusion-container -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/fused.n5 -xo ~/SparkTest/IP/dataset-fused.xml -s N5 -b embryo --bdv --multiRes -d UINT8</code>
 
-**Note: creating a container for the fusion is NOT Spark code (i.e. not distributed), just plain Java code, the fusion itself below is Spark code.**
+Running `create-fusion-container` without parameters lists help for all command line arguments. `-x` specifies the XML, `-o` defines the output volume location and `-s` the output type `OME-ZARR`, `N5`, or `HDF5` (latter only when running on a local computer). `-c` allows to specify the compression method, `-cl` set the compression level if supported by the compression method. `--multiRes` will create multiresolution pyramids of the fused image(s), `-ds` allows to optionally specify the downsampling steps for the multiresolution pyramid manually. `--bdv` will create fused volumes together with an XML that can be directly opened by **BigStitcher** or **BigDataViewer**, where `-xo` defines the location of the XML for the fused dataset.
+
+You can specify the *datatype* for the fused image using `-d`, `UINT8` *[0..255]*, `UINT16` *[0..65535]* or `FLOAT32` (default) are supported. When selecting UINT8 or UINT16 you can set `--minIntensity` and `--maxIntensity`, which define the range of input intensities that will be mapped to *[0..255]* for `UINT8` or *[0..65535]* for `UINT16`, respectively. The default values are *[0..255]* for `UINT8` or *[0..65535]* for `UINT16`, which works well if input and output datatype are the same.
+
+You can specify a bounding box using `-b`. `--preserveAnisotropy` will preserve the anisotropy of the input dataset, which is a recommended setting if all views/images are taken in the same orientation, e.g. when processing a tiled dataset. The factor will be computed from the data by default, or can be specified using `--anisotropyFactor`.
+
+`--blockSize` defaults to `128x128x128`, which you might want to reduce when using HDF5. 
+
+You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed. For fusion  one normally chooses a specific timepoint and channel, e.g. `--timepointId 18 --channelId 0` to only fuse timepoint 18 and Channel 0 into a single volume. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1'` to process ViewId 0 & 1 of Timepoint 0. **By default, all images/views will be fused into a single volume, which is usually not desired.**
+***Note: creating the container for fusion is NOT Spark code (i.e. not distributed), just plain Java code, the fusion itself below is Spark code.***
 
 #### Run Affine Fusion<a name="run-affine-fusion">
 
 This is not updated yet, in short you just need to run e.g. <code>./affine-fusion -o ~/SparkTest/Stitching/Stitching/fused.zarr</code> that points to the container you created before. 
 
+Importantly, one can fuse several volumes into the same N5, ZARR or HDF5 container by running the fusion consecutively and specifying different folders or BDV ViewIds.
 
+`--blockScale` defines how many blocks to fuse in a single processing step, e.g. 4,4,1 means for blockSize of 128,128,64 that each spark thread processes 512,512,64 blocks.
+
+***Note:*** `--dryRun` allows the user to test the functionality without writing any data. It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. 
 
 OLD DOCUMENTATION:
 
@@ -262,14 +275,6 @@ The [dataset that was aligned using interest points](https://drive.google.com/fi
 In additon to the opening methods mentioned above, you can also directly open the `dataset-fused.xml` in **BigStitcher** or **BigDataViewer**; unfortunately opening of N5's in a vanilla Napari is not supported.
 
 ***Note: since both acquisitions have more than one channel or timepoint it is important to fuse these into seperate output volumes, respectively.***
-
-Running `affine-fusion` without parameters lists help for all command line arguments. `-o` defines the output volume base location and `-s` the output type `N5`, `ZARR`, or `HDF5` (latter only when running on a single computer). Importantly, one can fuse several volumes into the same N5, ZARR or HDF5 container by running the fusion consecutively and specifying different folders or BDV ViewIds. `--bdv` will create fused volumes together with an XML that can be directly opened by  **BigStitcher** or **BigDataViewer**, where `-xo` defines the location of the XML for the fused dataset. Alternatively, you need to specify a dataset location instead using `-d`. `--multiRes` will create multiresolution pyramids of the fused image; when using `-d` the dataset needs to end with `s0` in order to be able to create the multiresolution pyramid. `-ds` allows to optionally specify the downsampling steps for the multiresolution pyramid manually.
-
-You can fuse the image using datatypes `--UINT8` *[0..255]*, `--UINT16` *[0..65535]* or by default `--FLOAT32`. UINT8 and UINT16 requires you to set `--minIntensity` and `--maxIntensity`, which define the range of intensities that will be mapped to *[0..255]* or *[0..65535]*, respectively. If you want to specify a bounding box use `-b`. `--preserveAnisotropy` will preserve the anisotropy of the input dataset, which is a recommended setting if all views/images are taken in the same orientation, e.g. when processing a tiled dataset.
-
-`--blockSize` defaults to `128x128x128`, which you might want to reduce when using HDF5. `--blockScale` defines how many blocks to fuse in a single processing step, e.g. 4,4,1 means for blockSize of 128,128,64 that each spark thread processes 512,512,64 blocks.
-
-You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed. For fusion  one normally chooses a specific timepoint and channel, e.g. `--timepointId 18 --channelId 0` to only fuse timepoint 18 and Channel 0 into a single volume. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1'` to process ViewId 0 & 1 of Timepoint 0. **By default, all images/views will be fused into a single volume, which is usually not desired.**
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. It scales to large datasets as it tests for each block that is written which images are overlapping. For cloud execution one can additionally pre-fetch all input data for each compute block in parallel. You need to specify the `XML` of a BigSticher project and decide which channels, timepoints, etc. to fuse. 
 
