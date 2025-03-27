@@ -319,7 +319,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", boundingBox.maxAsLongArray() );
 
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
+		if (preserveAnisotropy) // cannot write Double.NaN into JSON
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/BlockSize", blockSize );
 
