@@ -384,7 +384,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 				//driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
 
-				final JavaRDD<long[][]> rdd = sc.parallelize( grid ).repartition( Math.min( Spark.maxPartitions, grid.size() ) );
+				final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
 
 				long time = System.currentTimeMillis();
 
@@ -571,7 +571,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 					time = System.currentTimeMillis();
 
-					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks ).repartition( Math.min( Spark.maxPartitions, allBlocks.size() ) );
+					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
 
 					rddDS.foreach(
 							gridBlock ->

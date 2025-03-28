@@ -189,7 +189,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ) ).repartition( Math.min( Spark.maxPartitions, groupedPairs.size() ) );
+		final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ), Math.min( Spark.maxPartitions, groupedPairs.size() ) );
 
 		final JavaRDD<Tuple2<int[][][], Spark.SerializablePairwiseStitchingResult>> rddResults = rdd.map( serializedGroupPair ->
 		{

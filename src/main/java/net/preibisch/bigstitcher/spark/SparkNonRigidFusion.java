@@ -311,7 +311,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<long[][]> rdd = sc.parallelize( grid ).repartition( Math.min( Spark.maxPartitions, grid.size() ) );
+		final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
 
 		final long time = System.currentTimeMillis();
 

@@ -246,7 +246,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		time = System.currentTimeMillis();
 
-		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0 ).repartition( Math.min( Spark.maxPartitions, gridS0.size() ) );
+		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, Math.min( Spark.maxPartitions, gridS0.size() ) );
 
 		rdds0.foreach(
 				gridBlock ->
@@ -283,7 +283,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println( "Downsampling level " + (useN5 ? "s" : "") + s + "... " );
 			System.out.println( "Number of compute blocks: " + allBlocks.size() );
 
-			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks).repartition( Math.min( Spark.maxPartitions, allBlocks.size() ) );
+			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
 
 			final long timeS = System.currentTimeMillis();
 
