@@ -125,8 +125,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--localization" }, description = "Subpixel localization method, NONE or QUADRATIC (default: QUADRATIC)")
 	protected Localization localization = Localization.QUADRATIC;
 
-	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view (default: false)")
+	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view. WARNING: this is usually only useful when running it on a single channel/timepoint, otherwise they usually fully overlap (default: false)")
 	protected boolean overlappingOnly = false;
+
+	@Option(names = { "--onlyCompareOverlapTiles" }, description = "if --overlappingOnly is selected, only test overlap for the Tile attribute; you might need this if you have multiple channels/timepoints (default: false)")
+	protected boolean onlyCompareOverlapTiles = false;
 
 	@Option(names = { "--storeIntensities" }, description = "creates an additional N5 dataset with the intensities of each detection, linearly interpolated (default: false)")
 	protected boolean storeIntensities = false;
@@ -215,6 +218,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "downsampleXY: " + downsampleXY );
 		System.out.println( "downsampleZ: " + downsampleZ );
 		System.out.println( "overlappingOnly: " + onlyOverlappingRegions );
+		System.out.println( "onlyCompareOverlapTiles: " + onlyCompareOverlapTiles );
 		System.out.println( "prefetching: " + prefetch );
 		if ( maxSpots > 0 ) {
 			System.out.println( "maxSpots: " + maxSpots );
@@ -241,7 +245,19 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				for ( final ViewId otherViewId : OverlappingViews.findAllOverlappingViewsFor( viewId, dataGlobal, viewIdsGlobal ) )
 				{
 					if ( !otherViewId.equals( viewId ) )
-						metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
+					{
+						if ( onlyCompareOverlapTiles )
+						{
+							final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
+							final ViewDescription othervd = dataGlobal.getSequenceDescription().getViewDescription( otherViewId );
+							if ( viewId.getTimePointId() == otherViewId.getTimePointId() && vd.getViewSetup().getChannel().getId() == othervd.getViewSetup().getChannel().getId() )
+								metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
+						}
+						else
+						{
+							metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
+						}
+					}
 				}
 			}
 			else
