@@ -33,7 +33,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
-import java.util.stream.DoubleStream;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -60,7 +59,6 @@ import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.gauss3.Gauss3;
-import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.converter.Converters;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgs;
@@ -103,7 +101,6 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 import scala.Tuple3;
-import scala.Tuple4;
 import util.Grid;
 import util.URITools;
 
@@ -148,6 +145,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
+
+	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 in interestpoints.n5 (default: false)")
+	protected boolean keepTemporaryN5 = false;
 
 
 	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones), e.g. --maxSpots 10000 (default: NO LIMIT)")
@@ -624,10 +624,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		final List<Tuple3<ViewId, long[][], String>> results = rddResult.collect();
 
-		sc.close();
-
-		System.out.println( "Computed all interest points, statistics:" );
-
 		// assemble all interest point intervals per ViewId
 		final HashMap< ViewId, List< List< InterestPoint > > > interestPointsPerViewId = new HashMap<>();
 		final HashMap< ViewId, List< List< Double > > > intensitiesPerViewId = new HashMap<>();
@@ -664,6 +660,36 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				}
 			}
 		}
+
+		if ( !keepTemporaryN5 )
+		{
+			System.out.println( "Deleting temporary Spark files ... ");
+
+			final JavaRDD<Tuple3<ViewId, long[][], String>> rdd = sc.parallelize( results, Math.min( Spark.maxPartitions, results.size() ) );
+
+			rdd.foreach( boundingBox ->
+			{
+				final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
+
+				if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/points" ))
+				{
+					n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/points" );
+
+					if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/intensities" ) )
+						n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/intensities" );
+
+					n5WriterLocal.close();
+				}
+			});
+
+			n5Writer.remove( tempDataset );
+
+			System.out.println( "All deleted.");
+		}
+
+		sc.close();
+
+		System.out.println( "Computed all interest points, statistics:" );
 
 		// assemble all ViewIds
 		final ArrayList< ViewId > viewIds = new ArrayList<>( interestPointsPerViewId.keySet() );
@@ -868,6 +894,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 					final String datasetIntensities = i.ipDataset() + "/intensities";
 
+					System.out.println( "points: " + interestPoints.get( viewId ).size() );
 					if ( interestPoints.get( viewId ).size() == 0 )
 					{
 						n5Writer.createDataset(
@@ -879,6 +906,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					}
 					else
 					{
+						System.out.println( "intesnity:" + intensitiesIPs.get( viewId ).size() );
 						List<Double> intensitiesList = intensitiesIPs.get( viewId );
 
 						// 1 x N array (which is a 2D array)
