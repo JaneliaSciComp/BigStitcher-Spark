@@ -365,7 +365,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		//
 		// turn all areas into grids and serializable objects (ViewId, intervalOffset, gridEntry)
 		//
-		final ArrayList< Tuple3<int[], long[], long[][] > > sparkProcess = new ArrayList<>();
+		final ArrayList< Tuple3<ViewId, long[], long[][] > > sparkProcess = new ArrayList<>();
 
 		System.out.println( "The following intervals will be processed:");
 
@@ -373,10 +373,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		{
 			final List<long[][]> grid = Grid.create( pair.getB().dimensionsAsLongArray(), blockSize );
 			final long[] intervalOffset = pair.getB().minAsLongArray();
-			final int[] serializedViewId = Spark.serializeViewId( pair.getA() );
+			final ViewId viewId = new ViewId( pair.getA().getTimePointId(), pair.getA().getViewSetupId() );
 
 			grid.forEach( gridEntry -> {
-				sparkProcess.add( new Tuple3<>( serializedViewId, intervalOffset, gridEntry ) );
+				sparkProcess.add( new Tuple3<>( viewId, intervalOffset, gridEntry ) );
 
 				final long[] superBlockMin = new long[ intervalOffset.length ];
 				Arrays.setAll( superBlockMin, d -> gridEntry[ 0 ][ d ] + intervalOffset[ d ] );
@@ -390,14 +390,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Total number of jobs for interest point detection: " + sparkProcess.size() );
 
-		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess, Math.min( Spark.maxPartitions, sparkProcess.size() ) );
+		// TODO: returning all points can exceed Spark boundaries, save it to N5 and load instead
+		// e.g. Total size of serialized results of 4317 tasks (1024.6 MiB) is bigger than spark.driver.maxResultSize (1024.0 MiB)
+		JavaRDD<Tuple3<ViewId, long[], long[][]>> rddJob = sc.parallelize( sparkProcess, Math.min( Spark.maxPartitions, sparkProcess.size() ) );
 
 		// return ViewId, interval, locations, intensities
-		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
+		final JavaRDD< Tuple4<ViewId, long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-			final ViewId viewId = Spark.deserializeViewId( serializedInput._1() );
-			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
+			final ViewId viewId = serializedInput._1();
+			final ViewDescription vd = data.getSequenceDescription().getViewDescription( serializedInput._1() );
 
 			// The min coordinates of the block that this job processes (in pixels)
 			final long[] superBlockMin = new long[ serializedInput._2().length ];
@@ -569,7 +571,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		rddResult.cache();
 		rddResult.count();
 
-		final List<Tuple4<int[], long[][], double[][], double[]>> results = rddResult.collect();
+		final List<Tuple4<ViewId, long[][], double[][], double[]>> results = rddResult.collect();
 
 		sc.close();
 
@@ -580,9 +582,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final HashMap< ViewId, List< List< Double > > > intensitiesPerViewId = new HashMap<>();
 		final HashMap< ViewId, List< Interval > > intervalsPerViewId = new HashMap<>();
 
-		for ( final Tuple4<int[], long[][], double[][], double[]> tuple : results )
+		for ( final Tuple4<ViewId, long[][], double[][], double[]> tuple : results )
 		{
-			final ViewId viewId = Spark.deserializeViewId( tuple._1() );
+			final ViewId viewId = tuple._1();
 			final double[][] points = tuple._3();
 
 			if ( points != null && points.length > 0 )
