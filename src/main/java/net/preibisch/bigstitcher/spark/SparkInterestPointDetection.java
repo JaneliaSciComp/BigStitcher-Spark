@@ -902,7 +902,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 								new long[] {0},
 								new int[] {1},
 								DataType.FLOAT32,
-								new GzipCompression());
+								new ZstandardCompression());
 					}
 					else
 					{
@@ -919,29 +919,31 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 											value.set( intensitiesList.get( index ).floatValue() );
 										},
 										FloatType::new );
-	
+
 						final RandomAccessibleInterval< FloatType > intensityData =
 								Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, intensitiesList.size() - 1 } );
-	
-						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
+
+						System.out.println( "intesnity interval:" + Util.printInterval( intensityData ) );
+
+						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new ZstandardCompression() );
 					}
 
-					IOFunctions.println( "Saved: " + URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) + ":/" + datasetIntensities );
+					System.out.println( "Saved: " + tempURI + "/" + datasetIntensities );
 				}
 			}
-
-			n5Writer.close();
 
 			// save XML
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-	
+
 			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
 
 			System.out.println( "Saving XML (metadata only) ..." );
-	
-			new XmlIoSpimData2().save( dataGlobal, xmlURI );
+
+			new XmlIoSpimData2().save( dataGlobal, xmlURI ); // TODO: this must be over-writing interestpoint folder
 		}
+
+		n5Writer.close();
 
 		System.out.println( "Done ..." );
 
