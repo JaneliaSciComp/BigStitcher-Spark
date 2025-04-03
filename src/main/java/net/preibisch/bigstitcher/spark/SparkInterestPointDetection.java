@@ -828,25 +828,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				if ( !maxSpotsPerOverlap && maxSpots > 0 && maxSpots < myIpsNewId.size() )
 				{
 					filterPoints( myIpsNewId, myIntensities, maxSpots );
-					/*
-					// filter for the brightnest N spots
-					final ArrayList< Pair< Double, InterestPoint > > combinedList = new ArrayList<>();
 
-					for ( int i = 0; i < myIps.size(); ++i )
-						combinedList.add( new ValuePair<Double, InterestPoint>(myIntensities.get( i ), myIpsNewId.get( i )));
-
-					// sort from large to small
-					Collections.sort(combinedList, (a,b) -> b.getA().compareTo( a.getA() ) );
-
-					myIpsNewId.clear();
-					myIntensities.clear();
-
-					for ( int i = 0; i < maxSpots; ++i )
-					{
-						myIntensities.add( combinedList.get( i ).getA() );
-						myIpsNewId.add( new InterestPoint( i, combinedList.get( i ).getB().getL() ) ); // new id's again ...
-					}
-					*/
 					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
 				}
 
@@ -872,14 +854,14 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					interestPoints.put( viewId, new ArrayList<>() );
 
 			// save XML
+			System.out.println( "Saving XML and interest points ..." );
+
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
 			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
 
-			System.out.println( "Saving XML and interest points ..." );
-
-			new XmlIoSpimData2().save( dataGlobal, xmlURI ); // TODO: this must be over-writing interestpoint folder
+			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 
 			// store image intensities for interest points
 			if( storeIntensities )
@@ -892,7 +874,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 					final String datasetIntensities = i.ipDataset() + "/intensities";
 
-					System.out.println( "points: " + interestPoints.get( viewId ).size() );
 					if ( interestPoints.get( viewId ).size() == 0 )
 					{
 						n5Writer.createDataset(
@@ -904,7 +885,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					}
 					else
 					{
-						System.out.println( "intesnity:" + intensitiesIPs.get( viewId ).size() );
 						List<Double> intensitiesList = intensitiesIPs.get( viewId );
 
 						// 1 x N array (which is a 2D array)
@@ -920,8 +900,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 						final RandomAccessibleInterval< FloatType > intensityData =
 								Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, intensitiesList.size() - 1 } );
-
-						System.out.println( "intesnity interval:" + Util.printInterval( intensityData ) );
 
 						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new ZstandardCompression() );
 					}
