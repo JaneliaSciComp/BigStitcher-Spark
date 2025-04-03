@@ -285,12 +285,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final ViewDescription vd = dataLocal.getSequenceDescription().getViewDescription( metaData._1() );
 			final ImgLoader imgLoader = dataLocal.getSequenceDescription().getImgLoader();
 
+			final long[] ds = new long[] { downsampleXY, downsampleXY, downsampleZ };
+
+			if ( overlappingOnly )
+				System.out.println( "Fetching metadata for " + Group.pvid( vd ) + " <=> " + Group.pvid( metaData._2() ) + ", level " + Arrays.toString( ds ));
+			else
+				System.out.println( "Fetching metadata for " + Group.pvid( vd ) + ", level " + Arrays.toString( ds ));
+			
+
 			// load mipmap transform and bounds
 			// TODO: can we load the dimensions without (Virtually) opening the image?
 			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
 					imgLoader,
 					vd,
-					new long[] { downsampleXY, downsampleXY, downsampleZ },
+					ds,
 					true );
 
 			final ArrayList< Tuple3< ViewId, long[], long[] > > resultIntervals = new ArrayList<>();
@@ -314,7 +322,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				// load other mipmap transform
 				final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
-				openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, new long[] { downsampleXY, downsampleXY, downsampleZ }, true, true );
+
+				openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, ds, true, true );
 
 				// map the other view into the local coordinate space of the view we find interest points in
 				// apply inverse of the mipmap transform of each
@@ -577,7 +586,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			System.out.println( "Returning " + ips.size() + " interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
 
 			// serialize -- actually we can't serialize because of cloud storage ... need to use N5
-			final String serializeDataset = Group.pvid( viewId ) + "_" + Arrays.toString( processInterval.minAsLongArray() ) + "_" + Arrays.toString( processInterval.maxAsLongArray() );
+			String serializeDataset = Group.pvid( viewId ) + "_" + Arrays.toString( processInterval.minAsLongArray() ) + "_" + Arrays.toString( processInterval.maxAsLongArray() );
+			serializeDataset = serializeDataset.replaceAll( " ", "" );
+			serializeDataset = serializeDataset.replaceAll( "\\[", "_" );
+			serializeDataset = serializeDataset.replaceAll( "\\]", "_" );
+
 			final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
 
 			if ( ips.size() > 0 )
