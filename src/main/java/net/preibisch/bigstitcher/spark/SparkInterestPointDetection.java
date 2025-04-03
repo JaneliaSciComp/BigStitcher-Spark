@@ -865,32 +865,30 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		if ( !dryRun )
 		{
-			// save interest points for ALL views, not only those where we found points
-			for ( final ViewId viewId : viewIdsGlobal /*viewIds*/ )
-			{
-				System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
-				
-				final InterestPoints ipl = InterestPoints.newInstance( dataGlobal.getBasePathURI(), viewId, label );
-
-				// otherwise they are not saved into the XML and into the N5
+			// save interest points for ALL views that were processed, not only those where we found points
+			// otherwise they are not saved into the XML and into the N5
+			for ( final ViewId viewId : viewIdsGlobal )
 				if ( interestPoints.get( viewId ) == null )
 					interestPoints.put( viewId, new ArrayList<>() );
 
-				ipl.setInterestPoints( interestPoints.get( viewId ) );
-				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
+			// save XML
+			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
+					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
-				ipl.saveInterestPoints( true );
-				ipl.saveCorrespondingInterestPoints( true );
+			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
 
-				// store image intensities for interest points
-				if ( storeIntensities )
+			System.out.println( "Saving XML and interest points ..." );
+
+			new XmlIoSpimData2().save( dataGlobal, xmlURI ); // TODO: this must be over-writing interestpoint folder
+
+			// store image intensities for interest points
+			if( storeIntensities )
+			{
+				for ( final ViewId viewId : viewIdsGlobal )
 				{
 					System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
 
-					final InterestPointsN5 i = (InterestPointsN5)ipl;
-
-					//final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
-					//final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) ) );
+					final InterestPointsN5 i = (InterestPointsN5)dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
 
 					final String datasetIntensities = i.ipDataset() + "/intensities";
 
@@ -931,16 +929,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					System.out.println( "Saved: " + tempURI + "/" + datasetIntensities );
 				}
 			}
-
-			// save XML
-			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-
-			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
-
-			System.out.println( "Saving XML (metadata only) ..." );
-
-			new XmlIoSpimData2().save( dataGlobal, xmlURI ); // TODO: this must be over-writing interestpoint folder
 		}
 
 		n5Writer.close();
