@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -174,12 +174,12 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		}
 
 		if ( timepointIndex == null && ( vi != null || timepointIds != null || channelIds != null || illuminationIds != null || tileIds != null || angleIds != null ) )
-			
+
 		{
 			System.out.println( "You can only specify specify angles, tiles, ..., ViewIds if you provided a specific timepointIndex & channelIndex.");
 			return null;
 		}
-	
+
 		this.outPathURI = URITools.toURI( outputPathURIString );
 		System.out.println( "Fused volume: " + outPathURI );
 
@@ -227,7 +227,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
- 
+
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
 		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
@@ -235,6 +235,10 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		final int[] blockSize = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/BlockSize", int[].class );
 
 		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
+
+		final long[] orig_bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
+		if ( !Double.isNaN( anisotropyFactor ) )
+			orig_bbMin[ 2 ] = Math.round( Math.floor( orig_bbMin[ 2 ] * anisotropyFactor ) );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "Input XML: " + xmlURI );
@@ -279,13 +283,13 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		final ArrayList< ViewId > viewIdsGlobal;
 
 		if (
-			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels || 
-			dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
+				dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels ||
+						dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
 		{
 			System.out.println(
 					"The number of channels and timepoint in XML does not match the number in the export dataset."
-					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
-					+ "a specific 3D volume in the fusion dataset:");
+							+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
+							+ "a specific 3D volume in the fusion dataset:");
 
 			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
 
@@ -400,6 +404,13 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 											anisotropyFactor,
 											Double.NaN );
 
+							final HashMap< ViewId, AffineTransform3D > orig_registrations =
+									TransformVirtual.adjustAllTransforms(
+											viewIds,
+											dataLocal.getViewRegistrations().getViewRegistrations(),
+											Double.NaN,
+											Double.NaN );
+
 							final Converter conv;
 							final Type type;
 							final boolean uint8, uint16;
@@ -429,7 +440,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							// The min coordinates of the block that this job renders (in pixels)
 							final int n = gridBlock[ 0 ].length;
 							final long[] superBlockOffset = new long[ n ];
-							Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + bbMin[ d ] );
+							Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + orig_bbMin[ d ] );
 
 							// The size of the block that this job renders (in pixels)
 							final long[] superBlockSize = gridBlock[ 1 ];
@@ -444,7 +455,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 
 							final List< ViewId > overlappingViews =
-									OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+									OverlappingViews.findOverlappingViews( dataLocal, viewIds, orig_registrations, fusedBlock );
 
 							final RandomAccessibleInterval img;
 
