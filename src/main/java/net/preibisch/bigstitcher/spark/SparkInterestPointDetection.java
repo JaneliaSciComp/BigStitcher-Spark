@@ -28,20 +28,20 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
-import java.util.stream.DoubleStream;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -59,11 +59,14 @@ import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.gauss3.Gauss3;
 import net.imglib2.converter.Converters;
+import net.imglib2.img.Img;
+import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
 import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.RealType;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
@@ -77,14 +80,11 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
-import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
@@ -97,7 +97,6 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 import scala.Tuple3;
-import scala.Tuple4;
 import util.Grid;
 import util.URITools;
 
@@ -142,6 +141,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
+
+	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 in interestpoints.n5 (default: false)")
+	protected boolean keepTemporaryN5 = false;
 
 
 	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones), e.g. --maxSpots 10000 (default: NO LIMIT)")
@@ -283,12 +285,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final ViewDescription vd = dataLocal.getSequenceDescription().getViewDescription( metaData._1() );
 			final ImgLoader imgLoader = dataLocal.getSequenceDescription().getImgLoader();
 
+			final long[] ds = new long[] { downsampleXY, downsampleXY, downsampleZ };
+
+			if ( overlappingOnly )
+				System.out.println( "Fetching metadata for " + Group.pvid( vd ) + " <=> " + Group.pvid( metaData._2() ) + ", level " + Arrays.toString( ds ));
+			else
+				System.out.println( "Fetching metadata for " + Group.pvid( vd ) + ", level " + Arrays.toString( ds ));
+			
+
 			// load mipmap transform and bounds
 			// TODO: can we load the dimensions without (Virtually) opening the image?
 			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
 					imgLoader,
 					vd,
-					new long[] { downsampleXY, downsampleXY, downsampleZ },
+					ds,
 					true );
 
 			final ArrayList< Tuple3< ViewId, long[], long[] > > resultIntervals = new ArrayList<>();
@@ -312,7 +322,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				// load other mipmap transform
 				final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
-				openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, new long[] { downsampleXY, downsampleXY, downsampleZ }, true, true );
+
+				openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, ds, true, true );
 
 				// map the other view into the local coordinate space of the view we find interest points in
 				// apply inverse of the mipmap transform of each
@@ -365,7 +376,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		//
 		// turn all areas into grids and serializable objects (ViewId, intervalOffset, gridEntry)
 		//
-		final ArrayList< Tuple3<int[], long[], long[][] > > sparkProcess = new ArrayList<>();
+		final ArrayList< Tuple3<ViewId, long[], long[][] > > sparkProcess = new ArrayList<>();
 
 		System.out.println( "The following intervals will be processed:");
 
@@ -373,10 +384,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		{
 			final List<long[][]> grid = Grid.create( pair.getB().dimensionsAsLongArray(), blockSize );
 			final long[] intervalOffset = pair.getB().minAsLongArray();
-			final int[] serializedViewId = Spark.serializeViewId( pair.getA() );
+			final ViewId viewId = new ViewId( pair.getA().getTimePointId(), pair.getA().getViewSetupId() );
 
 			grid.forEach( gridEntry -> {
-				sparkProcess.add( new Tuple3<>( serializedViewId, intervalOffset, gridEntry ) );
+				sparkProcess.add( new Tuple3<>( viewId, intervalOffset, gridEntry ) );
 
 				final long[] superBlockMin = new long[ intervalOffset.length ];
 				Arrays.setAll( superBlockMin, d -> gridEntry[ 0 ][ d ] + intervalOffset[ d ] );
@@ -390,14 +401,26 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Total number of jobs for interest point detection: " + sparkProcess.size() );
 
-		final JavaRDD<Tuple3<int[], long[], long[][] >> rddJob = sc.parallelize( sparkProcess, Math.min( Spark.maxPartitions, sparkProcess.size() ) );
+		// create temporary N5 folder
+		final String tempLocation = URITools.appendName( dataGlobal.getBasePathURI(), InterestPointsN5.baseN5 );
+		final URI tempURI = URI.create( tempLocation );
+		final String tempDataset = "spark_tmp_" + System.currentTimeMillis() + "_" + new Random( System.nanoTime() ).nextInt();
 
-		// return ViewId, interval, locations, intensities
-		final JavaRDD< Tuple4<int[], long[][], double[][], double[] > > rddResult = rddJob.map( serializedInput ->
+		System.out.println( "Creating temporary N5 for dataset for spark jobs in '" + tempURI + ":/" + tempDataset + "'" );
+
+		final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
+		n5Writer.createGroup( tempDataset );
+
+		// returning all points can exceed Spark boundaries, save it to N5 and load instead
+		// e.g. Total size of serialized results of 4317 tasks (1024.6 MiB) is bigger than spark.driver.maxResultSize (1024.0 MiB)
+		final JavaRDD<Tuple3<ViewId, long[], long[][]>> rddJob = sc.parallelize( sparkProcess, Math.min( Spark.maxPartitions, sparkProcess.size() ) );
+
+		// return ViewId, interval, filename for serialized SparkIPResults[locations, intensities]
+		final JavaRDD< Tuple3< ViewId, long[][], String> > rddResult = rddJob.map( serializedInput ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-			final ViewId viewId = Spark.deserializeViewId( serializedInput._1() );
-			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
+			final ViewId viewId = serializedInput._1();
+			final ViewDescription vd = data.getSequenceDescription().getViewDescription( serializedInput._1() );
 
 			// The min coordinates of the block that this job processes (in pixels)
 			final long[] superBlockMin = new long[ serializedInput._2().length ];
@@ -517,7 +540,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			if ( ips == null || ips.size() == 0 )
 			{
 				System.out.println( "No interest points found for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
-				return new Tuple4<>( serializedInput._1(), Spark.serializeInterval( processInterval ), null, null );
+				//return new Tuple4<>( serializedInput._1(), Spark.serializeInterval( processInterval ), null, null );
+				return new Tuple3<>( viewId, Spark.serializeInterval( processInterval ), "" );
 			}
 
 			final double[] intensities;
@@ -554,39 +578,76 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			DownsampleTools.correctForDownsampling( ips, input.getB() );
 
-			final double[][] points = new double[ ips.size() ][];
+			//final double[][] points = new double[ ips.size() ][];
 
-			for ( int i = 0; i < ips.size(); ++i )
-				points[ i ] = ips.get( i ).getL();
+			//for ( int i = 0; i < ips.size(); ++i )
+			//	points[ i ] = ips.get( i ).getL();
 
 			System.out.println( "Returning " + ips.size() + " interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
 
-			// return ViewId, interval, locations, intensities
-			return new Tuple4<>( serializedInput._1(), Spark.serializeInterval( processInterval ), points, intensities );
+			// serialize -- actually we can't serialize because of cloud storage ... need to use N5
+			String serializeDataset = Group.pvid( viewId ) + "_" + Arrays.toString( processInterval.minAsLongArray() ) + "_" + Arrays.toString( processInterval.maxAsLongArray() );
+			serializeDataset = serializeDataset.replaceAll( " ", "" );
+			serializeDataset = serializeDataset.replaceAll( "\\[", "_" );
+			serializeDataset = serializeDataset.replaceAll( "\\]", "_" );
+
+			final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
+
+			if ( ips.size() > 0 )
+			{
+				final int n = ips.get( 0 ).getL().length;
+				final double[] points = new double[ ips.size() * n ];
+
+				int j = 0;
+				for ( int i = 0; i < ips.size(); ++i )
+					for ( int d = 0; d < n; ++d )
+						points[ j++ ] = ips.get( i ).getL()[ d ];
+
+				N5Utils.save(
+						ArrayImgs.doubles( points, new long[] { n, ips.size() } ),
+						n5WriterLocal,
+						tempDataset + "/" + serializeDataset + "/points",
+						new int[] { n, ips.size() },
+						new ZstandardCompression() );
+			}
+
+			if ( intensities != null && intensities.length > 0 )
+			{
+				N5Utils.save(
+						ArrayImgs.doubles( intensities, new long[] { intensities.length } ),
+						n5WriterLocal,
+						tempDataset + "/" + serializeDataset + "/intensities",
+						new int[] { intensities.length },
+						new ZstandardCompression() );
+			}
+
+			n5WriterLocal.close();
+
+			// return ViewId, interval, filename for [locations, intensities]
+			return new Tuple3<>( viewId, Spark.serializeInterval( processInterval ), serializeDataset );
 		});
 
 
 		rddResult.cache();
 		rddResult.count();
 
-		final List<Tuple4<int[], long[][], double[][], double[]>> results = rddResult.collect();
-
-		sc.close();
-
-		System.out.println( "Computed all interest points, statistics:" );
+		final List<Tuple3<ViewId, long[][], String>> results = rddResult.collect();
 
 		// assemble all interest point intervals per ViewId
 		final HashMap< ViewId, List< List< InterestPoint > > > interestPointsPerViewId = new HashMap<>();
 		final HashMap< ViewId, List< List< Double > > > intensitiesPerViewId = new HashMap<>();
 		final HashMap< ViewId, List< Interval > > intervalsPerViewId = new HashMap<>();
 
-		for ( final Tuple4<int[], long[][], double[][], double[]> tuple : results )
+		for ( final Tuple3<ViewId, long[][], String> tuple : results )
 		{
-			final ViewId viewId = Spark.deserializeViewId( tuple._1() );
-			final double[][] points = tuple._3();
+			final ViewId viewId = tuple._1();
 
-			if ( points != null && points.length > 0 )
+			//if ( points != null && points.length > 0 )
+			if ( n5Writer.datasetExists( tempDataset + "/" + tuple._3() + "/points" ))
 			{
+				// load from N5
+				final Img<DoubleType> points = N5Utils.open( n5Writer, tempDataset + "/" + tuple._3() + "/points" );
+
 				interestPointsPerViewId.putIfAbsent(viewId, new ArrayList<>() );
 				interestPointsPerViewId.get( viewId ).add( Spark.deserializeInterestPoints(points) );
 
@@ -596,10 +657,48 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				if ( storeIntensities || maxSpots > 0 )
 				{
 					intensitiesPerViewId.putIfAbsent(viewId, new ArrayList<>() );
-					intensitiesPerViewId.get( viewId ).add( DoubleStream.of(tuple._4()).boxed().collect(Collectors.toList() ) );
+
+					if ( n5Writer.datasetExists( tempDataset + "/" + tuple._3() + "/intensities" ) )
+					{
+						// load from N5
+						final Img<DoubleType> intensities = N5Utils.open( n5Writer, tempDataset + "/" + tuple._3() + "/intensities" );
+						final ArrayList<Double> intensitiesList = new ArrayList<>();
+						Views.flatIterable( intensities ).forEach( v -> intensitiesList.add( v.get() ) );
+						intensitiesPerViewId.get( viewId ).add( intensitiesList );
+					}
 				}
 			}
 		}
+
+		if ( !keepTemporaryN5 )
+		{
+			System.out.println( "Deleting temporary Spark files ... ");
+
+			final JavaRDD<Tuple3<ViewId, long[][], String>> rdd = sc.parallelize( results, Math.min( Spark.maxPartitions, results.size() ) );
+
+			rdd.foreach( boundingBox ->
+			{
+				final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
+
+				if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/points" ))
+				{
+					n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/points" );
+
+					if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/intensities" ) )
+						n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/intensities" );
+
+					n5WriterLocal.close();
+				}
+			});
+
+			n5Writer.remove( tempDataset );
+
+			System.out.println( "All deleted.");
+		}
+
+		sc.close();
+
+		System.out.println( "Computed all interest points, statistics:" );
 
 		// assemble all ViewIds
 		final ArrayList< ViewId > viewIds = new ArrayList<>( interestPointsPerViewId.keySet() );
@@ -738,25 +837,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				if ( !maxSpotsPerOverlap && maxSpots > 0 && maxSpots < myIpsNewId.size() )
 				{
 					filterPoints( myIpsNewId, myIntensities, maxSpots );
-					/*
-					// filter for the brightnest N spots
-					final ArrayList< Pair< Double, InterestPoint > > combinedList = new ArrayList<>();
 
-					for ( int i = 0; i < myIps.size(); ++i )
-						combinedList.add( new ValuePair<Double, InterestPoint>(myIntensities.get( i ), myIpsNewId.get( i )));
-
-					// sort from large to small
-					Collections.sort(combinedList, (a,b) -> b.getA().compareTo( a.getA() ) );
-
-					myIpsNewId.clear();
-					myIntensities.clear();
-
-					for ( int i = 0; i < maxSpots; ++i )
-					{
-						myIntensities.add( combinedList.get( i ).getA() );
-						myIpsNewId.add( new InterestPoint( i, combinedList.get( i ).getB().getL() ) ); // new id's again ...
-					}
-					*/
 					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
 				}
 
@@ -775,81 +856,77 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		if ( !dryRun )
 		{
-			// save interest points for ALL views, not only those where we found points
-			for ( final ViewId viewId : viewIdsGlobal /*viewIds*/ )
-			{
-				System.out.println( "Saving interest point '" + label + "' N5 for " + Group.pvid(viewId) + " ... " );
-				
-				final InterestPoints ipl = InterestPoints.newInstance( dataGlobal.getBasePathURI(), viewId, label );
-
-				// otherwise they are not saved into the XML and into the N5
+			// save interest points for ALL views that were processed, not only those where we found points
+			// otherwise they are not saved into the XML and into the N5
+			for ( final ViewId viewId : viewIdsGlobal )
 				if ( interestPoints.get( viewId ) == null )
 					interestPoints.put( viewId, new ArrayList<>() );
 
-				ipl.setInterestPoints( interestPoints.get( viewId ) );
-				ipl.setCorrespondingInterestPoints( new ArrayList< CorrespondingInterestPoints >() );
-
-				ipl.saveInterestPoints( true );
-				ipl.saveCorrespondingInterestPoints( true );
-
-				// store image intensities for interest points
-				if ( storeIntensities )
-				{
-					System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
-
-					final InterestPointsN5 i = (InterestPointsN5)ipl;
-
-					//final N5FSWriter n5Writer = new N5FSWriter( new File( i.getBaseDir().getAbsolutePath(), InterestPointsN5.baseN5 ).getAbsolutePath() );
-					final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, URITools.toURI( URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) ) );
-
-					final String datasetIntensities = i.ipDataset() + "/intensities";
-
-					if ( interestPoints.get( viewId ).size() == 0 )
-					{
-						n5Writer.createDataset(
-								datasetIntensities,
-								new long[] {0},
-								new int[] {1},
-								DataType.FLOAT32,
-								new GzipCompression());
-					}
-					else
-					{
-						List<Double> intensitiesList = intensitiesIPs.get( viewId );
-
-						// 1 x N array (which is a 2D array)
-						final FunctionRandomAccessible< FloatType > intensities =
-								new FunctionRandomAccessible<>(
-										2,
-										(location, value) ->
-										{
-											final int index = location.getIntPosition( 1 );
-											value.set( intensitiesList.get( index ).floatValue() );
-										},
-										FloatType::new );
-	
-						final RandomAccessibleInterval< FloatType > intensityData =
-								Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, intensitiesList.size() - 1 } );
-	
-						N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new GzipCompression() );
-					}
-	
-					IOFunctions.println( "Saved: " + URITools.appendName( i.getBaseDir(), InterestPointsN5.baseN5 ) + ":/" + datasetIntensities );
-	
-					n5Writer.close();
-				}
-			}
-
 			// save XML
+			System.out.println( "Saving XML and interest points ..." );
+
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
-	
+
 			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
 
-			System.out.println( "Saving XML (metadata only) ..." );
-	
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
+
+			// store image intensities for interest points
+			if( storeIntensities )
+			{
+				viewIdsGlobal.parallelStream().forEach( viewId ->
+				{
+					try
+					{
+						System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
+
+						final InterestPointsN5 i = (InterestPointsN5)dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
+
+						final String datasetIntensities = i.ipDataset() + "/intensities";
+
+						if ( interestPoints.get( viewId ).size() == 0 )
+						{
+							n5Writer.createDataset(
+									datasetIntensities,
+									new long[] {0},
+									new int[] {1},
+									DataType.FLOAT32,
+									new ZstandardCompression());
+						}
+						else
+						{
+							List<Double> intensitiesList = intensitiesIPs.get( viewId );
+
+							// 1 x N array (which is a 2D array)
+							final FunctionRandomAccessible< FloatType > intensities =
+									new FunctionRandomAccessible<>(
+											2,
+											(location, value) ->
+											{
+												final int index = location.getIntPosition( 1 );
+												value.set( intensitiesList.get( index ).floatValue() );
+											},
+											FloatType::new );
+
+							final RandomAccessibleInterval< FloatType > intensityData =
+									Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, intensitiesList.size() - 1 } );
+
+							N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new ZstandardCompression() );
+						}
+
+						System.out.println( "Saved: " + tempURI + "/" + datasetIntensities );
+						
+					}
+					catch ( Exception e )
+					{
+						System.out.println( "Could not save intensities for: " + Group.pvid(viewId) + ": " + e  );
+					}
+				});
+			}
 		}
+
+		n5Writer.close();
 
 		System.out.println( "Done ..." );
 

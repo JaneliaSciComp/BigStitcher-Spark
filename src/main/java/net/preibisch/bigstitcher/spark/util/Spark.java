@@ -36,12 +36,17 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
 import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.img.Img;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
+import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -160,12 +165,20 @@ public class Spark {
 		return serializedViewIds;
 	}
 
-	public static ArrayList< InterestPoint > deserializeInterestPoints( final double[][] points )
+	public static ArrayList< InterestPoint > deserializeInterestPoints( final RandomAccessibleInterval<DoubleType> points )
 	{
 		final ArrayList< InterestPoint > list = new ArrayList<>();
-		
-		for ( int i = 0; i < points.length; ++i )
-			list.add( new InterestPoint(i, points[ i ] ));
+		final Cursor< DoubleType > cursor = Views.flatIterable( points ).localizingCursor();
+
+		for ( int i = 0; i < points.dimension( 1 ); ++i )
+		{
+			final double[] l = new double[ (int)points.dimension( 0 ) ];
+
+			for ( int d = 0; d < points.dimension( 0 ); ++d )
+				l[ d ] = cursor.next().get();
+
+			list.add( new InterestPoint(i, l ));
+		}
 
 		return list;
 	}
