@@ -403,7 +403,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		// create temporary N5 folder
 		final String tempLocation = URITools.appendName( dataGlobal.getBasePathURI(), InterestPointsN5.baseN5 );
-		final URI tempURI = URI.create( tempLocation );
+		final URI tempURI = URITools.toURI( tempLocation );
 		final String tempDataset = "spark_tmp_" + System.currentTimeMillis() + "_" + new Random( System.nanoTime() ).nextInt();
 
 		System.out.println( "Creating temporary N5 for dataset for spark jobs in '" + tempURI + ":/" + tempDataset + "'" );
