@@ -70,7 +70,7 @@ Please ask your sysadmin for help how to run it on your **cluster**, below are h
 
 #### Instructions/stories how people set up Spark/BigStitcher-Spark on their respective clusters:
 * HHMI Janelia (LSF cluster): [Tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane)
-* MDC Berlin (SGE cluster): [Google doc explaining the steps](https://docs.google.com/document/d/119jxXk-w3GWZ3IvpMXlAclE8ZeNXniiuO3YScMyImUQ/edit?usp=sharing)
+* MDC Berlin (SGE cluster): [Google doc explaining the steps](https://docs.google.com/document/d/119jxXk-w3GWZ3IvpMXlAclE8ZeNXniiuO3YScMyImUQ/edit?usp=sharing) by [@bellonet](https://github.com/bellonet)
 * ***We are currently developing a generic [NextFlow](https://www.nextflow.io)-based pipeline for submitting BigStitcher-Spark jobs to a cluster***
 
 ### To run it on the cloud<a name="installcloud">
