@@ -48,7 +48,7 @@ Additonally there are some utility methods:
 
 ### To run it on your local computer<a name="installlocal">
 
-* Prerequisites:  Java (**[Zulu JDK 8 + FX](https://www.azul.com/downloads/?version=java-8-lts&package=jdk-fx#zulu) is tested, and Java >=21 currently does not work with the Spark version used**) and **[Apache Maven](https://maven.apache.org)** must be installed.
+* Prerequisites:  **Java** ([Zulu JDK 8 + FX](https://www.azul.com/downloads/?version=java-8-lts&package=jdk-fx#zulu) is tested, and Java >=21 currently does not work with the Spark version used) and **[Apache Maven](https://maven.apache.org)** must be installed.
 * Clone the repo and `cd` into `BigStitcher-Spark`
 * Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create the executable `resave`, `detect-interestpoints`, `register-interestpoints`, `stitching`, `solver`, `affine-fusion`, `nonrigid-fusion`, `downsample`, `clear-interestpoints` and `clear-registrations` in the working directory.
 
