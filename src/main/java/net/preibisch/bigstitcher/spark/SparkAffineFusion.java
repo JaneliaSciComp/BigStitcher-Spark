@@ -208,6 +208,12 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final String fusionFormat = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/FusionFormat", String.class );
 
+		if ( fusionFormat == null )
+		{
+			System.out.println( "Could not load 'Bigstitcher-Spark/FusionFormat' from metadata of specified output '" + outPathURI + "'.");
+			System.out.println( "Note: this metadata is created by ./create-fusion-container in the previous step." );
+			return null;
+		}
 		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
 
 		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
