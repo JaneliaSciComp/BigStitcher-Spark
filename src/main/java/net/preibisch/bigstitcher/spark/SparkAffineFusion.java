@@ -38,6 +38,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Exception;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
@@ -202,6 +203,18 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		else
 		{
 			System.out.println( "Format " + storageType + " will be used to open " + outPathURI );
+		}
+
+		// test that the container exists
+		try( final N5Reader r = URITools.instantiateN5Reader( storageType, outPathURI  ) )
+		{
+			System.out.println( "Found container '" + outPathURI + "'.");
+		}
+		catch ( Exception e )
+		{
+			System.out.println( "Exception: " + e);
+			System.out.println( "Error, container '" + outPathURI + "' does not exist. Please create it with create-fusion-container.");
+			return null;
 		}
 
 		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
