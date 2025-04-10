@@ -1,4 +1,4 @@
-ARG SPARK_VERSION=3.3.2-scala2.12-java8-ubuntu
+ARG SPARK_VERSION=3.3.2-scala2.12-java17-ubuntu24.04
 ARG BIGSTITCHER_SPARK_GIT_HASH=d1008a4
 
 FROM ghcr.io/janeliascicomp/spark:${SPARK_VERSION}
@@ -13,21 +13,10 @@ LABEL \
 
 USER root
 
-RUN apt update -y \
- && apt-get install -y \
-        git \
-        libblosc1 libblosc-dev \
-        libzstd1 libzstd-dev \
-        g++ cmake
-
-WORKDIR /tmp/c-blosc
-
-RUN git clone --branch main --depth 1 https://github.com/Blosc/c-blosc.git .; \
-    mkdir build; \
-    cd build; \
-    cmake -S .. -B .; \
-    make; \
-    make install;
+RUN apt update -y; \
+    apt-get install -y \
+        libblosc-dev libzstd-dev \
+        liblzma-dev liblz4-dev
 
 WORKDIR /app
 COPY LICENSE /app/LICENSE
