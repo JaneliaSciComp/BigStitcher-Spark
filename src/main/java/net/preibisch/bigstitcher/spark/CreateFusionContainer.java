@@ -142,7 +142,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		this.outPathURI =  URITools.toURI( outputPathURIString );
 		System.out.println( "ZARR/N5/HDF5 container: " + outPathURI );
 
-		if ( storageType == StorageFormat.HDF5 && URITools.isFile( outPathURI ) )
+		if ( storageType == StorageFormat.HDF5 && !URITools.isFile( outPathURI ) )
 		{
 			System.out.println( "HDF5 only supports local storage, but --outputPath=" + outPathURI );
 			return null;
