@@ -31,7 +31,7 @@ import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import net.imglib2.FinalInterval;
 import net.imglib2.RandomAccessibleInterval;
@@ -42,7 +42,6 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
-import net.preibisch.bigstitcher.spark.SparkAffineFusion;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import util.Grid;

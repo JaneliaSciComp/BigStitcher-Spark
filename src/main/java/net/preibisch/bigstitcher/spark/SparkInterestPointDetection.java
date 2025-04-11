@@ -40,7 +40,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;

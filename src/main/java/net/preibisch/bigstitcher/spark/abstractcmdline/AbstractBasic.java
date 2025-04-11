@@ -46,6 +46,7 @@ public abstract class AbstractBasic extends AbstractInfrastructure implements Ca
 
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
+		System.out.println( "'" + xmlURIString + "'" );
 		System.out.println( "xml: " + (xmlURI = URITools.toURI(xmlURIString)) );
 		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2( xmlURI );
 
