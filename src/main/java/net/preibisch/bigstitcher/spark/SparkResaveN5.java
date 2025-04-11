@@ -38,8 +38,7 @@ import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
-import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.sequence.ViewId;
