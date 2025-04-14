@@ -15,8 +15,8 @@ USER root
 
 RUN apt update -y; \
     apt-get install -y \
-        libblosc-dev libzstd-dev \
-        liblzma-dev liblz4-dev
+        libblosc1 libblosc-dev \
+        libzstd1 libzstd-dev libhdf5-dev;
 
 WORKDIR /app
 COPY LICENSE /app/LICENSE
