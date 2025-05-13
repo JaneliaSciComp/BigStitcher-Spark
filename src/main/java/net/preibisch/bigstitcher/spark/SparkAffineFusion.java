@@ -464,6 +464,9 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							final List< ViewId > overlappingViews =
 									OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
 
+							if ( overlappingViews.size() == 0 )
+								return;
+
 							final RandomAccessibleInterval img;
 
 							if ( masks )
@@ -563,6 +566,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
 
+							// TODO: is this multithreaded??
+							// TODO: should we catch the N5 exception and throw a general one?
 							N5Utils.saveBlock(sourceGridBlock, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
 
 							if ( N5Util.sharedHDF5Writer == null )
