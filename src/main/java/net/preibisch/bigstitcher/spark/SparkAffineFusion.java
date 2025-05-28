@@ -121,6 +121,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "-c", "--channelIndex" }, description = "specify a specific channel index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
 	private Integer channelIndex = null;
 
+	// TODO: add support for loading coefficients during fusion
 
 	// To specify what goes into the current 3D volume
 	@Option(names = { "--angleId" }, description = "list the angle ids that should be processed, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
