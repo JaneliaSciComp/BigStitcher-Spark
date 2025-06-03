@@ -329,7 +329,13 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// setup datasets and metadata
 		MultiResolutionLevelInfo[][] mrInfos = null;
 
-		if ( storageType == StorageFormat.ZARR ) // OME-Zarr export
+		// OME-Zarr export
+		// this code needs refactoring some sort of refactoring. When exporting OME-ZARR, we first create the OME-ZARR container,
+		// and if it is BDV-XML, we only create the XML in the next if statement. If it is N5/HDF5, there
+		// is code that creates the N5/HDF5 container and the XML in one if statement. The reason is that
+		// HDF5/N5 containers with XML may be different that OME-ZARR's; they are always the same no matter
+		// if it is a BDV project or not
+		if ( storageType == StorageFormat.ZARR )
 		{
 			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
 
