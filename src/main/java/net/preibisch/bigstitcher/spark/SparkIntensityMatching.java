@@ -47,11 +47,13 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 		final URI xmlURI = this.xmlURI;
 
-		
+		System.out.println( "xmlURI = " + xmlURI );
+
+
 		//final List<double[]> results = rddResults.collect();
 
 		// save text files (multi-threaded)
-		
+
 		sc.close();
 
 		return null;
