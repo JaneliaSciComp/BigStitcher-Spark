@@ -1,26 +1,44 @@
 package net.preibisch.bigstitcher.spark;
 
+import static net.imglib2.util.Intervals.intersect;
+import static net.imglib2.util.Intervals.isEmpty;
+import static net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection.SerializableRealInterval.serializable;
+
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaPairRDD;
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.RealInterval;
+import net.imglib2.util.Intervals;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher.CoefficientMatch;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import scala.Tuple2;
 
 public class SparkIntensityMatching extends AbstractSelectableViews
 {
 	@Option(names = { "-c", "--numCoefficients" }, description = "... (default: 3.0)")
 	protected Integer numCoefficients = 8;
 
-	protected SpimData2 dataGlobal;
-	protected ArrayList< ViewId > viewIdsGlobal;
+	private SpimData2 dataGlobal;
+
+	private List< ViewId > viewIdsGlobal;
 
 	@Override
 	public Void call() throws Exception
@@ -32,10 +50,19 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		if ( dataGlobal == null )
 			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
-		this.viewIdsGlobal = this.loadViewIds( dataGlobal );
+		this.viewIdsGlobal = serializable( loadViewIds( dataGlobal ) );
 
-		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
+		if ( viewIdsGlobal == null || viewIdsGlobal.isEmpty() )
 			throw new IllegalArgumentException( "No ViewIds found." );
+
+
+		// Global variables that need to be serialized for Spark as each job needs access to them
+		final URI xmlURI = this.xmlURI;
+		final double renderScale = 0.25; // TODO command line argument
+		final int[] coefficientsSize = { 8, 8, 8 }; // TODO command line argument
+
+
+
 
 		final SparkConf conf = new SparkConf().setAppName("SparkIntensityMatching");
 
@@ -45,10 +72,53 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final URI xmlURI = this.xmlURI;
 
+		System.out.println("\n\n\n\n\n\n");
 		System.out.println( "xmlURI = " + xmlURI );
+		System.out.println( "dataGlobal = " + dataGlobal );
+		System.out.println( "viewIdsGlobal = " + viewIdsGlobal );
 
+		final JavaRDD< ViewId > viewIdRDD = sc.parallelize( viewIdsGlobal, Math.min( Spark.maxPartitions, viewIdsGlobal.size() ) );
+		final JavaPairRDD< ViewId, RealInterval > viewBoundsRDD = viewIdRDD.mapToPair( viewId -> {
+			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+			final RealInterval bounds = IntensityCorrection.getBounds( dataLocal, viewId );
+			return new Tuple2<>( viewId, IntensityCorrection.SerializableRealInterval.serializable( bounds ) );
+		} );
+		final Map< ViewId, RealInterval > viewBounds = viewBoundsRDD.collectAsMap();
+
+		System.out.println("\n\n\n\n\n\n");
+		System.out.println( "viewBounds = " + viewBounds );
+
+		final List< Tuple2< ViewId, ViewId > > viewIdPairsToMatch = new ArrayList<>();
+		final int numViewIds = viewIdsGlobal.size();
+		for ( int i = 0; i < numViewIds; i++ )
+		{
+			final ViewId view0 = viewIdsGlobal.get( i );
+			final RealInterval bounds0 = viewBounds.get( view0 );
+			for ( int j = i + 1; j < numViewIds; j++ )
+			{
+				final ViewId view1 = viewIdsGlobal.get( j );
+				final RealInterval bounds1 = viewBounds.get( view1 );
+				if ( !isEmpty( intersect( bounds0, bounds1 ) ) )
+				{
+					viewIdPairsToMatch.add( new Tuple2<>( view0, view1 ) );
+				}
+			}
+		}
+
+		System.out.println("\n\n\n\n\n\n");
+		System.out.println( "viewIdPairsToMatch = " + viewIdPairsToMatch );
+
+		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
+		final JavaPairRDD< Tuple2< ViewId, ViewId >, List< CoefficientMatch > > matchesRDD = viewPairRDD.mapToPair( views -> {
+			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+			final List< CoefficientMatch > matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
+			return new Tuple2<>( views, matches );
+		} );
+		final Map< Tuple2< ViewId, ViewId >, List< CoefficientMatch > > pairwiseMatches = matchesRDD.collectAsMap();
+
+		System.out.println("\n\n\n\n\n\n");
+		System.out.println( "pairwiseMatches = " + pairwiseMatches );
 
 		//final List<double[]> results = rddResults.collect();
 
@@ -57,6 +127,14 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		sc.close();
 
 		return null;
+	}
+
+	static List< ViewId > serializable( final List< ? extends ViewId > list )
+	{
+		return list
+				.stream()
+				.map( v -> new ViewId( v.getTimePointId(), v.getViewSetupId() ) )
+				.collect( Collectors.toList() );
 	}
 
 	public static void main(final String... args) throws SpimDataException
