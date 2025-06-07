@@ -2,7 +2,6 @@ package net.preibisch.bigstitcher.spark;
 
 import static net.imglib2.util.Intervals.intersect;
 import static net.imglib2.util.Intervals.isEmpty;
-import static net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection.SerializableRealInterval.serializable;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -19,14 +18,12 @@ import org.apache.spark.api.java.JavaSparkContext;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RealInterval;
-import net.imglib2.util.Intervals;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
-import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
-import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher;
-import net.preibisch.mvrecon.process.fusion.intensity.IntensityMatcher.CoefficientMatch;
+import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatches;
+import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatchesIO;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
@@ -60,6 +57,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final URI xmlURI = this.xmlURI;
 		final double renderScale = 0.25; // TODO command line argument
 		final int[] coefficientsSize = { 8, 8, 8 }; // TODO command line argument
+		final String outputDirectory = "/Users/pietzsch/Desktop/matches_spark/";  // TODO command line argument, URI, or path within dataset?
 
 
 
@@ -110,20 +108,23 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		System.out.println( "viewIdPairsToMatch = " + viewIdPairsToMatch );
 
 		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
-		final JavaPairRDD< Tuple2< ViewId, ViewId >, List< CoefficientMatch > > matchesRDD = viewPairRDD.mapToPair( views -> {
+		final JavaRDD< ViewPairCoefficientMatches > matchesRDD = viewPairRDD.map( views -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-			final List< CoefficientMatch > matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
-			return new Tuple2<>( views, matches );
+			return IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
 		} );
-		final Map< Tuple2< ViewId, ViewId >, List< CoefficientMatch > > pairwiseMatches = matchesRDD.collectAsMap();
 
+		final List< ViewPairCoefficientMatches > pairwiseMatches = matchesRDD.collect();
 		System.out.println("\n\n\n\n\n\n");
 		System.out.println( "pairwiseMatches = " + pairwiseMatches );
 
-		//final List<double[]> results = rddResults.collect();
-
 		// save text files (multi-threaded)
+		matchesRDD.foreach( matches -> {
+			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputDirectory);
+			matchWriter.write( matches );
+		} );
 
+		System.out.println("\n\n\n\n\n\n");
+		System.out.println( "done" );
 		sc.close();
 
 		return null;
