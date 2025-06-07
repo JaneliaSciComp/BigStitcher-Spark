@@ -57,10 +57,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final URI xmlURI = this.xmlURI;
 		final double renderScale = 0.25; // TODO command line argument
 		final int[] coefficientsSize = { 8, 8, 8 }; // TODO command line argument
-		final String outputDirectory = "/Users/pietzsch/Desktop/matches_spark/";  // TODO command line argument, URI, or path within dataset?
-
-
-
+		final URI outputURI = URI.create( "file:/Users/pietzsch/Desktop/matches_spark/" );  // TODO command line argument, URI, or path within dataset?
 
 		final SparkConf conf = new SparkConf().setAppName("SparkIntensityMatching");
 
@@ -70,12 +67,6 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-
-		System.out.println("\n\n\n\n\n\n");
-		System.out.println( "xmlURI = " + xmlURI );
-		System.out.println( "dataGlobal = " + dataGlobal );
-		System.out.println( "viewIdsGlobal = " + viewIdsGlobal );
-
 		final JavaRDD< ViewId > viewIdRDD = sc.parallelize( viewIdsGlobal, Math.min( Spark.maxPartitions, viewIdsGlobal.size() ) );
 		final JavaPairRDD< ViewId, RealInterval > viewBoundsRDD = viewIdRDD.mapToPair( viewId -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
@@ -83,9 +74,6 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			return new Tuple2<>( viewId, IntensityCorrection.SerializableRealInterval.serializable( bounds ) );
 		} );
 		final Map< ViewId, RealInterval > viewBounds = viewBoundsRDD.collectAsMap();
-
-		System.out.println("\n\n\n\n\n\n");
-		System.out.println( "viewBounds = " + viewBounds );
 
 		final List< Tuple2< ViewId, ViewId > > viewIdPairsToMatch = new ArrayList<>();
 		final int numViewIds = viewIdsGlobal.size();
@@ -104,27 +92,23 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			}
 		}
 
-		System.out.println("\n\n\n\n\n\n");
-		System.out.println( "viewIdPairsToMatch = " + viewIdPairsToMatch );
-
 		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
 		final JavaRDD< ViewPairCoefficientMatches > matchesRDD = viewPairRDD.map( views -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-			return IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
+			final ViewPairCoefficientMatches matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
+			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
+			matchWriter.write( matches );
+			return matches;
 		} );
 
 		final List< ViewPairCoefficientMatches > pairwiseMatches = matchesRDD.collect();
-		System.out.println("\n\n\n\n\n\n");
-		System.out.println( "pairwiseMatches = " + pairwiseMatches );
 
 		// save text files (multi-threaded)
-		matchesRDD.foreach( matches -> {
-			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputDirectory);
-			matchWriter.write( matches );
-		} );
+//		matchesRDD.foreach( matches -> {
+//			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
+//			matchWriter.write( matches );
+//		} );
 
-		System.out.println("\n\n\n\n\n\n");
-		System.out.println( "done" );
 		sc.close();
 
 		return null;
