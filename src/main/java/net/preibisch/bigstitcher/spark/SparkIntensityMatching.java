@@ -19,6 +19,7 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RealInterval;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
@@ -27,11 +28,18 @@ import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatches
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
+import util.URITools;
 
 public class SparkIntensityMatching extends AbstractSelectableViews
 {
-	@Option(names = { "-c", "--numCoefficients" }, description = "... (default: 3.0)")
-	protected Integer numCoefficients = 8;
+	@Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
+	private String numCoefficientsString = "8,8,8";
+
+	@Option(names = { "--renderScale" }, description = "at which scale to sample images (default: 0.25, which meaning using 4x downsampled images)")
+	private double renderScale = 0.25;
+
+	@Option(names = { "-o", "--outputPath" }, required = true, description = "path (URI) for saving pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
+	private String outputPathURIString = null;
 
 	private SpimData2 dataGlobal;
 
@@ -55,9 +63,11 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 		// Global variables that need to be serialized for Spark as each job needs access to them
 		final URI xmlURI = this.xmlURI;
-		final double renderScale = 0.25; // TODO command line argument
-		final int[] coefficientsSize = { 8, 8, 8 }; // TODO command line argument
-		final URI outputURI = URI.create( "file:/Users/pietzsch/Desktop/matches_spark/" );  // TODO command line argument, URI, or path within dataset?
+		final double renderScale = this.renderScale; // TODO command line argument
+		final int[] coefficientsSize = Import.csvStringToIntArray( numCoefficientsString );
+		final URI outputURI = URITools.toURI( outputPathURIString );
+
+		new ViewPairCoefficientMatchesIO( outputURI ).writeCoefficientsSize( coefficientsSize );
 
 		final SparkConf conf = new SparkConf().setAppName("SparkIntensityMatching");
 
@@ -100,14 +110,6 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			matchWriter.write( matches );
 			return matches;
 		} );
-
-		final List< ViewPairCoefficientMatches > pairwiseMatches = matchesRDD.collect();
-
-		// save text files (multi-threaded)
-//		matchesRDD.foreach( matches -> {
-//			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
-//			matchWriter.write( matches );
-//		} );
 
 		sc.close();
 
