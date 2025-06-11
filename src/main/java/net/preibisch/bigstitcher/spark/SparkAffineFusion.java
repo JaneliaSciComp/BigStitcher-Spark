@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -174,13 +174,14 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			return null;
 		}
 
+		// TODO: Why should we need to provide timepointIndex if timepointIds is set!?
 		if ( timepointIndex == null && ( vi != null || timepointIds != null || channelIds != null || illuminationIds != null || tileIds != null || angleIds != null ) )
-			
+
 		{
 			System.out.println( "You can only specify specify angles, tiles, ..., ViewIds if you provided a specific timepointIndex & channelIndex.");
 			return null;
 		}
-	
+
 		this.outPathURI = URITools.toURI( outputPathURIString );
 		System.out.println( "Fused volume: " + outPathURI );
 
@@ -246,7 +247,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
- 
+
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
 		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
@@ -297,8 +298,15 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final ArrayList< ViewId > viewIdsGlobal;
 
-		if (
-			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels || 
+		if ( vi != null || angleIds != null || channelIds != null || illuminationIds != null || tileIds != null || timepointIds != null )
+		{
+			// TODO: With current logic, I could never get to AbstractSelectableViews.loadViewIds, no matter which CLI arguments are specified.
+			//       The following is a workaround for my example.
+			//       But the whole logic is flawed and needs to be revised.
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds );
+		}
+		else if (
+			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels ||
 			dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
 		{
 			System.out.println(
@@ -306,7 +314,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
 					+ "a specific 3D volume in the fusion dataset:");
 
-			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds );
 
 			if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 				return null;
