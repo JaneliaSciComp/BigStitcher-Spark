@@ -99,7 +99,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending)")
