@@ -103,12 +103,11 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		}
 
 		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
-		final JavaRDD< ViewPairCoefficientMatches > matchesRDD = viewPairRDD.map( views -> {
+		viewPairRDD.foreach( views -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 			final ViewPairCoefficientMatches matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
 			matchWriter.write( matches );
-			return matches;
 		} );
 
 		sc.close();
