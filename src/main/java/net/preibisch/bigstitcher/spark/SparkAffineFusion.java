@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -75,6 +76,8 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
@@ -93,7 +96,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending)")
@@ -121,7 +124,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "-c", "--channelIndex" }, description = "specify a specific channel index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
 	private Integer channelIndex = null;
 
-
 	// To specify what goes into the current 3D volume
 	@Option(names = { "--angleId" }, description = "list the angle ids that should be processed, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
 	protected String angleIds = null;
@@ -144,11 +146,27 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
+	// TODO: add support for loading coefficients during fusion
+	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
+	private String intensityN5PathURIString = null;
+
+	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending)")
+	private StorageFormat intensityN5StorageType = null;
+
+	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
+	private String intensityN5Group = "";
+
+	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
+	private String intensityN5Dataset = "intensity";
+
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
 	//static final int N_PREFETCH_THREADS = 72;
+
+	URI intensityN5PathURI = null;
 
 	@Override
 	public Void call() throws Exception
@@ -173,13 +191,14 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			return null;
 		}
 
+		// TODO: Why should we need to provide timepointIndex if timepointIds is set!?
 		if ( timepointIndex == null && ( vi != null || timepointIds != null || channelIds != null || illuminationIds != null || tileIds != null || angleIds != null ) )
-			
+
 		{
 			System.out.println( "You can only specify specify angles, tiles, ..., ViewIds if you provided a specific timepointIndex & channelIndex.");
 			return null;
 		}
-	
+
 		this.outPathURI = URITools.toURI( outputPathURIString );
 		System.out.println( "Fused volume: " + outPathURI );
 
@@ -245,7 +264,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
- 
+
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
 		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
@@ -296,8 +315,15 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final ArrayList< ViewId > viewIdsGlobal;
 
-		if (
-			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels || 
+		if ( vi != null || angleIds != null || channelIds != null || illuminationIds != null || tileIds != null || timepointIds != null )
+		{
+			// TODO: With current logic, I could never get to AbstractSelectableViews.loadViewIds, no matter which CLI arguments are specified.
+			//       The following is a workaround for my example.
+			//       But the whole logic is flawed and needs to be revised.
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds );
+		}
+		else if (
+			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels ||
 			dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
 		{
 			System.out.println(
@@ -305,7 +331,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 					+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
 					+ "a specific 3D volume in the fusion dataset:");
 
-			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds );
 
 			if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 				return null;
@@ -327,9 +353,43 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.out.println( "Fusing to FLOAT32" );
 
 		//
+		// intensity correction coefficients dataset
+		//
+		if ( intensityN5PathURIString != null )
+		{
+			intensityN5PathURI = URITools.toURI( intensityN5PathURIString );
+			System.out.println( "Intensity coefficients: " + outPathURI );
+
+			if ( intensityN5StorageType == null )
+			{
+				if ( intensityN5PathURIString.toLowerCase().endsWith( ".zarr" ) )
+					intensityN5StorageType = StorageFormat.ZARR;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".n5" ) )
+					intensityN5StorageType = StorageFormat.N5;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".h5" ) || intensityN5PathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
+					intensityN5StorageType = StorageFormat.HDF5;
+				else
+				{
+					System.out.println( "Unable to guess format from URI '" + intensityN5PathURI + "', please specify using '-s'");
+					return null;
+				}
+
+				System.out.println( "Guessed format " + intensityN5StorageType + " will be used to open URI '" + intensityN5PathURI + "', you can override it using '-s'");
+			}
+			else
+			{
+				System.out.println( "Format " + intensityN5StorageType + " will be used to open " + intensityN5PathURI );
+			}
+		}
+
+		//
 		// final variables for Spark
 		//
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
+		final StorageFormat intensityN5StorageType = this.intensityN5StorageType;
+		final URI intensityN5PathURI = this.intensityN5PathURI;
+		final String intensityN5Group = this.intensityN5Group;
+		final String intensityN5Dataset = this.intensityN5Dataset;
 
 		// TODO: do we still need this?
 		try
@@ -467,6 +527,21 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							if ( overlappingViews.size() == 0 )
 								return;
 
+							// load intensity correction coefficients for all overlapping views
+							final Map< ViewId, Coefficients > coefficients;
+							if ( intensityN5PathURI != null )
+							{
+								coefficients = new HashMap<>();
+								try ( N5Reader intensityN5Reader = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI ) )
+								{
+									overlappingViews.forEach( v -> {
+										coefficients.put( v, IntensityCorrection.readCoefficients( intensityN5Reader, intensityN5Group, intensityN5Dataset, v ) );
+									} );
+								}
+							} else {
+								coefficients = null;
+							}
+
 							final RandomAccessibleInterval img;
 
 							if ( masks )
@@ -514,7 +589,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									fusionType = FusionType.AVG_BLEND;
 
 								// returns a zero-min interval
-								img = BlkAffineFusion.init(
+								img = BlkAffineFusion.initWithIntensityCoefficients(
 										conv,
 										dataLocal.getSequenceDescription().getImgLoader(),
 										viewIds,
@@ -522,7 +597,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 										dataLocal.getSequenceDescription().getViewDescriptions(),
 										fusionType,//fusion.getFusionType(),
 										1, // linear interpolation
-										null, // intensity correction
+										coefficients, // intensity correction
 										new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
 										(RealType & NativeType)type,
 										blockSize );
