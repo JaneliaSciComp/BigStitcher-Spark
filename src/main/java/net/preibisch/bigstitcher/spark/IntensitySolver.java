@@ -34,7 +34,7 @@ public class IntensitySolver extends AbstractSelectableViews {
 	@CommandLine.Option(names = { "--maxIterations" }, description = "max number of iterations for solve (default: 1000)")
 	private Integer maxIterations = 1000;
 
-	@CommandLine.Option(names = { "-o", "--intensityN5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving coefficients (e.g. s3://myBucket/data.n5")
+	@CommandLine.Option(names = { "-o", "--intensityN5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving coefficients (e.g. s3://myBucket/coefficients.n5)")
 	private String outputPathURIString = null;
 
 	@CommandLine.Option(names = {"-s", "--intensityN5Storage"}, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending)")
