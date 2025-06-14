@@ -365,7 +365,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			// extract the resolution of the s0 export
 			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
+			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
 			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
@@ -411,7 +412,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			// extract the resolution of the s0 export
 			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
+			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
 			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
