@@ -179,12 +179,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		{
 			this.xmlOutURI = URITools.toURI( xmlOutURIString );
 			System.out.println( "XML: " + xmlOutURI );
-
-			if ( storageType == StorageFormat.ZARR )
-			{
-				System.out.println( "BDV project for OME-ZARR not yet supported (but very soon!)" );
-				return null;
-			}
 		}
 
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
