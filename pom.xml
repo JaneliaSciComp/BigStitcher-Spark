@@ -102,7 +102,7 @@
 		<imglib2-algorithm.version>0.18.0</imglib2-algorithm.version>
 		<bigdataviewer-core.version>10.6.4</bigdataviewer-core.version>
 		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>5.4.1</multiview-reconstruction.version>
+		<multiview-reconstruction.version>6.0.3</multiview-reconstruction.version>
 		<BigStitcher.version>2.5.0</BigStitcher.version>
 
 		<n5-universe.version>2.1.0</n5-universe.version>
