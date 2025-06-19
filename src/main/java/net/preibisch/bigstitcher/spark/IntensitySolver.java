@@ -111,6 +111,8 @@ public class IntensitySolver extends AbstractSelectableViews {
 
 		IntensityCorrection.writeCoefficients( n5Writer, outputGroup, outputDataset, coefficients );
 
+		System.out.println( "Done.");
+
 		return null;
 	}
 

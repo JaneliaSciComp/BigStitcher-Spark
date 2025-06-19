@@ -112,6 +112,8 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 		sc.close();
 
+		System.out.println( "Done.");
+
 		return null;
 	}
 

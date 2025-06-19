@@ -489,6 +489,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 		driverVolumeWriter.close();
 
+		System.out.println( "Done." );
 		return null;
 	}
 
