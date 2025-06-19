@@ -361,7 +361,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		if ( intensityN5PathURIString != null )
 		{
 			intensityN5PathURI = URITools.toURI( intensityN5PathURIString );
-			System.out.println( "Intensity coefficients: " + outPathURI );
+			System.out.println( "Intensity coefficients: " + intensityN5PathURI );
 
 			if ( intensityN5StorageType == null )
 			{
