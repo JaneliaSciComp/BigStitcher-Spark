@@ -41,6 +41,30 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "path (URI) for saving pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
 	private String outputPathURIString = null;
 
+	@Option(names = { "--minThreshold" }, description = "min threshold for intensities to consider for matching, anything below this value will be discarded (default: 5)")
+	private double minIntensityThreshold = 5.0;
+
+	@Option(names = { "--maxThreshold" }, description = "max threshold for intensities to consider for matching, anything above this value will be discarded (default: 250)")
+	private double maxIntensityThreshold = 250.0;
+
+	@Option(names = { "--minNumCandidates" }, description = "minimum number of (non-discarded) overlapping pixels required to match overlapping coefficient regions (default: 1000)")
+	private int minNumCandidates = 1000;
+
+	@CommandLine.Option(names = { "--numIterations" }, description = "number of RANSAC iterations (default: 1000)")
+	private int iterations = 1000;
+
+	@CommandLine.Option(names = { "--maxEpsilon" }, description = "maximal allowed transfer error (default: 5.1)")
+	private double maxEpsilon = 0.02 * 255;
+
+	@CommandLine.Option(names = { "--minInlierRatio" }, description = "minimal ratio of of inliers to number of candidates (default: 0.1)")
+	private double minInlierRatio = 0.1;
+
+	@CommandLine.Option(names = { "--minNumInliers" }, description = "minimally required absolute number of inliers (default: 10)")
+	private int minNumInliers = 10;
+
+	@CommandLine.Option(names = { "--maxTrust" }, description = "reject candidates with a cost larger than maxTrust * median cost (default: 3)")
+	private double maxTrust = 3.0;
+
 	private SpimData2 dataGlobal;
 
 	private List< ViewId > viewIdsGlobal;
@@ -63,9 +87,17 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 		// Global variables that need to be serialized for Spark as each job needs access to them
 		final URI xmlURI = this.xmlURI;
-		final double renderScale = this.renderScale; // TODO command line argument
+		final double renderScale = this.renderScale;
 		final int[] coefficientsSize = Import.csvStringToIntArray( numCoefficientsString );
 		final URI outputURI = URITools.toURI( outputPathURIString );
+		final double minIntensityThreshold = this.minIntensityThreshold;
+		final double maxIntensityThreshold = this.maxIntensityThreshold;
+		final int minNumCandidates = this.minNumCandidates;
+		final int iterations = this.iterations;
+		final double maxEpsilon = this.maxEpsilon;
+		final double minInlierRatio = this.minInlierRatio;
+		final int minNumInliers = this.minNumInliers;
+		final double maxTrust = this.maxTrust;
 
 		new ViewPairCoefficientMatchesIO( outputURI ).writeCoefficientsSize( coefficientsSize );
 
@@ -105,7 +137,8 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
 		viewPairRDD.foreach( views -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-			final ViewPairCoefficientMatches matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize );
+			final ViewPairCoefficientMatches matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
+					minIntensityThreshold, maxIntensityThreshold, minNumCandidates, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
 			matchWriter.write( matches );
 		} );
