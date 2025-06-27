@@ -41,11 +41,11 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "path (URI) for saving pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
 	private String outputPathURIString = null;
 
-	@Option(names = { "--minThreshold" }, description = "min threshold for intensities to consider for matching, anything below this value will be discarded (default: 5)")
-	private double minIntensityThreshold = 5.0;
+	@Option(names = { "--minThreshold" }, description = "min threshold for intensities to consider for matching, anything below this value will be discarded (default: 1)")
+	private double minIntensityThreshold = 1;
 
-	@Option(names = { "--maxThreshold" }, description = "max threshold for intensities to consider for matching, anything above this value will be discarded (default: 250)")
-	private double maxIntensityThreshold = 250.0;
+	@Option(names = { "--maxThreshold" }, description = "max threshold for intensities to consider for matching, anything above this value will be discarded (default: none)")
+	private double maxIntensityThreshold = Double.NaN;
 
 	@Option(names = { "--minNumCandidates" }, description = "minimum number of (non-discarded) overlapping pixels required to match overlapping coefficient regions (default: 1000)")
 	private int minNumCandidates = 1000;
