@@ -370,7 +370,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			}
 
 			final SpimData2 dataFusion =
-					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, setups, tps );
+					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, null, setups, tps );
 
 			new XmlIoSpimData2().save( dataFusion, xmlOutURI );
 
