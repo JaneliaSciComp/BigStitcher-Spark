@@ -6,6 +6,8 @@ import static net.imglib2.util.Intervals.isEmpty;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -109,6 +111,10 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
+		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing bounds ... " );
+
+		// doing this with Spark is too slow, since it requires to load the XML many times, which takes long for 415 ViewSetups
+		/*
 		final JavaRDD< ViewId > viewIdRDD = sc.parallelize( viewIdsGlobal, Math.min( Spark.maxPartitions, viewIdsGlobal.size() ) );
 		final JavaPairRDD< ViewId, RealInterval > viewBoundsRDD = viewIdRDD.mapToPair( viewId -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
@@ -116,6 +122,16 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			return new Tuple2<>( viewId, IntensityCorrection.SerializableRealInterval.serializable( bounds ) );
 		} );
 		final Map< ViewId, RealInterval > viewBounds = viewBoundsRDD.collectAsMap();
+		*/
+
+		final Map< ViewId, RealInterval > viewBounds = new HashMap<ViewId, RealInterval>();
+
+		viewIdsGlobal.forEach( viewId -> {
+			final RealInterval bounds = IntensityCorrection.getBounds( dataGlobal, viewId );
+			viewBounds.put(viewId, IntensityCorrection.SerializableRealInterval.serializable( bounds ) );
+		} );
+
+		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing view ids to match ... " );
 
 		final List< Tuple2< ViewId, ViewId > > viewIdPairsToMatch = new ArrayList<>();
 		final int numViewIds = viewIdsGlobal.size();
@@ -134,9 +150,12 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			}
 		}
 
+		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): running ... " );
+
 		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
 		viewPairRDD.foreach( views -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + views._1().getViewSetupId() + "<>" + views._2().getViewSetupId() );
 			final ViewPairCoefficientMatches matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
 					minIntensityThreshold, maxIntensityThreshold, minNumCandidates, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
@@ -145,7 +164,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 		sc.close();
 
-		System.out.println( "Done.");
+		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Done.");
 
 		return null;
 	}
