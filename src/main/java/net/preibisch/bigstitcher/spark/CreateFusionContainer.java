@@ -113,11 +113,14 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
-	@Option(names = { "--groupPath" }, description = "Container group path")
-	private String groupPath = "/";
+	@Option(names = { "--group" }, description = "Container group path")
+	private String groupPath = "";
 
 	URI outPathURI = null, xmlOutURI = null;
 
+	/**
+	 * @return container group path always terminated with a '/'
+	 */
 	private String getContainerGroupPath()
 	{
 		if (!groupPath.endsWith("/")) {

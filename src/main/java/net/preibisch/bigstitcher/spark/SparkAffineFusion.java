@@ -144,11 +144,26 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
+	@Option(names = { "--group" }, description = "Container group path")
+	private String groupPath = "";
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
 	//static final int N_PREFETCH_THREADS = 72;
+
+	/**
+	 * @return container group path always terminated with a '/'
+	 */
+	private String getContainerGroupPath()
+	{
+		if (!groupPath.endsWith("/")) {
+			return groupPath + "/";
+		} else {
+			return groupPath;
+		}
+	}
 
 	@Override
 	public Void call() throws Exception
@@ -218,7 +233,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
 
-		final String fusionFormat = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/FusionFormat", String.class );
+		final String fusionFormat = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", String.class );
 
 		if ( fusionFormat == null )
 		{
@@ -228,14 +243,14 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		}
 		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
 
-		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
+		final URI xmlURI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/InputXML", URI.class );
 
 		final int numTimepoints, numChannels;
 
 		if ( timepointIndex == null )
 		{
-			numTimepoints = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumTimepoints", int.class );
-			numChannels = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumChannels", int.class );
+			numTimepoints = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumTimepoints", int.class );
+			numChannels = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumChannels", int.class );
 		}
 		else
 		{
@@ -243,16 +258,16 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			numTimepoints = numChannels = 1;
 		}
 
-		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
-		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
+		final long[] bbMin = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_min", long[].class );
+		final long[] bbMax = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_max", long[].class );
  
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
-		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
-		final double anisotropyFactor = preserveAnisotropy ? driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", double.class ) : Double.NaN;
-		final int[] blockSize = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/BlockSize", int[].class );
+		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
+		final double anisotropyFactor = preserveAnisotropy ? driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/AnisotropyFactor", double.class ) : Double.NaN;
+		final int[] blockSize = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/BlockSize", int[].class );
 
-		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
+		final DataType dataType = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/DataType", DataType.class );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "Input XML: " + xmlURI );
@@ -268,8 +283,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		double minI = Double.NaN, maxI = Double.NaN;
 		try
 		{
-			minI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
-			maxI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
+			minI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MinIntensity", double.class );
+			maxI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MaxIntensity", double.class );
 		}
 		catch ( Exception e )
 		{
@@ -283,7 +298,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		System.out.println( "maxIntensity: " + maxI );
 
 		final MultiResolutionLevelInfo[][] mrInfos =
-				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
+				driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
 
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
 
