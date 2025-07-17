@@ -86,7 +86,7 @@ import util.URITools;
 
 public class SparkAffineFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
-	public static enum DataTypeFusion
+	public enum DataTypeFusion
 	{
 		UINT8, UINT16, FLOAT32
 	}
