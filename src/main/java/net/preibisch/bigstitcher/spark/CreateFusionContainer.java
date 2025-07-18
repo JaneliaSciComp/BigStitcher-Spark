@@ -458,7 +458,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 					5, // int n
-					getContainerGroupPath(), // String name, I also saw "/"
+					"/", // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
