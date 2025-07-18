@@ -456,13 +456,16 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
 			// create metadata
+			// the path in the OmeNgff metadata is set relative to the group
+			final Function<Integer, String> levelRelativeToGroup = (level) -> "/" + level;
+
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 					5, // int n
-					"/", // String name, I also saw "/"
+					getContainerGroupPath(), // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
-					levelToName,
+					levelRelativeToGroup,
 					levelToMipmapTransform );
 
 			// save metadata
