@@ -6,7 +6,9 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 
@@ -43,6 +45,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
@@ -191,12 +194,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		{
 			this.xmlOutURI = URITools.toURI( xmlOutURIString );
 			System.out.println( "XML: " + xmlOutURI );
-
-			if ( storageType == StorageFormat.ZARR )
-			{
-				System.out.println( "BDV project for OME-ZARR not yet supported (but very soon!)" );
-				return null;
-			}
 		}
 
 		BoundingBox boundingBox = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
@@ -341,7 +338,74 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 
 		// setup datasets and metadata
-		MultiResolutionLevelInfo[][] mrInfos;
+		MultiResolutionLevelInfo[][] mrInfos = null;
+
+		// OME-Zarr export
+		// this code needs refactoring some sort of refactoring. When exporting OME-ZARR, we first create the OME-ZARR container,
+		// and if it is BDV-XML, we only create the XML in the next if statement. If it is N5/HDF5, there
+		// is code that creates the N5/HDF5 container and the XML in one if statement. The reason is that
+		// HDF5/N5 containers with XML may be different that OME-ZARR's; they are always the same no matter
+		// if it is a BDV project or not
+		if ( storageType == StorageFormat.ZARR )
+		{
+			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
+
+			if ( !bdv )
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
+
+			final long[] dim3d = boundingBox.dimensionsAsLongArray();
+
+			final long[] dim = new long[] { dim3d[ 0 ], dim3d[ 1 ], dim3d[ 2 ], numChannels, numTimepoints };
+			final int[] blockSize5d = new int[] { blockSize[ 0 ], blockSize[ 1 ], blockSize[ 2 ], 1, 1 };
+			final int[][] ds = new int[ downsamplings.length ][];
+			for ( int d = 0; d < ds.length; ++d )
+				ds[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
+
+			final Function<Integer, String> levelToName = (level) -> getContainerGroupPath() + level;
+
+			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
+
+			// all is 5d now
+			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
+					driverVolumeWriter,
+					levelToName,
+					dt,
+					dim, //5d
+					compression,
+					blockSize5d, //5d
+					ds ); // 5d
+
+			final MultiResolutionLevelInfo[] mrInfo = mrInfos[ 0 ];
+
+			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
+					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
+
+			// extract the resolution of the s0 export
+			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
+			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
+			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+
+			final Function<Integer, String> levelRelativeToGroup = (level) -> "/" + level;
+			// create metadata
+			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+					5, // int n
+					getContainerGroupPath(), // String name, I also saw "/"
+					resolutionS0, // double[] resolutionS0,
+					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+					mrInfos[ 0 ].length, // int numResolutionLevels,
+					levelRelativeToGroup,
+					levelToMipmapTransform );
+
+			// save metadata
+
+			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
+			// for this to work you need to register an adapter in the N5Factory class
+			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
+		}
 
 		if ( bdv )
 		{
@@ -349,6 +413,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			if ( storageType == StorageFormat.N5 )
 				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+			else if ( storageType == StorageFormat.ZARR )
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
 			else
 				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
 
@@ -386,96 +452,61 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 								new Illumination( 0 ) ) );
 			}
 
+			final Map< ViewId, OMEZARREntry > viewIdToPath;
+
+			if ( storageType == StorageFormat.ZARR )
+			{
+				viewIdToPath = new HashMap<>();
+
+				for ( int c = 0; c < numChannels; ++c )
+					for ( int t = 0; t < numTimepoints; ++t )
+					{
+						final OMEZARREntry omeZarrEntry = new OMEZARREntry(
+								mrInfos[ 0 ][ 0 ].dataset.substring(0, mrInfos[ 0 ][ 0 ].dataset.lastIndexOf( "/" ) ),
+								new int[] { c, t } );
+
+						viewIdToPath.put( new ViewId( t, c ), omeZarrEntry );
+					}
+			}
+			else
+			{
+				viewIdToPath = null;
+			}
+
 			final SpimData2 dataFusion =
-					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, setups, tps );
+					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, viewIdToPath, setups, tps );
 
 			new XmlIoSpimData2().save( dataFusion, xmlOutURI );
 
-			final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
-
-			mrInfos = new MultiResolutionLevelInfo[ vds.size() ][];
-
-			vds.stream().parallel().forEach( vd ->
+			if ( storageType != StorageFormat.ZARR )
 			{
-				final int c = vd.getViewSetup().getChannel().getId();
-				final int t = vd.getTimePointId();
+				final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
 
-				if ( storageType == StorageFormat.N5 )
+				mrInfos = new MultiResolutionLevelInfo[ vds.size() ][];
+				final MultiResolutionLevelInfo myMrInfo[][] = mrInfos;
+
+				vds.stream().parallel().forEach( vd ->
 				{
-					mrInfos[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
-							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+					final int c = vd.getViewSetup().getChannel().getId();
+					final int t = vd.getTimePointId();
 
-					driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
-				}
-				else // HDF5
-				{
-					mrInfos[ c + t*numChannels  ] = N5ApiTools.setupBdvDatasetsHDF5(
-							driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
-				}
-			});
+					if ( storageType == StorageFormat.N5 )
+					{
+						myMrInfo[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
+								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
 
+						driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+					}
+					else // HDF5
+					{
+						myMrInfo[ c + t*numChannels  ] = N5ApiTools.setupBdvDatasetsHDF5(
+								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+					}
+				});
+			}
 			// TODO: set extra attributes to load the state
 		}
-		else if ( storageType == StorageFormat.ZARR ) // OME-Zarr export
-		{
-			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
-
-			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
-
-			final long[] dim3d = boundingBox.dimensionsAsLongArray();
-
-			final long[] dim = new long[] { dim3d[ 0 ], dim3d[ 1 ], dim3d[ 2 ], numChannels, numTimepoints };
-			final int[] blockSize5d = new int[] { blockSize[ 0 ], blockSize[ 1 ], blockSize[ 2 ], 1, 1 };
-			final int[][] ds = new int[ downsamplings.length ][];
-			for ( int d = 0; d < ds.length; ++d )
-				ds[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
-
-			final Function<Integer, String> levelToName = (level) -> getContainerGroupPath() + level;
-
-			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
-
-			// all is 5d now
-			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
-					driverVolumeWriter,
-					levelToName,
-					dt,
-					dim, //5d
-					compression,
-					blockSize5d, //5d
-					ds ); // 5d
-
-			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
-					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfos[ 0 ][level].absoluteDownsamplingDouble() );
-
-			// extract the resolution of the s0 export
-			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
-
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
-
-			// create metadata
-			// the path in the OmeNgff metadata is set relative to the group
-			final Function<Integer, String> levelRelativeToGroup = (level) -> "/" + level;
-
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
-					5, // int n
-					getContainerGroupPath(), // String name, I also saw "/"
-					resolutionS0, // double[] resolutionS0,
-					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
-					mrInfos[ 0 ].length, // int numResolutionLevels,
-					levelRelativeToGroup,
-					levelToMipmapTransform );
-
-			// save metadata
-
-			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-			// for this to work you need to register an adapter in the N5Factory class
-			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
-		}
-		else // simple (no bdv project) HDF5/N5 export
+		else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.HDF5 ) // simple (no bdv project) HDF5/N5 export
 		{
 			mrInfos = new MultiResolutionLevelInfo[ numChannels * numTimepoints ][];
 
@@ -502,7 +533,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 							downsamplings );
 				}
 		}
-
 
 		// TODO: set extra attributes to load the state
 		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MultiResolutionInfos", mrInfos );
