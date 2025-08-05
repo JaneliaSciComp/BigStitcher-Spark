@@ -28,9 +28,11 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -71,10 +73,12 @@ import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.export.RetryTracker;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -82,6 +86,7 @@ import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import scala.Tuple3;
 import util.Grid;
 import util.URITools;
 
@@ -403,191 +408,225 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 				//driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
 
-				final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
+				final RetryTrackerSpark<long[][]> retryTracker =
+						RetryTrackerSpark.forGridBlocks("s0 block processing", grid.size());
 
 				long time = System.currentTimeMillis();
 
-				rdd.foreach(
-						gridBlock ->
-						{
-							final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
-
-							final HashMap< ViewId, AffineTransform3D > registrations =
-									TransformVirtual.adjustAllTransforms(
-											viewIds,
-											dataLocal.getViewRegistrations().getViewRegistrations(),
-											anisotropyFactor,
-											Double.NaN );
-
-							final Converter conv;
-							final Type type;
-							final boolean uint8, uint16;
-
-							if ( dataType == DataType.UINT8 )
+				do
+				{
+					if (!retryTracker.beginAttempt())
+					{
+						System.out.println( "Stopping." );
+						System.exit( 1 );
+					}
+	
+					final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
+	
+					final JavaRDD<long[][]> rddResult = rdd.map(
+							gridBlock ->
 							{
-								conv = new RealUnsignedByteConverter<>( minIntensity, maxIntensity );
-								type = new UnsignedByteType();
-								uint8 = true;
-								uint16 = false;
-							}
-							else if ( dataType == DataType.UINT16 )
-							{
-								conv = new RealUnsignedShortConverter<>( minIntensity, maxIntensity );
-								type = new UnsignedShortType();
-								uint8 = false;
-								uint16 = true;
-							}
-							else
-							{
-								conv = null;
-								type = new FloatType();
-								uint8 = false;
-								uint16 = false;
-							}
-
-							// The min coordinates of the block that this job renders (in pixels)
-							final int n = gridBlock[ 0 ].length;
-							final long[] superBlockOffset = new long[ n ];
-							Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + bbMin[ d ] );
-
-							// The size of the block that this job renders (in pixels)
-							final long[] superBlockSize = gridBlock[ 1 ];
-
-							//TODO: prefetchExecutor!!
-							final long[] fusedBlockMin = new long[ n ];
-							final long[] fusedBlockMax = new long[ n ];
-							final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
-
-							// pre-filter views that overlap the superBlock
-							Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
-							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
-
-							final List< ViewId > overlappingViews =
-									OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
-
-							if ( overlappingViews.size() == 0 )
-								return;
-
-							//final RandomAccessibleInterval img;
-							final BlockSupplier blockSupplier;
-							final FinalInterval interval = new FinalInterval( bbMin, bbMax );
-
-							if ( masks )
-							{
-								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
-
-								blockSupplier = BlockSupplier.of( Views.zeroMin(
-										new GenerateComputeBlockMasks(
-												dataLocal,
-												registrations,
-												overlappingViews,
-												bbMin,
-												bbMax,
-												uint8,
-												uint16,
-												maskOff ).call( gridBlock ) ) );
-							}
-							else
-							{
-								//
-								// PREFETCHING, TODO: should be part of BlkAffineFusion.init
-								//
-								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
-								if ( overlappingBlocks.overlappingViews().isEmpty() )
-									return;
-
-								if ( prefetch )
+								final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
+	
+								final HashMap< ViewId, AffineTransform3D > registrations =
+										TransformVirtual.adjustAllTransforms(
+												viewIds,
+												dataLocal.getViewRegistrations().getViewRegistrations(),
+												anisotropyFactor,
+												Double.NaN );
+	
+								final Converter conv;
+								final Type type;
+								final boolean uint8, uint16;
+	
+								if ( dataType == DataType.UINT8 )
 								{
-									System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
-
-									final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
-									overlappingBlocks.prefetch(prefetchExecutor);
-									prefetchExecutor.shutdown();
+									conv = new RealUnsignedByteConverter<>( minIntensity, maxIntensity );
+									type = new UnsignedByteType();
+									uint8 = true;
+									uint16 = false;
 								}
-
-								System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
-
-								final FusionType fusionType;
-
-								if ( firstTileWins )
-									fusionType = FusionType.FIRST_LOW;
-								else if ( firstTileWinsInverse )
-									fusionType = FusionType.FIRST_HIGH;
+								else if ( dataType == DataType.UINT16 )
+								{
+									conv = new RealUnsignedShortConverter<>( minIntensity, maxIntensity );
+									type = new UnsignedShortType();
+									uint8 = false;
+									uint16 = true;
+								}
 								else
-									fusionType = FusionType.AVG_BLEND;
+								{
+									conv = null;
+									type = new FloatType();
+									uint8 = false;
+									uint16 = false;
+								}
+	
+								// The min coordinates of the block that this job renders (in pixels)
+								final int n = gridBlock[ 0 ].length;
+								final long[] superBlockOffset = new long[ n ];
+								Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + bbMin[ d ] );
+	
+								// The size of the block that this job renders (in pixels)
+								final long[] superBlockSize = gridBlock[ 1 ];
+	
+								//TODO: prefetchExecutor!!
+								final long[] fusedBlockMin = new long[ n ];
+								final long[] fusedBlockMax = new long[ n ];
+								final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
+	
+								// pre-filter views that overlap the superBlock
+								Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
+								Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
+	
+								final List< ViewId > overlappingViews =
+										OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+	
+								if ( overlappingViews.size() == 0 )
+									return gridBlock;
+	
+								//final RandomAccessibleInterval img;
+								final BlockSupplier blockSupplier;
+								final FinalInterval interval = new FinalInterval( bbMin, bbMax );
+	
+								if ( masks )
+								{
+									System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+	
+									blockSupplier = BlockSupplier.of( Views.zeroMin(
+											new GenerateComputeBlockMasks(
+													dataLocal,
+													registrations,
+													overlappingViews,
+													bbMin,
+													bbMax,
+													uint8,
+													uint16,
+													maskOff ).call( gridBlock ) ) );
+								}
+								else
+								{
+									//
+									// PREFETCHING, TODO: should be part of BlkAffineFusion.init
+									//
+									final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+									if ( overlappingBlocks.overlappingViews().isEmpty() )
+										return gridBlock;
+	
+									if ( prefetch )
+									{
+										System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
+	
+										final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+										overlappingBlocks.prefetch(prefetchExecutor);
+										prefetchExecutor.shutdown();
+									}
+	
+									System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+	
+									final FusionType fusionType;
+	
+									if ( firstTileWins )
+										fusionType = FusionType.FIRST_LOW;
+									else if ( firstTileWinsInverse )
+										fusionType = FusionType.FIRST_HIGH;
+									else
+										fusionType = FusionType.AVG_BLEND;
+	
+									// returns a zero-min interval
+									blockSupplier = BlkAffineFusion.init(
+											conv,
+											dataLocal.getSequenceDescription().getImgLoader(),
+											viewIds,
+											registrations,
+											dataLocal.getSequenceDescription().getViewDescriptions(),
+											fusionType,//fusion.getFusionType(),
+											1, // linear interpolation
+											null, // intensity correction
+											new BoundingBox( interval ),
+											(RealType & NativeType)type,
+											blockSize );
+								}
+	
+								final long[] /*blockOffset, blockSizeExport, */gridOffset;
+	
+								final long[] blockMin = gridBlock[0].clone();
+								final long[] blockMax = new long[ blockMin.length ];
+	
+								for ( int d = 0; d < blockMin.length; ++d )
+									blockMax[ d ] = Math.min( Intervals.zeroMin( interval ).max( d ), blockMin[ d ] + gridBlock[1][ d ] - 1 );
+	
+								final RandomAccessibleInterval image;
+								final RandomAccessibleInterval img = BlkAffineFusion.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
+	
+								// 5D OME-ZARR CONTAINER
+								if ( storageType == StorageFormat.ZARR )
+								{
+									// gridBlock is 3d, make it 5d
+									//blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
+									//blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
+									gridOffset = new long[] { gridBlock[2][0], gridBlock[2][1], gridBlock[2][2], cIndex, tIndex }; // because blocksize in C & T is 1
+	
+									// img is 3d, make it 5d
+									// the same information is returned no matter which index is queried in C and T
+									//image = Views.addDimension( Views.addDimension( img ) );
+									image = Views.interval(
+											Views.addDimension( Views.addDimension( img ) ),
+											new FinalInterval( new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], cIndex+1, tIndex+1 } ) ); // blocksize is used here
+								}
+								else
+								{
+									//blockOffset = gridBlock[0];
+									//blockSizeExport = gridBlock[1];
+									gridOffset = gridBlock[2];
+	
+									image = img;
+								}
+	
+								/*
+								final Interval block =
+										Intervals.translate(
+												new FinalInterval( blockSizeExport ),
+												blockOffset );
+	
+								final RandomAccessibleInterval source =
+										Views.interval( image, block );
+	
+								final RandomAccessibleInterval sourceGridBlock =
+										Views.offsetInterval(source, blockOffset, blockSizeExport);
+	
+								*/
+								final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+	
+								// TODO: is this multithreaded??
+								// TODO: should we catch the N5 exception and throw a general one?
+								N5Utils.saveBlock(/*sourceGridBlock*/ image, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
+	
+								if ( N5Util.sharedHDF5Writer == null )
+									driverVolumeWriterLocal.close();
+	
+								return gridBlock.clone();
+							} );
 
-								// returns a zero-min interval
-								blockSupplier = BlkAffineFusion.init(
-										conv,
-										dataLocal.getSequenceDescription().getImgLoader(),
-										viewIds,
-										registrations,
-										dataLocal.getSequenceDescription().getViewDescriptions(),
-										fusionType,//fusion.getFusionType(),
-										1, // linear interpolation
-										null, // intensity correction
-										new BoundingBox( interval ),
-										(RealType & NativeType)type,
-										blockSize );
-							}
+					rddResult.cache();
+					rddResult.count();
 
-							final long[] /*blockOffset, blockSizeExport, */gridOffset;
+					final List<long[][]> results = rddResult.collect();
 
-							final long[] blockMin = gridBlock[0].clone();
-							final long[] blockMax = new long[ blockMin.length ];
+					// extract all blocks that failed
+					final Set<long[][]> failedBlocksSet = retryTracker.processWithSpark( rddResult, grid );
 
-							for ( int d = 0; d < blockMin.length; ++d )
-								blockMax[ d ] = Math.min( Intervals.zeroMin( interval ).max( d ), blockMin[ d ] + gridBlock[1][ d ] - 1 );
+					// Use RetryTracker to handle retry counting and removal
+					if (!retryTracker.processFailures(failedBlocksSet))
+					{
+						System.out.println( "Stopping." );
+						System.exit( 1 );
+					}
 
-							final RandomAccessibleInterval image;
-							final RandomAccessibleInterval img = BlkAffineFusion.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
-
-							// 5D OME-ZARR CONTAINER
-							if ( storageType == StorageFormat.ZARR )
-							{
-								// gridBlock is 3d, make it 5d
-								//blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
-								//blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
-								gridOffset = new long[] { gridBlock[2][0], gridBlock[2][1], gridBlock[2][2], cIndex, tIndex }; // because blocksize in C & T is 1
-
-								// img is 3d, make it 5d
-								// the same information is returned no matter which index is queried in C and T
-								//image = Views.addDimension( Views.addDimension( img ) );
-								image = Views.interval(
-										Views.addDimension( Views.addDimension( img ) ),
-										new FinalInterval( new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], cIndex+1, tIndex+1 } ) );
-							}
-							else
-							{
-								//blockOffset = gridBlock[0];
-								//blockSizeExport = gridBlock[1];
-								gridOffset = gridBlock[2];
-
-								image = img;
-							}
-
-							/*
-							final Interval block =
-									Intervals.translate(
-											new FinalInterval( blockSizeExport ),
-											blockOffset );
-
-							final RandomAccessibleInterval source =
-									Views.interval( image, block );
-
-							final RandomAccessibleInterval sourceGridBlock =
-									Views.offsetInterval(source, blockOffset, blockSizeExport);
-
-							*/
-							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
-
-							// TODO: is this multithreaded??
-							// TODO: should we catch the N5 exception and throw a general one?
-							N5Utils.saveBlock(/*sourceGridBlock*/ image, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
-
-							if ( N5Util.sharedHDF5Writer == null )
-								driverVolumeWriterLocal.close();
-						} );
+					// Update grid for next iteration with remaining failed blocks
+					grid.clear();
+					grid.addAll(failedBlocksSet);
+				}
+				while ( grid.size() > 0 );
 
 				System.out.println( new Date( System.currentTimeMillis() ) + ": Saved full resolution, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
