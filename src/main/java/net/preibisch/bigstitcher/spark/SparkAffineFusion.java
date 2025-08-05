@@ -50,6 +50,7 @@ import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.converter.Converter;
 import net.imglib2.converter.RealUnsignedByteConverter;
 import net.imglib2.converter.RealUnsignedShortConverter;
@@ -467,13 +468,15 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							if ( overlappingViews.size() == 0 )
 								return;
 
-							final RandomAccessibleInterval img;
+							//final RandomAccessibleInterval img;
+							final BlockSupplier blockSupplier;
+							final FinalInterval interval = new FinalInterval( bbMin, bbMax );
 
 							if ( masks )
 							{
 								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
-								img = Views.zeroMin(
+								blockSupplier = BlockSupplier.of( Views.zeroMin(
 										new GenerateComputeBlockMasks(
 												dataLocal,
 												registrations,
@@ -482,7 +485,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 												bbMax,
 												uint8,
 												uint16,
-												maskOff ).call( gridBlock ) );
+												maskOff ).call( gridBlock ) ) );
 							}
 							else
 							{
@@ -514,7 +517,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									fusionType = FusionType.AVG_BLEND;
 
 								// returns a zero-min interval
-								img = BlkAffineFusion.init(
+								blockSupplier = BlkAffineFusion.init(
 										conv,
 										dataLocal.getSequenceDescription().getImgLoader(),
 										viewIds,
@@ -523,36 +526,47 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 										fusionType,//fusion.getFusionType(),
 										1, // linear interpolation
 										null, // intensity correction
-										new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
+										new BoundingBox( interval ),
 										(RealType & NativeType)type,
 										blockSize );
 							}
 
-							final long[] blockOffset, blockSizeExport, gridOffset;
+							final long[] /*blockOffset, blockSizeExport, */gridOffset;
 
-							final RandomAccessible image;
+							final long[] blockMin = gridBlock[0].clone();
+							final long[] blockMax = new long[ blockMin.length ];
+
+							for ( int d = 0; d < blockMin.length; ++d )
+								blockMax[ d ] = Math.min( Intervals.zeroMin( interval ).max( d ), blockMin[ d ] + gridBlock[1][ d ] - 1 );
+
+							final RandomAccessibleInterval image;
+							final RandomAccessibleInterval img = BlkAffineFusion.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
 
 							// 5D OME-ZARR CONTAINER
 							if ( storageType == StorageFormat.ZARR )
 							{
 								// gridBlock is 3d, make it 5d
-								blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
-								blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
+								//blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
+								//blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
 								gridOffset = new long[] { gridBlock[2][0], gridBlock[2][1], gridBlock[2][2], cIndex, tIndex }; // because blocksize in C & T is 1
 
 								// img is 3d, make it 5d
 								// the same information is returned no matter which index is queried in C and T
-								image = Views.addDimension( Views.addDimension( img ) );
+								//image = Views.addDimension( Views.addDimension( img ) );
+								image = Views.interval(
+										Views.addDimension( Views.addDimension( img ) ),
+										new FinalInterval( new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], cIndex+1, tIndex+1 } ) );
 							}
 							else
 							{
-								blockOffset = gridBlock[0];
-								blockSizeExport = gridBlock[1];
+								//blockOffset = gridBlock[0];
+								//blockSizeExport = gridBlock[1];
 								gridOffset = gridBlock[2];
 
 								image = img;
 							}
 
+							/*
 							final Interval block =
 									Intervals.translate(
 											new FinalInterval( blockSizeExport ),
@@ -564,11 +578,12 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							final RandomAccessibleInterval sourceGridBlock =
 									Views.offsetInterval(source, blockOffset, blockSizeExport);
 
+							*/
 							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
 
 							// TODO: is this multithreaded??
 							// TODO: should we catch the N5 exception and throw a general one?
-							N5Utils.saveBlock(sourceGridBlock, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
+							N5Utils.saveBlock(/*sourceGridBlock*/ image, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
 
 							if ( N5Util.sharedHDF5Writer == null )
 								driverVolumeWriterLocal.close();
