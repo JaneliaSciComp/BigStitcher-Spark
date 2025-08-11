@@ -106,6 +106,8 @@ public class ViewUtil
 
 	public static Dimensions getDimensions(final SpimData data, final ViewId viewId ) throws IllegalArgumentException
 	{
+		return data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getSize();
+		/*
 		final ImgLoader imgLoader = data.getSequenceDescription().getImgLoader();
 		final SetupImgLoader<?> setupImgLoader = imgLoader.getSetupImgLoader(viewId.getViewSetupId());
 		if (setupImgLoader == null) {
@@ -113,6 +115,7 @@ public class ViewUtil
 					"failed to find setupImgLoader for " + viewIdToString(viewId) + " in " + data);
 		}
 		return setupImgLoader.getImageSize(viewId.getTimePointId() );
+		*/
 	}
 
 	public static ViewRegistration getViewRegistration(final SpimData data, final ViewId viewId ) throws IllegalArgumentException
