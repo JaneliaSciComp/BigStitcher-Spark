@@ -83,12 +83,13 @@ public class OverlappingViews
 	{
 		final ArrayList< ViewId > overlappingViews = new ArrayList<>();
 
+		final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA );
+
 		for ( final ViewId viewIdB : viewIds )
 		{
 			if ( viewIdA.equals( viewIdB ) )
 				continue;
 
-			final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA );
 			final Interval bounds2 = ViewUtil.getTransformedBoundingBox( spimData, viewIdB );
 
 			if ( ViewUtil.overlaps( bounds1, bounds2 ) )
