@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
@@ -48,6 +49,7 @@ import net.preibisch.bigstitcher.spark.CreateFusionContainer.Compressions;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -246,24 +248,56 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		time = System.currentTimeMillis();
 
-		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, Math.min( Spark.maxPartitions, gridS0.size() ) );
+		final RetryTrackerSpark<long[][]> retryTracker =
+				RetryTrackerSpark.forGridBlocks("s0 n5-api dataset resaving", gridS0.size());
 
-		rdds0.foreach(
-				gridBlock ->
-				{
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
-					final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+		do
+		{
+			if (!retryTracker.beginAttempt())
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
 
-					N5ApiTools.resaveS0Block(
-							dataLocal,
-							n5Lcl,
-							useN5 ? StorageFormat.N5 : StorageFormat.ZARR,
-							dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
-							N5ApiTools.gridToDatasetBdv( 0, useN5 ? StorageFormat.N5 : StorageFormat.ZARR ), // a function mapping the gridblock to the dataset name for level 0 and N5
-							gridBlock );
+			final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, Math.min( Spark.maxPartitions, gridS0.size() ) );
 
-					n5Lcl.close();
-				});
+			final JavaRDD<long[][]> rdds0Result = rdds0.map( gridBlock ->
+			{
+				final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
+				final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+
+				N5ApiTools.resaveS0Block(
+						dataLocal,
+						n5Lcl,
+						useN5 ? StorageFormat.N5 : StorageFormat.ZARR,
+						dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
+						N5ApiTools.gridToDatasetBdv( 0, useN5 ? StorageFormat.N5 : StorageFormat.ZARR ), // a function mapping the gridblock to the dataset name for level 0 and N5
+						gridBlock );
+
+				n5Lcl.close();
+
+				return gridBlock.clone();
+			});
+
+			rdds0Result.cache();
+			rdds0Result.count();
+
+			// extract all blocks that failed
+			final Set<long[][]> failedBlocksSet =
+					retryTracker.processWithSpark( rdds0Result, gridS0 );
+
+			// Use RetryTracker to handle retry counting and removal
+			if (!retryTracker.processFailures(failedBlocksSet))
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
+
+			// Update grid for next iteration with remaining failed blocks
+			gridS0.clear();
+			gridS0.addAll(failedBlocksSet);
+		}
+		while ( gridS0.size() > 0 );
 
 		System.out.println( "Resaved " + (useN5 ? "N5 s0" : "OME-ZARR 0") + "-level, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
@@ -283,36 +317,69 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println( "Downsampling level " + (useN5 ? "s" : "") + s + "... " );
 			System.out.println( "Number of compute blocks: " + allBlocks.size() );
 
-			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
+			final RetryTrackerSpark<long[][]> retryTrackerDS =
+					RetryTrackerSpark.forGridBlocks( "s" + s +" n5-api dataset resaving", allBlocks.size());
 
 			final long timeS = System.currentTimeMillis();
 
-			rddsN.foreach(
-					gridBlock ->
+			do
+			{
+				if (!retryTrackerDS.beginAttempt())
+				{
+					System.out.println( "Stopping." );
+					System.exit( 1 );
+				}
+
+				final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
+	
+	
+				final JavaRDD<long[][]> rdds0Result = rddsN.map( gridBlock ->
+				{
+					final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+
+					if ( useN5 )
 					{
-						final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+						N5ApiTools.writeDownsampledBlock(
+								n5Lcl,
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+								gridBlock );
+					}
+					else
+					{
+						N5ApiTools.writeDownsampledBlock5dOMEZARR(
+								n5Lcl,
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+								gridBlock,
+								0,
+								0 );
+					}
+	
+					n5Lcl.close();
 
-						if ( useN5 )
-						{
-							N5ApiTools.writeDownsampledBlock(
-									n5Lcl,
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
-									gridBlock );
-						}
-						else
-						{
-							N5ApiTools.writeDownsampledBlock5dOMEZARR(
-									n5Lcl,
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
-									gridBlock,
-									0,
-									0 );
-						}
+					return gridBlock.clone();
+				});
 
-						n5Lcl.close();
-					});
+				rdds0Result.cache();
+				rdds0Result.count();
+
+				// extract all blocks that failed
+				final Set<long[][]> failedBlocksSet =
+						retryTrackerDS.processWithSpark( rdds0Result, allBlocks );
+
+				// Use RetryTracker to handle retry counting and removal
+				if (!retryTrackerDS.processFailures(failedBlocksSet))
+				{
+					System.out.println( "Stopping." );
+					System.exit( 1 );
+				}
+
+				// Update grid for next iteration with remaining failed blocks
+				allBlocks.clear();
+				allBlocks.addAll(failedBlocksSet);
+
+			} while ( allBlocks.size() > 0 );
 
 			System.out.println( "Resaved " + (useN5 ? "N5 s" : "OME-ZARR ") + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
 		}
