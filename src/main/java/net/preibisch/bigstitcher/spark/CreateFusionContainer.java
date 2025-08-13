@@ -116,7 +116,22 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
+	@Option(names = { "--group" }, description = "Container group path")
+	private String groupPath = "";
+
 	URI outPathURI = null, xmlOutURI = null;
+
+	/**
+	 * @return container group path always terminated with a '/'
+	 */
+	private String getContainerGroupPath()
+	{
+		if (!groupPath.endsWith("/")) {
+			return groupPath + "/";
+		} else {
+			return groupPath;
+		}
+	}
 
 	@Override
 	public Void call() throws Exception
@@ -300,24 +315,26 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			
 		}
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/InputXML", xmlURI );
+		if ( ! getContainerGroupPath().equals("/") ) driverVolumeWriter.createGroup( getContainerGroupPath() );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumTimepoints", numTimepoints );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumChannels", numChannels );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/InputXML", xmlURI );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", boundingBox.minAsLongArray() );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", boundingBox.maxAsLongArray() );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumTimepoints", numTimepoints );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumChannels", numChannels );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_min", boundingBox.minAsLongArray() );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_max", boundingBox.maxAsLongArray() );
+
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
 		if (preserveAnisotropy) // cannot write Double.NaN into JSON
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/BlockSize", blockSize );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/DataType", dt );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/BlockSize", blockSize );
 
 		if ( minIntensity != null && maxIntensity != null )
 		{
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MinIntensity", minIntensity );
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MaxIntensity", maxIntensity );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MinIntensity", minIntensity );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MaxIntensity", maxIntensity );
 		}
 
 		// setup datasets and metadata
@@ -334,7 +351,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
 
 			if ( !bdv )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
 
 			final long[] dim3d = boundingBox.dimensionsAsLongArray();
 
@@ -344,7 +361,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			for ( int d = 0; d < ds.length; ++d )
 				ds[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
 
-			final Function<Integer, String> levelToName = (level) -> "/" + level;
+			final Function<Integer, String> levelToName = (level) -> getContainerGroupPath() + level;
 
 			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
 
@@ -371,14 +388,15 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
+			final Function<Integer, String> levelRelativeToGroup = (level) -> "/" + level;
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 					5, // int n
-					"/", // String name, I also saw "/"
+					getContainerGroupPath(), // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
-					levelToName,
+					levelRelativeToGroup,
 					levelToMipmapTransform );
 
 			// save metadata
@@ -386,7 +404,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
 			// for this to work you need to register an adapter in the N5Factory class
 			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
 		}
 
 		if ( bdv )
@@ -394,13 +412,13 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Creating BDV compatible container at '" + outPathURI + "' ... " );
 
 			if ( storageType == StorageFormat.N5 )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 			else if ( storageType == StorageFormat.ZARR )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
 			else
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
 
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/OutputXML", xmlOutURI );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/OutputXML", xmlOutURI );
 
 			final long[] bb = boundingBox.dimensionsAsLongArray();
 
@@ -463,21 +481,21 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			if ( storageType != StorageFormat.ZARR )
 			{
 				final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
-	
+
 				mrInfos = new MultiResolutionLevelInfo[ vds.size() ][];
 				final MultiResolutionLevelInfo myMrInfo[][] = mrInfos;
-				
+
 				vds.stream().parallel().forEach( vd ->
 				{
 					final int c = vd.getViewSetup().getChannel().getId();
 					final int t = vd.getTimePointId();
-	
+
 					if ( storageType == StorageFormat.N5 )
 					{
 						myMrInfo[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
 								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
-	
-						driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+
+						driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 					}
 					else // HDF5
 					{
@@ -493,9 +511,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			mrInfos = new MultiResolutionLevelInfo[ numChannels * numTimepoints ][];
 
 			if ( storageType == StorageFormat.N5 )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "N5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "N5" );
 			else
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "HDF5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "HDF5" );
 
 			for ( int c = 0; c < numChannels; ++c )
 				for ( int t = 0; t < numTimepoints; ++t )
@@ -517,7 +535,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 
 		// TODO: set extra attributes to load the state
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", mrInfos );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MultiResolutionInfos", mrInfos );
 
 		driverVolumeWriter.close();
 
