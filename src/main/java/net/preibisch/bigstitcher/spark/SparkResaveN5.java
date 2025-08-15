@@ -109,7 +109,32 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	{
 		this.setRegion();
 
-		//System.out.println( com.google.common.collect.ImmutableList.class.getProtectionDomain().getCodeSource().getLocation() );
+		/*
+		Exception in thread "main" java.lang.IllegalAccessError: tried to access method com.google.common.collect.ImmutableList$Builder.<init>(I)V from class com.google.common.collect.Streams
+		at com.google.common.collect.Streams.concat(Streams.java:204)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TransformationUtils.tranformsToAffine(TransformationUtils.java:27)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.buildMetadata(OmeNgffMultiScaleMetadata.java:159)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.<init>(OmeNgffMultiScaleMetadata.java:101)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.<init>(OmeNgffMultiScaleMetadata.java:91)
+		at net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes.createOMEZarrMetadata(OMEZarrAttibutes.java:128)
+		at net.preibisch.mvrecon.process.n5api.N5ApiTools.setupBdvDatasetsOMEZARR(N5ApiTools.java:422)
+		at net.preibisch.bigstitcher.spark.SparkResaveN5.lambda$call$1(SparkResaveN5.java:219)
+		*/
+
+		/*
+		local: 
+		com.google.common.collect.ImmutableList: file:/home/preibischs@hhmi.org/.m2/repository/com/google/guava/guava/33.3.1-jre/guava-33.3.1-jre.jar
+		com.google.common.collect.Streams: file:/home/preibischs@hhmi.org/.m2/repository/com/google/guava/guava/33.3.1-jre/guava-33.3.1-jre.jar
+		*/
+
+		/*
+		cluster:
+		com.google.common.collect.ImmutableList: file:/misc/local/spark-3.4.1/jars/guava-14.0.1.jar
+		com.google.common.collect.Streams: file:/groups/scicompsoft/home/preibischs/Keller/BigStitcher-Spark-0.1.0-SNAPSHOT.jar
+		*/
+
+		System.out.println( "com.google.common.collect.ImmutableList: " +  com.google.common.collect.ImmutableList.class.getProtectionDomain().getCodeSource().getLocation() );
+		System.out.println( "com.google.common.collect.Streams: " + com.google.common.collect.Streams.class.getProtectionDomain().getCodeSource().getLocation() );
 		//System.exit( 0 );
 
 		final SpimData2 dataGlobal = this.loadSpimData2();
@@ -216,6 +241,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					}
 					else
 					{
+						System.out.println( Arrays.toString( blockSize ) );
+						
 						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
 								n5Writer,
 								viewId,
@@ -240,6 +267,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		if ( localSparkBindAddress )
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
+		//System.exit( 0 );
+		
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
@@ -308,6 +337,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		{
 			final int s = level;
 
+			//mrInfo.dimensions, mrInfo.blockSize, mrInfo.blockSize
 			final List<long[][]> allBlocks =
 					viewIdsGlobal.stream().map( viewId ->
 							N5ApiTools.assembleJobs(
