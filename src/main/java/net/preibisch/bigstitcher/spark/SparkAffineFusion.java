@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -77,6 +78,8 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
@@ -146,11 +149,27 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
+
+	// TODO: add support for loading coefficients during fusion
+	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
+	private String intensityN5PathURIString = null;
+
+	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending)")
+	private StorageFormat intensityN5StorageType = null;
+
+	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
+	private String intensityN5Group = "";
+
+	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
+	private String intensityN5Dataset = "intensity";
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
 	//static final int N_PREFETCH_THREADS = 72;
+
+	URI intensityN5PathURI = null;
 
 	@Override
 	public Void call() throws Exception
@@ -337,9 +356,43 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.out.println( "Fusing to FLOAT32" );
 
 		//
+		// intensity correction coefficients dataset
+		//
+		if ( intensityN5PathURIString != null )
+		{
+			intensityN5PathURI = URITools.toURI( intensityN5PathURIString );
+			System.out.println( "Intensity coefficients: " + outPathURI );
+
+			if ( intensityN5StorageType == null )
+			{
+				if ( intensityN5PathURIString.toLowerCase().endsWith( ".zarr" ) )
+					intensityN5StorageType = StorageFormat.ZARR;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".n5" ) )
+					intensityN5StorageType = StorageFormat.N5;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".h5" ) || intensityN5PathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
+					intensityN5StorageType = StorageFormat.HDF5;
+				else
+				{
+					System.out.println( "Unable to guess format from URI '" + intensityN5PathURI + "', please specify using '-s'");
+					return null;
+				}
+
+				System.out.println( "Guessed format " + intensityN5StorageType + " will be used to open URI '" + intensityN5PathURI + "', you can override it using '-s'");
+			}
+			else
+			{
+				System.out.println( "Format " + intensityN5StorageType + " will be used to open " + intensityN5PathURI );
+			}
+		}
+
+		//
 		// final variables for Spark
 		//
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
+		final StorageFormat intensityN5StorageType = this.intensityN5StorageType;
+		final URI intensityN5PathURI = this.intensityN5PathURI;
+		final String intensityN5Group = this.intensityN5Group;
+		final String intensityN5Dataset = this.intensityN5Dataset;
 
 		// TODO: do we still need this?
 		try
@@ -487,6 +540,25 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 						if ( overlappingViews.size() == 0 )
 							return gridBlock;
 
+						// load intensity correction coefficients for all overlapping views
+
+
+						final Map< ViewId, Coefficients > coefficients;
+
+
+						if ( intensityN5PathURI != null )
+						{
+							coefficients = new HashMap<>();
+							try ( N5Reader intensityN5Reader = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI ) )
+							{
+								overlappingViews.forEach( v -> {
+									coefficients.put( v, IntensityCorrection.readCoefficients( intensityN5Reader, intensityN5Group, intensityN5Dataset, v ) );
+								} );
+							}
+						} else {
+							coefficients = null;
+						}
+
 						//final RandomAccessibleInterval img;
 						final BlockSupplier blockSupplier;
 						final FinalInterval interval = new FinalInterval( bbMin, bbMax );
@@ -536,7 +608,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 								fusionType = FusionType.AVG_BLEND;
 
 							// returns a zero-min interval
-							blockSupplier = BlkAffineFusion.init(
+							//blockSupplier = BlkAffineFusion.init(
+							blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
 									conv,
 									dataLocal.getSequenceDescription().getImgLoader(),
 									viewIds,
@@ -544,7 +617,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									dataLocal.getSequenceDescription().getViewDescriptions(),
 									fusionType,//fusion.getFusionType(),
 									1, // linear interpolation
-									null, // intensity correction
+									coefficients, // intensity correction
 									new BoundingBox( interval ),
 									(RealType & NativeType)type,
 									blockSize );
