@@ -462,7 +462,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					for ( int t = 0; t < numTimepoints; ++t )
 					{
 						final OMEZARREntry omeZarrEntry = new OMEZARREntry(
-								mrInfos[ 0 ][ 0 ].dataset.substring(0, mrInfos[ 0 ][ 0 ].dataset.lastIndexOf( "/" ) ),
+								mrInfos[ t ][ c ].dataset.substring(0, mrInfos[ t ][ c ].dataset.lastIndexOf( "/" ) ),
 								new int[] { c, t } );
 
 						viewIdToPath.put( new ViewId( t, c ), omeZarrEntry );
