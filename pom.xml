@@ -96,8 +96,6 @@
 		<bigdataviewer-core.version>10.6.1</bigdataviewer-core.version>
 		<bigdataviewer-vistools.version>1.0.0-beta-36</bigdataviewer-vistools.version>
 		-->
-		<!-- <n5-zarr.version>1.3.5</n5-zarr.version> -->
-
 		<imglib2.version>7.1.4</imglib2.version>
 		<imglib2-algorithm.version>0.18.0</imglib2-algorithm.version>
 		<bigdataviewer-core.version>10.6.4</bigdataviewer-core.version>
@@ -105,9 +103,9 @@
 		<multiview-reconstruction.version>7.0.2</multiview-reconstruction.version>
 		<BigStitcher.version>2.5.0</BigStitcher.version>
 
-		<n5-universe.version>2.1.0</n5-universe.version>
-		<n5-version>3.4.1</n5-version>
-		<n5-zarr-version>1.5.0</n5-zarr-version>
+		<n5-universe.version>2.3.0</n5-universe.version>
+		<n5.version>3.5.0</n5.version>
+		<n5-zarr.version>1.5.1</n5-zarr.version>
 
 		<mpicbg.mpicbg.version>1.6.5</mpicbg.mpicbg.version>
 
@@ -305,7 +303,6 @@
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-hdf5</artifactId>
-            <!-- <version>2.0.0</version> -->
         </dependency>
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>

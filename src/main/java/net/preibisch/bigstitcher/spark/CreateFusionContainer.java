@@ -297,7 +297,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		{
 			System.out.println( "Unsupported format: " + storageType );
 			return null;
-			
 		}
 
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/InputXML", xmlURI );
@@ -463,20 +462,20 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			if ( storageType != StorageFormat.ZARR )
 			{
 				final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
-	
+
 				mrInfos = new MultiResolutionLevelInfo[ vds.size() ][];
 				final MultiResolutionLevelInfo myMrInfo[][] = mrInfos;
-				
+
 				vds.stream().parallel().forEach( vd ->
 				{
 					final int c = vd.getViewSetup().getChannel().getId();
 					final int t = vd.getTimePointId();
-	
+
 					if ( storageType == StorageFormat.N5 )
 					{
 						myMrInfo[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
 								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
-	
+
 						driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 					}
 					else // HDF5
