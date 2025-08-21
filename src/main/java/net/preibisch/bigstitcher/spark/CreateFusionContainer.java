@@ -314,6 +314,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			return null;
 		}
 
+		// if there is a group different from the root, create it
 		if ( ! getContainerGroupPath().equals("/") ) driverVolumeWriter.createGroup( getContainerGroupPath() );
 
 		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/InputXML", xmlURI );
@@ -360,14 +361,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			for ( int d = 0; d < ds.length; ++d )
 				ds[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
 
-			final Function<Integer, String> levelToName = (level) -> getContainerGroupPath() + level;
-
 			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
 
 			// all is 5d now
 			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
 					driverVolumeWriter,
-					levelToName,
+					(level) -> getContainerGroupPath() + level, // multiscale pyramid will be created for the entire provided group
 					dt,
 					dim, //5d
 					compression,
@@ -387,7 +386,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
-			final Function<Integer, String> levelRelativeToGroup = (level) -> "/" + level;
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 					5, // int n
@@ -395,7 +393,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					resolutionS0, // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
-					levelRelativeToGroup,
+					(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
 					levelToMipmapTransform );
 
 			// save metadata
