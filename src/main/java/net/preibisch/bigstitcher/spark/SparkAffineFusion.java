@@ -267,7 +267,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
- 
+
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
 		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
