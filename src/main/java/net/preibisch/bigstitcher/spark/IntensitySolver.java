@@ -15,6 +15,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
@@ -99,6 +100,8 @@ public class IntensitySolver extends AbstractSelectableViews {
 		final List< ViewPairCoefficientMatches > pairwiseMatches = new ArrayList<>();
 		for ( int i = 0; i < views.size(); ++i )
 		{
+			ViewUtil.progressPercentage(i, views.size());
+
 			for ( int j = i + 1; j < views.size(); ++j )
 			{
 				final ViewPairCoefficientMatches matches = matchesIO.read( views.get( i ), views.get( j ) );
@@ -106,6 +109,9 @@ public class IntensitySolver extends AbstractSelectableViews {
 					pairwiseMatches.add( matches );
 			}
 		}
+
+		System.out.println( "\nConnected pairs: " + pairwiseMatches.size() );
+		System.out.println( "Running solve... " );
 
 		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, pairwiseMatches, maxIterations );
 
