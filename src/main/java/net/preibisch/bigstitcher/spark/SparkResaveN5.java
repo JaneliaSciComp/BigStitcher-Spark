@@ -26,10 +26,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
@@ -42,6 +44,10 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.img.n5.N5ImageLoader;
+import mpicbg.spim.data.generic.base.Entity;
+import mpicbg.spim.data.sequence.Channel;
+import mpicbg.spim.data.sequence.TimePoint;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
@@ -51,11 +57,13 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
@@ -103,6 +111,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 	@Option(names = { "-o", "--n5Path" }, description = "N5/OME-ZARR path for saving, (default: 'folder of the xml'/dataset.n5 or e.g. s3://myBucket/data.n5)")
 	private String n5PathURIString = null;
+
+	@Option(names = { "--group" }, description = "group all channels and timepoints that belong to the same angle/illumination/tile and save it into a 5D OME-ZARR (default: false)")
+	protected boolean group = false;
 
 	@Override
 	public Void call() throws Exception
@@ -152,15 +163,23 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		final ArrayList< ViewId > viewIdsGlobal = Import.getViewIds( dataGlobal );
 
 		if ( viewIdsGlobal.size() == 0 )
-		{
 			throw new IllegalArgumentException( "No views to resave." );
-		}
-		else
+
+		System.out.println( "Following ViewIds will be resaved: ");
+		for ( final ViewId v : viewIdsGlobal )
+			System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
+		System.out.println();
+
+		if ( group )
 		{
-			System.out.println( "Following ViewIds will be resaved: ");
-			for ( final ViewId v : viewIdsGlobal )
-				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-			System.out.println();
+			final List< ViewDescription > vds = 
+					viewIdsGlobal.stream().map( v -> dataGlobal.getSequenceDescription().getViewDescription( v ) ).collect( Collectors.toList() );
+
+			final HashSet< Class< ? extends Entity > > groupingFactor = new HashSet<>();
+			groupingFactor.add( Channel.class );
+			groupingFactor.add( TimePoint.class );
+
+			final List< Group< ViewDescription > > groups = Group.combineBy( vds, groupingFactor );
 		}
 
 		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParentURI( xmlOutURI ), (useN5 ? "dataset.n5" : "dataset.ome.zarr") ) : n5PathURIString );
