@@ -74,6 +74,7 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.bigstitcher.spark.util.SetupIDMapper.KellerMirrorScopeMapper;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
@@ -315,6 +316,10 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		if ( dataGlobal == null )
 			return null;
+
+		System.out.println( "NOTE: this is code specific to a dataset from the Keller lab!!");
+		// we build a map from old to new ViewSetupId
+		final HashMap< Integer, Integer > fusionMap = new KellerMirrorScopeMapper( 1120/28, 28 ).map( dataGlobal );
 
 		final ArrayList< ViewId > viewIdsGlobal;
 
@@ -616,7 +621,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									registrations,
 									dataLocal.getSequenceDescription().getViewDescriptions(),
 									fusionType,//fusion.getFusionType(),
-									null, // map<old,new> will go here
+									fusionMap, // map<old,new> will go here
 									1, // linear interpolation
 									coefficients, // intensity correction
 									new BoundingBox( interval ),
