@@ -616,6 +616,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									registrations,
 									dataLocal.getSequenceDescription().getViewDescriptions(),
 									fusionType,//fusion.getFusionType(),
+									null, // map<old,new> will go here
 									1, // linear interpolation
 									coefficients, // intensity correction
 									new BoundingBox( interval ),
