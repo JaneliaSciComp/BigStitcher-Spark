@@ -33,15 +33,29 @@ public interface SetupIDMapper
 		}
 
 		@Override
-		public Map<Integer, Integer> map(SpimData2 data) {
-			Map<Integer, Integer> oldToNewMap = new HashMap<>();
-			
+		public HashMap<Integer, Integer> map( final SpimData2 data )
+		{
+			if ( data.getSequenceDescription().getAllAngles().size() > 1 )
+				throw new RuntimeException( "multiple angles not yet supported." );
+
+			if ( data.getSequenceDescription().getAllIlluminations().size() > 1 )
+				throw new RuntimeException( "multiple illuminations not yet supported." );
+
+			if ( data.getSequenceDescription().getAllChannels().size() > 1 )
+				throw new RuntimeException( "multiple channels not yet supported." );
+
+			final int maxViewSetupIds = rowCount * columnCount;
+
+			if ( data.getSequenceDescription().getViewSetupsOrdered().size() != maxViewSetupIds )
+				throw new RuntimeException( "number of viewsetups does not match rowCount * columnCount." );
+
+			final HashMap<Integer, Integer> oldToNewMap = new HashMap<>();
+
 			// Get all ViewSetupIds (assuming they correspond to tiles)
-			ArrayList<Integer> oldIds = new ArrayList<>();
-			for (ViewSetup setupId : data.getSequenceDescription().getViewSetupsOrdered()) {
+			final ArrayList<Integer> oldIds = new ArrayList<>();
+			for (ViewSetup setupId : data.getSequenceDescription().getViewSetupsOrdered())
 				oldIds.add(setupId.getId());
-			}
-			
+
 			// Current ordering: bottom-right has lowest ID, increasing row-first to left, then up
 			// This means: for a grid of rowCount x columnCount
 			// Position (row, col) has ID = row * columnCount + (columnCount - 1 - col)
@@ -66,10 +80,9 @@ public interface SetupIDMapper
 				}
 			}
 
-			LinkedList< String > output = new LinkedList<>();
+			final LinkedList< String > output = new LinkedList<>();
 
-			int maxViewSetupIds = rowCount * columnCount;
-			int numDigits = String.valueOf(maxViewSetupIds - 1).length();
+			final int numDigits = String.valueOf(maxViewSetupIds - 1).length();
 			String formatString = "%0" + numDigits + "d";
 
 			int setupId = 0;
@@ -89,6 +102,7 @@ public interface SetupIDMapper
 
 			for ( final String s : output )
 				System.out.println( s );
+
 			return oldToNewMap;
 		}
 	}
