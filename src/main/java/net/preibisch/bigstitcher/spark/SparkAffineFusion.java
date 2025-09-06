@@ -120,7 +120,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	//@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
 	//private boolean firstTileWinsInverse = false;
 
-	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, AVG_CONTENT, AVG_BLEND_CONTENT, MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
+	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, "/*AVG_CONTENT, AVG_BLEND_CONTENT*/+", MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
 	private FusionType fusionType = FusionType.AVG_BLEND;
 
 	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
