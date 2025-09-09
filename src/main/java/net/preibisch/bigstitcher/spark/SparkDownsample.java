@@ -34,7 +34,7 @@ import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
 import net.imglib2.FinalInterval;
@@ -43,7 +43,7 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
 import net.preibisch.bigstitcher.spark.util.DataTypeUtil;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
@@ -53,7 +53,7 @@ import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
-public class SparkDownsample extends AbstractBasic implements Callable<Void>, Serializable
+public class SparkDownsample extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 5040141824053748124L;
 

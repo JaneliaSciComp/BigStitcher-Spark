@@ -28,19 +28,22 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.N5Exception;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.SequenceDescription;
@@ -48,8 +51,8 @@ import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.converter.Converter;
 import net.imglib2.converter.RealUnsignedByteConverter;
 import net.imglib2.converter.RealUnsignedShortConverter;
@@ -70,11 +73,14 @@ import net.preibisch.bigstitcher.spark.fusion.OverlappingBlocks;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
@@ -86,14 +92,14 @@ import util.URITools;
 
 public class SparkAffineFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
-	public static enum DataTypeFusion
+	public enum DataTypeFusion
 	{
 		UINT8, UINT16, FLOAT32
 	}
 
 	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 basse path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending)")
@@ -108,12 +114,14 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy, with lowest ViewIds winning (default: false - using weighted average blending fusion)")
-	private boolean firstTileWins = false;
+	//@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy, with lowest ViewIds winning (default: false - using weighted average blending fusion)")
+	//private boolean firstTileWins = false;
 
-	@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
-	private boolean firstTileWinsInverse = false;
+	//@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
+	//private boolean firstTileWinsInverse = false;
 
+	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, "/*AVG_CONTENT, AVG_BLEND_CONTENT*/+", MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
+	private FusionType fusionType = FusionType.AVG_BLEND;
 
 	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
 	private Integer timepointIndex = null;
@@ -144,11 +152,27 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
+
+	// TODO: add support for loading coefficients during fusion
+	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
+	private String intensityN5PathURIString = null;
+
+	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending)")
+	private StorageFormat intensityN5StorageType = null;
+
+	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
+	private String intensityN5Group = "";
+
+	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
+	private String intensityN5Dataset = "intensity";
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
 	//static final int N_PREFETCH_THREADS = 72;
+
+	URI intensityN5PathURI = null;
 
 	@Override
 	public Void call() throws Exception
@@ -161,18 +185,13 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			return null;
 		}
 
-		if ( firstTileWins && firstTileWinsInverse )
-		{
-			System.out.println( "You can only choose one of the two firstTileWins or firstTileWinsInverse.");
-			return null;
-		}
-
 		if ( timepointIndex != null && channelIndex == null || timepointIndex == null && channelIndex != null )
 		{
 			System.out.println( "You have to specify timepointId and channelId together, one alone does not work. timepointId =" + timepointIndex + ", channelId=" + channelIndex );
 			return null;
 		}
 
+		// TODO: Why should we need to provide timepointIndex if timepointIds is set!?
 		if ( timepointIndex == null && ( vi != null || timepointIds != null || channelIds != null || illuminationIds != null || tileIds != null || angleIds != null ) )
 
 		{
@@ -204,10 +223,28 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.out.println( "Format " + storageType + " will be used to open " + outPathURI );
 		}
 
+		// test that the container exists
+		try( final N5Reader r = URITools.instantiateN5Reader( storageType, outPathURI  ) )
+		{
+			System.out.println( "Found container '" + outPathURI + "'.");
+		}
+		catch ( Exception e )
+		{
+			System.out.println( "Exception: " + e);
+			System.out.println( "Error, container '" + outPathURI + "' does not exist. Please create it with create-fusion-container.");
+			return null;
+		}
+
 		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
 
 		final String fusionFormat = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/FusionFormat", String.class );
 
+		if ( fusionFormat == null )
+		{
+			System.out.println( "Could not load 'Bigstitcher-Spark/FusionFormat' from metadata of specified output '" + outPathURI + "'.");
+			System.out.println( "Note: this metadata is created by ./create-fusion-container in the previous step." );
+			return null;
+		}
 		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
 
 		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
@@ -241,6 +278,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			orig_bbMin[ 2 ] = Math.round( Math.floor( orig_bbMin[ 2 ] * anisotropyFactor ) );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
+		System.out.println( "FusionType: " + fusionType );
 		System.out.println( "Input XML: " + xmlURI );
 		System.out.println( "BDV project: " + bdv );
 		System.out.println( "numTimepoints of fused dataset(s): " + numTimepoints );
@@ -282,16 +320,23 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final ArrayList< ViewId > viewIdsGlobal;
 
-		if (
-				dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels ||
-						dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
+		if ( vi != null || angleIds != null || channelIds != null || illuminationIds != null || tileIds != null || timepointIds != null )
+		{
+			// TODO: With current logic, I could never get to AbstractSelectableViews.loadViewIds, no matter which CLI arguments are specified.
+			//       The following is a workaround for my example.
+			//       But the whole logic is flawed and needs to be revised.
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds );
+		}
+		else if (
+			dataGlobal.getSequenceDescription().getAllChannelsOrdered().size() != numChannels ||
+			dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size() != numTimepoints )
 		{
 			System.out.println(
 					"The number of channels and timepoint in XML does not match the number in the export dataset."
 							+ "You have to specify which ViewIds/Channels/Illuminations/Tiles/Angles/Timepoints should be fused into"
 							+ "a specific 3D volume in the fusion dataset:");
 
-			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds  );
+			viewIdsGlobal = AbstractSelectableViews.loadViewIds( dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds );
 
 			if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 				return null;
@@ -313,9 +358,43 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.out.println( "Fusing to FLOAT32" );
 
 		//
+		// intensity correction coefficients dataset
+		//
+		if ( intensityN5PathURIString != null )
+		{
+			intensityN5PathURI = URITools.toURI( intensityN5PathURIString );
+			System.out.println( "Intensity coefficients: " + intensityN5PathURI );
+
+			if ( intensityN5StorageType == null )
+			{
+				if ( intensityN5PathURIString.toLowerCase().endsWith( ".zarr" ) )
+					intensityN5StorageType = StorageFormat.ZARR;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".n5" ) )
+					intensityN5StorageType = StorageFormat.N5;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".h5" ) || intensityN5PathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
+					intensityN5StorageType = StorageFormat.HDF5;
+				else
+				{
+					System.out.println( "Unable to guess format from URI '" + intensityN5PathURI + "', please specify using '-s'");
+					return null;
+				}
+
+				System.out.println( "Guessed format " + intensityN5StorageType + " will be used to open URI '" + intensityN5PathURI + "', you can override it using '-s'");
+			}
+			else
+			{
+				System.out.println( "Format " + intensityN5StorageType + " will be used to open " + intensityN5PathURI );
+			}
+		}
+
+		//
 		// final variables for Spark
 		//
 		final long[] dimensions = boundingBox.dimensionsAsLongArray();
+		final StorageFormat intensityN5StorageType = this.intensityN5StorageType;
+		final URI intensityN5PathURI = this.intensityN5PathURI;
+		final String intensityN5Group = this.intensityN5Group;
+		final String intensityN5Dataset = this.intensityN5Dataset;
 
 		// TODO: do we still need this?
 		try
@@ -388,179 +467,242 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 				//driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
 
-				final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
+				final RetryTrackerSpark<long[][]> retryTracker =
+						RetryTrackerSpark.forGridBlocks("s0 block processing", grid.size());
 
 				long time = System.currentTimeMillis();
 
-				rdd.foreach(
-						gridBlock ->
-						{
-							final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
+				do
+				{
+					if (!retryTracker.beginAttempt())
+					{
+						System.out.println( "Stopping." );
+						System.exit( 1 );
+					}
 
-							final HashMap< ViewId, AffineTransform3D > registrations =
-									TransformVirtual.adjustAllTransforms(
-											viewIds,
-											dataLocal.getViewRegistrations().getViewRegistrations(),
-											anisotropyFactor,
-											Double.NaN );
+					final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
 
-							final HashMap< ViewId, AffineTransform3D > orig_registrations =
-									TransformVirtual.adjustAllTransforms(
-											viewIds,
-											dataLocal.getViewRegistrations().getViewRegistrations(),
-											Double.NaN,
-											Double.NaN );
+					final JavaRDD<long[][]> rddResult = rdd.map( gridBlock ->
+					{
+						final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
 
-							final Converter conv;
-							final Type type;
-							final boolean uint8, uint16;
-
-							if ( dataType == DataType.UINT8 )
-							{
-								conv = new RealUnsignedByteConverter<>( minIntensity, maxIntensity );
-								type = new UnsignedByteType();
-								uint8 = true;
-								uint16 = false;
-							}
-							else if ( dataType == DataType.UINT16 )
-							{
-								conv = new RealUnsignedShortConverter<>( minIntensity, maxIntensity );
-								type = new UnsignedShortType();
-								uint8 = false;
-								uint16 = true;
-							}
-							else
-							{
-								conv = null;
-								type = new FloatType();
-								uint8 = false;
-								uint16 = false;
-							}
-
-							// The min coordinates of the block that this job renders (in pixels)
-							final int n = gridBlock[ 0 ].length;
-							final long[] superBlockOffset = new long[ n ];
-							Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + orig_bbMin[ d ] );
-
-							// The size of the block that this job renders (in pixels)
-							final long[] superBlockSize = gridBlock[ 1 ];
-
-							//TODO: prefetchExecutor!!
-							final long[] fusedBlockMin = new long[ n ];
-							final long[] fusedBlockMax = new long[ n ];
-							final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
-
-							// pre-filter views that overlap the superBlock
-							Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
-							Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
-
-							final List< ViewId > overlappingViews =
-									OverlappingViews.findOverlappingViews( dataLocal, viewIds, orig_registrations, fusedBlock );
-
-							final RandomAccessibleInterval img;
-
-							if ( masks )
-							{
-								System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
-
-								img = Views.zeroMin(
-										new GenerateComputeBlockMasks(
-												dataLocal,
-												registrations,
-												overlappingViews,
-												bbMin,
-												bbMax,
-												uint8,
-												uint16,
-												maskOff ).call( gridBlock ) );
-							}
-							else
-							{
-								//
-								// PREFETCHING, TODO: should be part of BlkAffineFusion.init
-								//
-								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
-								if ( overlappingBlocks.overlappingViews().isEmpty() )
-									return;
-
-								if ( prefetch )
-								{
-									System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
-
-									final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
-									overlappingBlocks.prefetch(prefetchExecutor);
-									prefetchExecutor.shutdown();
-								}
-
-								System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
-
-								final FusionType fusionType;
-
-								if ( firstTileWins )
-									fusionType = FusionType.FIRST_LOW;
-								else if ( firstTileWinsInverse )
-									fusionType = FusionType.FIRST_HIGH;
-								else
-									fusionType = FusionType.AVG_BLEND;
-
-								// returns a zero-min interval
-								img = BlkAffineFusion.init(
-										conv,
-										dataLocal.getSequenceDescription().getImgLoader(),
+						final HashMap< ViewId, AffineTransform3D > registrations =
+								TransformVirtual.adjustAllTransforms(
 										viewIds,
-										registrations,
-										dataLocal.getSequenceDescription().getViewDescriptions(),
-										fusionType,//fusion.getFusionType(),
-										1, // linear interpolation
-										null, // intensity correction
-										new BoundingBox( new FinalInterval( bbMin, bbMax ) ),
-										(RealType & NativeType)type,
-										blockSize );
-							}
+										dataLocal.getViewRegistrations().getViewRegistrations(),
+										anisotropyFactor,
+										Double.NaN );
+            
+            final HashMap< ViewId, AffineTransform3D > orig_registrations =
+            TransformVirtual.adjustAllTransforms(
+                    viewIds,
+                    dataLocal.getViewRegistrations().getViewRegistrations(),
+                    Double.NaN,
+                    Double.NaN );
 
-							final long[] blockOffset, blockSizeExport, gridOffset;
+						final Converter conv;
+						final Type type;
+						final boolean uint8, uint16;
 
-							final RandomAccessible image;
+						if ( dataType == DataType.UINT8 )
+						{
+							conv = new RealUnsignedByteConverter<>( minIntensity, maxIntensity );
+							type = new UnsignedByteType();
+							uint8 = true;
+							uint16 = false;
+						}
+						else if ( dataType == DataType.UINT16 )
+						{
+							conv = new RealUnsignedShortConverter<>( minIntensity, maxIntensity );
+							type = new UnsignedShortType();
+							uint8 = false;
+							uint16 = true;
+						}
+						else
+						{
+							conv = null;
+							type = new FloatType();
+							uint8 = false;
+							uint16 = false;
+						}
 
-							// 5D OME-ZARR CONTAINER
-							if ( storageType == StorageFormat.ZARR )
+						// The min coordinates of the block that this job renders (in pixels)
+						final int n = gridBlock[ 0 ].length;
+						final long[] superBlockOffset = new long[ n ];
+						Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + orig_bbMin[ d ] );
+
+						// The size of the block that this job renders (in pixels)
+						final long[] superBlockSize = gridBlock[ 1 ];
+
+						//TODO: prefetchExecutor!!
+						final long[] fusedBlockMin = new long[ n ];
+						final long[] fusedBlockMax = new long[ n ];
+						final Interval fusedBlock = FinalInterval.wrap( fusedBlockMin, fusedBlockMax );
+
+						// pre-filter views that overlap the superBlock
+						Arrays.setAll( fusedBlockMin, d -> superBlockOffset[ d ] );
+						Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
+
+						final List< ViewId > overlappingViews =
+								OverlappingViews.findOverlappingViews( dataLocal, viewIds, orig_registrations, fusedBlock );
+
+						if ( overlappingViews.size() == 0 )
+							return gridBlock;
+
+						// load intensity correction coefficients for all overlapping views
+
+
+						final Map< ViewId, Coefficients > coefficients;
+
+
+						if ( intensityN5PathURI != null )
+						{
+							coefficients = new HashMap<>();
+							try ( N5Reader intensityN5Reader = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI ) )
 							{
-								// gridBlock is 3d, make it 5d
-								blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
-								blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
-								gridOffset = new long[] { gridBlock[2][0], gridBlock[2][1], gridBlock[2][2], cIndex, tIndex }; // because blocksize in C & T is 1
-
-								// img is 3d, make it 5d
-								// the same information is returned no matter which index is queried in C and T
-								image = Views.addDimension( Views.addDimension( img ) );
+								overlappingViews.forEach( v -> {
+									coefficients.put( v, IntensityCorrection.readCoefficients( intensityN5Reader, intensityN5Group, intensityN5Dataset, v ) );
+								} );
 							}
-							else
+						} else {
+							coefficients = null;
+						}
+
+						//final RandomAccessibleInterval img;
+						final BlockSupplier blockSupplier;
+						final FinalInterval interval = new FinalInterval( bbMin, bbMax );
+
+						if ( masks )
+						{
+							System.out.println( "Creating masks for block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
+
+							blockSupplier = BlockSupplier.of( Views.zeroMin(
+									new GenerateComputeBlockMasks(
+											dataLocal,
+											registrations,
+											overlappingViews,
+											bbMin,
+											bbMax,
+											uint8,
+											uint16,
+											maskOff ).call( gridBlock ) ) );
+						}
+						else
+						{
+							//
+							// PREFETCHING, TODO: should be part of BlkAffineFusion.init
+							//
+							final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+							if ( overlappingBlocks.overlappingViews().isEmpty() )
+								return gridBlock;
+
+							if ( prefetch )
 							{
-								blockOffset = gridBlock[0];
-								blockSizeExport = gridBlock[1];
-								gridOffset = gridBlock[2];
+								System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
 
-								image = img;
+								final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+								overlappingBlocks.prefetch(prefetchExecutor);
+								prefetchExecutor.shutdown();
 							}
 
-							final Interval block =
-									Intervals.translate(
-											new FinalInterval( blockSizeExport ),
-											blockOffset );
+							System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
-							final RandomAccessibleInterval source =
-									Views.interval( image, block );
+							// returns a zero-min interval
+							//blockSupplier = BlkAffineFusion.init(
+							blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
+									conv,
+									dataLocal.getSequenceDescription().getImgLoader(),
+									viewIds,
+									registrations,
+									dataLocal.getSequenceDescription().getViewDescriptions(),
+									fusionType,//fusion.getFusionType(),
+									null, // map<old,new> will go here
+									1, // linear interpolation
+									coefficients, // intensity correction
+									new BoundingBox( interval ),
+									(RealType & NativeType)type,
+									blockSize );
+						}
 
-							final RandomAccessibleInterval sourceGridBlock =
-									Views.offsetInterval(source, blockOffset, blockSizeExport);
+						final long[] /*blockOffset, blockSizeExport, */gridOffset;
 
-							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+						final long[] blockMin = gridBlock[0].clone();
+						final long[] blockMax = new long[ blockMin.length ];
 
-							N5Utils.saveBlock(sourceGridBlock, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
+						for ( int d = 0; d < blockMin.length; ++d )
+							blockMax[ d ] = Math.min( Intervals.zeroMin( interval ).max( d ), blockMin[ d ] + gridBlock[1][ d ] - 1 );
 
-							if ( N5Util.sharedHDF5Writer == null )
-								driverVolumeWriterLocal.close();
-						} );
+						final RandomAccessibleInterval image;
+						final RandomAccessibleInterval img = BlkAffineFusion.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
+
+						// 5D OME-ZARR CONTAINER
+						if ( storageType == StorageFormat.ZARR )
+						{
+							// gridBlock is 3d, make it 5d
+							//blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
+							//blockSizeExport = new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], 1, 1 };
+							gridOffset = new long[] { gridBlock[2][0], gridBlock[2][1], gridBlock[2][2], cIndex, tIndex }; // because blocksize in C & T is 1
+
+							// img is 3d, make it 5d
+							// the same information is returned no matter which index is queried in C and T
+							//image = Views.addDimension( Views.addDimension( img ) );
+							image = Views.interval(
+									Views.addDimension( Views.addDimension( img ) ),
+									new FinalInterval( new long[] { gridBlock[1][0], gridBlock[1][1], gridBlock[1][2], cIndex+1, tIndex+1 } ) ); // blocksize is used here
+						}
+						else
+						{
+							//blockOffset = gridBlock[0];
+							//blockSizeExport = gridBlock[1];
+							gridOffset = gridBlock[2];
+
+							image = img;
+						}
+
+						/*
+						final Interval block =
+								Intervals.translate(
+										new FinalInterval( blockSizeExport ),
+										blockOffset );
+
+						final RandomAccessibleInterval source =
+								Views.interval( image, block );
+
+						final RandomAccessibleInterval sourceGridBlock =
+								Views.offsetInterval(source, blockOffset, blockSizeExport);
+
+						*/
+						final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+
+						// TODO: is this multithreaded??
+						// TODO: should we catch the N5 exception and throw a general one?
+						N5Utils.saveBlock(/*sourceGridBlock*/ image, driverVolumeWriterLocal, mrInfo[ 0 ].dataset, gridOffset );
+
+						if ( N5Util.sharedHDF5Writer == null )
+							driverVolumeWriterLocal.close();
+
+						return gridBlock.clone();
+					} );
+
+					rddResult.cache();
+					rddResult.count();
+
+					// extract all blocks that failed
+					final Set<long[][]> failedBlocksSet =
+							retryTracker.processWithSpark( rddResult, grid );
+
+					// Use RetryTracker to handle retry counting and removal
+					if (!retryTracker.processFailures(failedBlocksSet))
+					{
+						System.out.println( "Stopping." );
+						System.exit( 1 );
+					}
+
+					// Update grid for next iteration with remaining failed blocks
+					grid.clear();
+					grid.addAll(failedBlocksSet);
+				}
+				while ( grid.size() > 0 );
 
 				System.out.println( new Date( System.currentTimeMillis() ) + ": Saved full resolution, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
@@ -582,37 +724,68 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 					time = System.currentTimeMillis();
 
-					final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
+					final RetryTrackerSpark<long[][]> retryTrackerDS =
+							RetryTrackerSpark.forGridBlocks("s" + level + " block processing", allBlocks.size());
 
-					rddDS.foreach(
-							gridBlock ->
+					do
+					{
+						if (!retryTrackerDS.beginAttempt())
+						{
+							System.out.println( "Stopping." );
+							System.exit( 1 );
+						}
+
+						final JavaRDD<long[][]> rddDS = sc.parallelize( allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
+	
+						final JavaRDD<long[][]> rddDSResult = rddDS.map( gridBlock ->
+						{
+							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
+	
+							// 5D OME-ZARR CONTAINER
+							if ( storageType == StorageFormat.ZARR )
 							{
-								final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
-
-								// 5D OME-ZARR CONTAINER
-								if ( storageType == StorageFormat.ZARR )
-								{
-									N5ApiTools.writeDownsampledBlock5dOMEZARR(
-											driverVolumeWriterLocal,
-											mrInfo[ s ],
-											mrInfo[ s - 1 ],
-											gridBlock,
-											cIndex,
-											tIndex );
-								}
-								else
-								{
-									N5ApiTools.writeDownsampledBlock(
-											driverVolumeWriterLocal,
-											mrInfo[ s ],
-											mrInfo[ s - 1 ],
-											gridBlock );
-								}
-
-								if ( N5Util.sharedHDF5Writer == null )
-									driverVolumeWriterLocal.close();
-
-							});
+								N5ApiTools.writeDownsampledBlock5dOMEZARR(
+										driverVolumeWriterLocal,
+										mrInfo[ s ],
+										mrInfo[ s - 1 ],
+										gridBlock,
+										cIndex,
+										tIndex );
+							}
+							else
+							{
+								N5ApiTools.writeDownsampledBlock(
+										driverVolumeWriterLocal,
+										mrInfo[ s ],
+										mrInfo[ s - 1 ],
+										gridBlock );
+							}
+	
+							if ( N5Util.sharedHDF5Writer == null )
+								driverVolumeWriterLocal.close();
+	
+							return gridBlock.clone();
+						});
+						
+						rddDSResult.cache();
+						rddDSResult.count();
+	
+						// extract all blocks that failed
+						final Set<long[][]> failedBlocksSet =
+								retryTrackerDS.processWithSpark( rddDSResult, grid );
+	
+						// Use RetryTracker to handle retry counting and removal
+						if (!retryTrackerDS.processFailures(failedBlocksSet))
+						{
+							System.out.println( "Stopping." );
+							System.exit( 1 );
+						}
+	
+						// Update grid for next iteration with remaining failed blocks
+						grid.clear();
+						grid.addAll(failedBlocksSet);
+					}
+					while ( grid.size() > 0 );
 
 					System.out.println( new Date( System.currentTimeMillis() ) + ": Saved level s " + level + ", took: " + (System.currentTimeMillis() - time ) + " ms." );
 				}

@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
@@ -38,8 +39,7 @@ import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
-import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.sequence.ViewId;
@@ -49,11 +49,13 @@ import net.preibisch.bigstitcher.spark.CreateFusionContainer.Compressions;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
@@ -107,7 +109,32 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	{
 		this.setRegion();
 
-		//System.out.println( com.google.common.collect.ImmutableList.class.getProtectionDomain().getCodeSource().getLocation() );
+		/*
+		Exception in thread "main" java.lang.IllegalAccessError: tried to access method com.google.common.collect.ImmutableList$Builder.<init>(I)V from class com.google.common.collect.Streams
+		at com.google.common.collect.Streams.concat(Streams.java:204)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.TransformationUtils.tranformsToAffine(TransformationUtils.java:27)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.buildMetadata(OmeNgffMultiScaleMetadata.java:159)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.<init>(OmeNgffMultiScaleMetadata.java:101)
+		at org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata.<init>(OmeNgffMultiScaleMetadata.java:91)
+		at net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes.createOMEZarrMetadata(OMEZarrAttibutes.java:128)
+		at net.preibisch.mvrecon.process.n5api.N5ApiTools.setupBdvDatasetsOMEZARR(N5ApiTools.java:422)
+		at net.preibisch.bigstitcher.spark.SparkResaveN5.lambda$call$1(SparkResaveN5.java:219)
+		*/
+
+		/*
+		local: 
+		com.google.common.collect.ImmutableList: file:/home/preibischs@hhmi.org/.m2/repository/com/google/guava/guava/33.3.1-jre/guava-33.3.1-jre.jar
+		com.google.common.collect.Streams: file:/home/preibischs@hhmi.org/.m2/repository/com/google/guava/guava/33.3.1-jre/guava-33.3.1-jre.jar
+		*/
+
+		/*
+		cluster:
+		com.google.common.collect.ImmutableList: file:/misc/local/spark-3.4.1/jars/guava-14.0.1.jar
+		com.google.common.collect.Streams: file:/groups/scicompsoft/home/preibischs/Keller/BigStitcher-Spark-0.1.0-SNAPSHOT.jar
+		*/
+
+		System.out.println( "com.google.common.collect.ImmutableList: " +  com.google.common.collect.ImmutableList.class.getProtectionDomain().getCodeSource().getLocation() );
+		System.out.println( "com.google.common.collect.Streams: " + com.google.common.collect.Streams.class.getProtectionDomain().getCodeSource().getLocation() );
 		//System.exit( 0 );
 
 		final SpimData2 dataGlobal = this.loadSpimData2();
@@ -214,12 +241,14 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					}
 					else
 					{
+						System.out.println( Arrays.toString( blockSize ) );
+						
 						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
 								n5Writer,
 								viewId,
 								dataTypes.get( viewId.getViewSetupId() ),
 								dimensions.get( viewId.getViewSetupId() ),
-								dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
+								//dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(), // TODO: this is a hack for now
 								compression,
 								blockSize,
 								downsamplings);
@@ -238,6 +267,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		if ( localSparkBindAddress )
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
+		//System.exit( 0 );
+		
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
@@ -246,24 +277,56 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		time = System.currentTimeMillis();
 
-		final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, Math.min( Spark.maxPartitions, gridS0.size() ) );
+		final RetryTrackerSpark<long[][]> retryTracker =
+				RetryTrackerSpark.forGridBlocks("s0 n5-api dataset resaving", gridS0.size());
 
-		rdds0.foreach(
-				gridBlock ->
-				{
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
-					final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+		do
+		{
+			if (!retryTracker.beginAttempt())
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
 
-					N5ApiTools.resaveS0Block(
-							dataLocal,
-							n5Lcl,
-							useN5 ? StorageFormat.N5 : StorageFormat.ZARR,
-							dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
-							N5ApiTools.gridToDatasetBdv( 0, useN5 ? StorageFormat.N5 : StorageFormat.ZARR ), // a function mapping the gridblock to the dataset name for level 0 and N5
-							gridBlock );
+			final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, Math.min( Spark.maxPartitions, gridS0.size() ) );
 
-					n5Lcl.close();
-				});
+			final JavaRDD<long[][]> rdds0Result = rdds0.map( gridBlock ->
+			{
+				final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
+				final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+
+				N5ApiTools.resaveS0Block(
+						dataLocal,
+						n5Lcl,
+						useN5 ? StorageFormat.N5 : StorageFormat.ZARR,
+						dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
+						N5ApiTools.gridToDatasetBdv( 0, useN5 ? StorageFormat.N5 : StorageFormat.ZARR ), // a function mapping the gridblock to the dataset name for level 0 and N5
+						gridBlock );
+
+				n5Lcl.close();
+
+				return gridBlock.clone();
+			});
+
+			rdds0Result.cache();
+			rdds0Result.count();
+
+			// extract all blocks that failed
+			final Set<long[][]> failedBlocksSet =
+					retryTracker.processWithSpark( rdds0Result, gridS0 );
+
+			// Use RetryTracker to handle retry counting and removal
+			if (!retryTracker.processFailures(failedBlocksSet))
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
+
+			// Update grid for next iteration with remaining failed blocks
+			gridS0.clear();
+			gridS0.addAll(failedBlocksSet);
+		}
+		while ( gridS0.size() > 0 );
 
 		System.out.println( "Resaved " + (useN5 ? "N5 s0" : "OME-ZARR 0") + "-level, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
@@ -274,6 +337,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		{
 			final int s = level;
 
+			//mrInfo.dimensions, mrInfo.blockSize, mrInfo.blockSize
 			final List<long[][]> allBlocks =
 					viewIdsGlobal.stream().map( viewId ->
 							N5ApiTools.assembleJobs(
@@ -283,36 +347,69 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println( "Downsampling level " + (useN5 ? "s" : "") + s + "... " );
 			System.out.println( "Number of compute blocks: " + allBlocks.size() );
 
-			final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
+			final RetryTrackerSpark<long[][]> retryTrackerDS =
+					RetryTrackerSpark.forGridBlocks( "s" + s +" n5-api dataset resaving", allBlocks.size());
 
 			final long timeS = System.currentTimeMillis();
 
-			rddsN.foreach(
-					gridBlock ->
+			do
+			{
+				if (!retryTrackerDS.beginAttempt())
+				{
+					System.out.println( "Stopping." );
+					System.exit( 1 );
+				}
+
+				final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
+	
+	
+				final JavaRDD<long[][]> rdds0Result = rddsN.map( gridBlock ->
+				{
+					final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+
+					if ( useN5 )
 					{
-						final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+						N5ApiTools.writeDownsampledBlock(
+								n5Lcl,
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+								gridBlock );
+					}
+					else
+					{
+						N5ApiTools.writeDownsampledBlock5dOMEZARR(
+								n5Lcl,
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+								gridBlock,
+								0,
+								0 );
+					}
+	
+					n5Lcl.close();
 
-						if ( useN5 )
-						{
-							N5ApiTools.writeDownsampledBlock(
-									n5Lcl,
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
-									gridBlock );
-						}
-						else
-						{
-							N5ApiTools.writeDownsampledBlock5dOMEZARR(
-									n5Lcl,
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
-									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
-									gridBlock,
-									0,
-									0 );
-						}
+					return gridBlock.clone();
+				});
 
-						n5Lcl.close();
-					});
+				rdds0Result.cache();
+				rdds0Result.count();
+
+				// extract all blocks that failed
+				final Set<long[][]> failedBlocksSet =
+						retryTrackerDS.processWithSpark( rdds0Result, allBlocks );
+
+				// Use RetryTracker to handle retry counting and removal
+				if (!retryTrackerDS.processFailures(failedBlocksSet))
+				{
+					System.out.println( "Stopping." );
+					System.exit( 1 );
+				}
+
+				// Update grid for next iteration with remaining failed blocks
+				allBlocks.clear();
+				allBlocks.addAll(failedBlocksSet);
+
+			} while ( allBlocks.size() > 0 );
 
 			System.out.println( "Resaved " + (useN5 ? "N5 s" : "OME-ZARR ") + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
 		}
@@ -336,12 +433,12 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		}
 		else
 		{
-			final Map< ViewId, String > viewIdToPath = new HashMap<>();
+			final Map< ViewId, OMEZARREntry > viewIdToPath = new HashMap<>();
 
 			viewIdToMrInfo.forEach( (viewId, mrInfo ) ->
 				viewIdToPath.put(
 						viewId,
-						mrInfo[ 0 ].dataset.substring(0,  mrInfo[ 0 ].dataset.lastIndexOf( "/" ) ) )
+						new OMEZARREntry( mrInfo[ 0 ].dataset.substring(0,  mrInfo[ 0 ].dataset.lastIndexOf( "/" ) ), new int[] { 0, 0 } ) )
 			);
 
 			dataGlobal.getSequenceDescription().setImgLoader(

@@ -40,7 +40,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.N5Factory.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
@@ -97,6 +97,7 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 import scala.Tuple3;
+import scala.Tuple4;
 import util.Grid;
 import util.URITools;
 
@@ -234,6 +235,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// assemble all intervals that need to be processed
 		//
 		final ArrayList< Pair< ViewId, Interval > > toProcess = new ArrayList<>();
+		final HashMap< ViewId, long[] > downsampledDimensions = new HashMap<>();
 
 		// assemble all pairs for parallelization with Spark
 		final ArrayList< Tuple2< ViewId, ViewId > > metadataJobs = new ArrayList<>();
@@ -278,7 +280,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		final JavaRDD<Tuple2<ViewId, ViewId>> metadataJobsSpark = sc.parallelize( metadataJobs, Math.min( Spark.maxPartitions, metadataJobs.size() ) );
 
-		final JavaRDD< ArrayList< Tuple3< ViewId, long[], long[] > > > metadataJobRDD = metadataJobsSpark.map( metaData ->
+		final JavaRDD< ArrayList< Tuple4< ViewId, long[], long[], long[] > > > metadataJobRDD = metadataJobsSpark.map( metaData ->
 		{
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 
@@ -301,7 +303,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					ds,
 					true );
 
-			final ArrayList< Tuple3< ViewId, long[], long[] > > resultIntervals = new ArrayList<>();
+			final ArrayList< Tuple4< ViewId, long[], long[], long[] > > resultIntervals = new ArrayList<>();
 
 			if ( overlappingOnly )
 			{
@@ -342,21 +344,23 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					//System.out.println( "intersection=" + Util.printInterval( intersection ) + ", size (#px)=" + size );
 					//maxIntervalSize = Math.max( maxIntervalSize, size );
 
-					resultIntervals.add( new Tuple3<>( metaData._1(), intersection.minAsLongArray(), intersection.maxAsLongArray() ) );
+					resultIntervals.add( new Tuple4<>( metaData._1(), intersection.minAsLongArray(), intersection.maxAsLongArray(), input.getA().dimensionsAsLongArray() ) );
 				}
 
 			}
 			else
 			{
-				resultIntervals.add( new Tuple3<>( metaData._1(), input.getA().minAsLongArray(), input.getA().maxAsLongArray() ));
+				resultIntervals.add( new Tuple4<>( metaData._1(), input.getA().minAsLongArray(), input.getA().maxAsLongArray(), input.getA().dimensionsAsLongArray() ));
 			}
 
 			return resultIntervals;
 		});
 
 		metadataJobRDD.collect().forEach(
-				l -> l.forEach(
-							md -> toProcess.add(new ValuePair<ViewId, Interval>(md._1(), new FinalInterval(md._2(), md._3())))));
+				l -> l.forEach( md -> {
+					toProcess.add(new ValuePair<ViewId, Interval>(md._1(), new FinalInterval(md._2(), md._3())));
+					downsampledDimensions.put(md._1(), md._4());
+				}));
 
 		long maxIntervalSize = 0;
 
@@ -395,15 +399,33 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				final long[] superBlockMax = new long[ intervalOffset.length ];
 				Arrays.setAll( superBlockMax, d -> superBlockMin[ d ] + gridEntry[ 1 ][ d ] - 1 );
 
+				// expand each interval boundary that is within an image by one, otherwise there are gaps between neighboring blocks
+				// as each block does "true convolutions" for the 3x3x3 min/max finding
+				final long[] dim = downsampledDimensions.get( pair.getA() );
+				for ( int d = 0; d < superBlockMin.length; ++d )
+				{
+					if ( superBlockMin[ d ] > 0 )
+						--superBlockMin[ d ];
+
+					if ( superBlockMax[ d ] < dim[ d ] - 1 )
+						++superBlockMax[ d ];
+				}
+
 				System.out.println( "Processing " + Group.pvid(pair.getA()) + ", " + Util.printInterval( new FinalInterval(superBlockMin, superBlockMax) ) + " of full interval " + Util.printInterval( pair.getB() ) );
 			});
 		}
 
 		System.out.println( "Total number of jobs for interest point detection: " + sparkProcess.size() );
 
+		if ( sparkProcess.size() == 0 )
+		{
+			System.out.println( "Nothing to do, stopping." );
+			System.exit( 0 );
+		}
+
 		// create temporary N5 folder
 		final String tempLocation = URITools.appendName( dataGlobal.getBasePathURI(), InterestPointsN5.baseN5 );
-		final URI tempURI = URI.create( tempLocation );
+		final URI tempURI = URITools.toURI( tempLocation );
 		final String tempDataset = "spark_tmp_" + System.currentTimeMillis() + "_" + new Random( System.nanoTime() ).nextInt();
 
 		System.out.println( "Creating temporary N5 for dataset for spark jobs in '" + tempURI + ":/" + tempDataset + "'" );

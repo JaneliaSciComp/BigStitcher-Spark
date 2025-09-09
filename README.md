@@ -48,7 +48,7 @@ Additonally there are some utility methods:
 
 ### To run it on your local computer<a name="installlocal">
 
-* Prerequisites:  Java and maven must be installed.
+* Prerequisites:  **Java** (_[Zulu JDK 8 + FX](https://www.azul.com/downloads/?version=java-8-lts&package=jdk-fx#zulu) is tested, and Java >=21 currently does not work with the Spark version used_) and **[Apache Maven](https://maven.apache.org)** must be installed. Try `java -version` and `mvn -v` to confirm their functionality and versions. You have to set the `JAVA_HOME` environment variable for Maven to find the right Java.
 * Clone the repo and `cd` into `BigStitcher-Spark`
 * Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create the executable `resave`, `detect-interestpoints`, `register-interestpoints`, `stitching`, `solver`, `affine-fusion`, `nonrigid-fusion`, `downsample`, `clear-interestpoints` and `clear-registrations` in the working directory.
 
@@ -70,6 +70,8 @@ Please ask your sysadmin for help how to run it on your **cluster**, below are h
 
 #### Instructions/stories how people set up Spark/BigStitcher-Spark on their respective clusters:
 * HHMI Janelia (LSF cluster): [Tutorial on YouTube](https://youtu.be/D3Y1Rv_69xI?si=mp_57Jby0T2ETP0p&t=5520) by [@trautmane](https://github.com/trautmane)
+* MDC Berlin (SGE cluster): [Google doc explaining the steps](https://docs.google.com/document/d/119jxXk-w3GWZ3IvpMXlAclE8ZeNXniiuO3YScMyImUQ/edit?usp=sharing) by [@bellonet](https://github.com/bellonet)
+* ***We are currently developing a generic [NextFlow](https://www.nextflow.io)-based pipeline for submitting BigStitcher-Spark jobs to a cluster***
 
 ### To run it on the cloud<a name="installcloud">
 
