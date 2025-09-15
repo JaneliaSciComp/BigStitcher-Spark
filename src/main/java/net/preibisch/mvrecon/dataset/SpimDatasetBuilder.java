@@ -45,7 +45,6 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.FileMapImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.LegacyStackImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapEntry;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -55,7 +54,7 @@ import ome.units.quantity.Length;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import scala.Tuple2;
 
-public class DatasetBuilder {
+public class SpimDatasetBuilder {
 
 	static class ViewIndex {
 		final int tp, ch, il, ang;
@@ -309,7 +308,7 @@ public class DatasetBuilder {
 
 	private final StackPattern fileNamePattern;
 
-	public DatasetBuilder(String fileNamePattern )
+	public SpimDatasetBuilder(String fileNamePattern )
 	{
 		this.fileNamePattern = new StackPattern(fileNamePattern);
 	}
