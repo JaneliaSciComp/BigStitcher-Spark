@@ -59,8 +59,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 {
 	private static final long serialVersionUID = -9140450542904228386L;
 
-	public static enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
-
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
 
@@ -541,12 +539,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 	public static void main(final String... args) throws SpimDataException
 	{
-
-		//final XmlIoSpimData io = new XmlIoSpimData();
-		//final SpimData spimData = io.load( "/Users/preibischs/Documents/Microscopy/Stitching/Truman/standard/output/dataset.xml" );
-		//BdvFunctions.show( spimData );
-		//SimpleMultiThreading.threadHaltUnClean();
-
 		System.out.println(Arrays.toString(args));
 
 		System.exit(new CommandLine(new CreateFusionContainer()).execute(args));
