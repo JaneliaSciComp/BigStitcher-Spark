@@ -127,7 +127,7 @@ install_command solver "net.preibisch.bigstitcher.spark.Solver"
 install_command create-fusion-container "net.preibisch.bigstitcher.spark.CreateFusionContainer"
 install_command affine-fusion "net.preibisch.bigstitcher.spark.SparkAffineFusion"
 install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFusion"
-install_command create-stitching-dataset "net.preibisch.bigstitcher.spark.CreateStitchingDataset"
+install_command create-dataset "net.preibisch.bigstitcher.spark.CreateDataset"
 
 echo 'Installing utils ...'
 

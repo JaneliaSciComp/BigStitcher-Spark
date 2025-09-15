@@ -14,7 +14,7 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
 
-public class CreateStitchingDataset extends AbstractBasic implements Callable<Void>, Serializable
+public class CreateDataset extends AbstractBasic implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -5155338208494730656L;
 
@@ -46,6 +46,6 @@ public class CreateStitchingDataset extends AbstractBasic implements Callable<Vo
 	public static void main(final String... args) throws SpimDataException {
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new CreateStitchingDataset()).execute(args));
+		System.exit(new CommandLine(new CreateDataset()).execute(args));
 	}
 }
