@@ -239,8 +239,6 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		if ( localSparkBindAddress )
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
 
-		//System.exit( 0 );
-		
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
