@@ -2,6 +2,8 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
 import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 
@@ -33,6 +35,17 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 		URI xmlURI = URITools.toURI(xmlURIString);
 
 		System.out.println("Save spimData with original tiles to " + xmlURI);
+		if (URITools.isFile( xmlURI )) {
+			Path xmlPath = Paths.get(xmlURI);
+			// create parent directories if necessary
+			if ( !xmlPath.getParent().toFile().exists() ) {
+				if (!xmlPath.getParent().toFile().mkdirs()) {
+					// log the error but continue
+					// if the directory wasn't create it will fail later when trying to write the file
+					System.out.println("Failed to create parent directory for " + xmlURI);
+				}
+			}
+		}
 		new XmlIoSpimData2().save(spimData, xmlURI);
 
 		return null;
