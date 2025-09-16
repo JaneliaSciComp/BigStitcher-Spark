@@ -128,6 +128,7 @@ install_command create-fusion-container "net.preibisch.bigstitcher.spark.CreateF
 install_command affine-fusion "net.preibisch.bigstitcher.spark.SparkAffineFusion"
 install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFusion"
 install_command create-dataset "net.preibisch.bigstitcher.spark.CreateDataset"
+install_command chain-commands "net.preibisch.bigstitcher.spark.ChainCommands"
 
 echo 'Installing utils ...'
 
