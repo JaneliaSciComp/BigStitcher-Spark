@@ -3,13 +3,14 @@ package net.preibisch.mvrecon.dataset;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Collection;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -29,12 +30,12 @@ import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
-import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.TimePoints;
 import mpicbg.spim.data.sequence.ViewDescription;
+import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
@@ -52,7 +53,10 @@ import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
 import org.apache.commons.lang3.builder.ToStringBuilder;
-import scala.Tuple2;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 public class SpimDatasetBuilder {
 
@@ -89,73 +93,11 @@ public class SpimDatasetBuilder {
 		}
 	}
 
-	static class TileInfo {
-		final int tileIndex; // global tile (view) index
-		final Path filePath; // file containing this tile
-		final int tp;
-		final int tileName;
-		final int imageIndex;
-		final int chIndex;
-		final String chName;
-		final int angle;
-		final int illumination;
-		final int sizeZ;
-		final int sizeY;
-		final int sizeX;
-		final double z;
-		final double y;
-		final double x;
-		final double resZ;
-		final double resY;
-		final double resX;
-
-		TileInfo(int tileIndex,
-				 Path filePath,
-				 int tp,
-				 int tileName,
-				 int imageIndex,
-				 int chIndex, String chName,
-				 int angle, int illumination,
-				 int sizeZ, int sizeY, int sizeX,
-				 double z, double y, double x,
-				 double resZ, double resY, double resX) {
-			this.tileIndex = tileIndex;
-			this.filePath = filePath;
-			this.tp = tp;
-			this.tileName = tileName;
-			this.imageIndex = imageIndex;
-			this.chIndex = chIndex;
-			this.chName = chName;
-			this.angle = angle;
-			this.illumination = illumination;
-			this.sizeZ = sizeZ;
-			this.sizeY = sizeY;
-			this.sizeX = sizeX;
-			this.z = z;
-			this.y = y;
-			this.x = x;
-			this.resZ = resZ;
-			this.resY = resY;
-			this.resX = resX;
-		}
-
-		@Override
-		public boolean equals(Object o) {
-			if (o == null || getClass() != o.getClass()) return false;
-			TileInfo tileInfo = (TileInfo) o;
-			return tp == tileInfo.tp && imageIndex == tileInfo.imageIndex && tileIndex == tileInfo.tileIndex && chIndex == tileInfo.chIndex && angle == tileInfo.angle && illumination == tileInfo.illumination && Objects.equals(filePath, tileInfo.filePath) && Objects.equals(chName, tileInfo.chName);
-		}
-
-		@Override
-		public int hashCode() {
-			return Objects.hash(filePath, tp, imageIndex, tileIndex, chIndex, chName, angle, illumination);
-		}
-	}
-
 	static class StackFile {
 		final ViewIndex viewIndex;
 		final int ti;
-		final Path file;
+		final URI baseURI;
+		final String relativeFilePath;
 		int nImages = -1;
 		int nTp = -1;
 		int nCh = -1;
@@ -163,23 +105,27 @@ public class SpimDatasetBuilder {
 		int sizeY = -1;
 		int sizeX = -1;
 
-		StackFile(int tp, int ch, int il, int ang, int ti, Path file )
+		StackFile(int tp, int ch, int il, int ang, int ti, URI baseURI, String relativeFilePath )
 		{
 			this.viewIndex = new ViewIndex(tp, ch, il, ang);
 			this.ti = ti;
-			this.file = file;
+			this.baseURI = baseURI;
+			this.relativeFilePath = relativeFilePath;
 		}
 
 		@Override
 		public boolean equals(Object o) {
 			if (o == null || getClass() != o.getClass()) return false;
 			StackFile stackFile = (StackFile) o;
-			return ti == stackFile.ti && Objects.equals(viewIndex, stackFile.viewIndex) && Objects.equals(file, stackFile.file);
+			return ti == stackFile.ti &&
+					Objects.equals(viewIndex, stackFile.viewIndex) &&
+					Objects.equals(baseURI, stackFile.baseURI) &&
+					Objects.equals(relativeFilePath, stackFile.relativeFilePath);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(viewIndex, ti, file);
+			return Objects.hash(viewIndex, ti, baseURI, relativeFilePath);
 		}
 
 		@Override
@@ -187,73 +133,232 @@ public class SpimDatasetBuilder {
 			return new ToStringBuilder(this)
 					.append("view", viewIndex)
 					.append("ti", ti)
-					.append("file", file)
+					.append("baseURI", baseURI)
+					.append("relativeFilePath", relativeFilePath)
 					.toString();
 		}
 
-		List<TileInfo> loadTileMetadata()
-		{
-			List<TileInfo> tiles = new ArrayList<>();
-			if ( !file.toFile().exists() )
-			{
-				return tiles;
-			}
-
-			IFormatReader formatReader = new ChannelSeparator();
-			try {
-				if ( !LegacyStackImgLoaderLOCI.createOMEXMLMetadata( formatReader ) ) {
-					try {
-						formatReader.close();
-					} catch (IOException e) {
-						e.printStackTrace();
-					}
-					return tiles;
-				}
-
-				formatReader.setId( file.toString() );
-
-				MetadataRetrieve retrieve = (MetadataRetrieve)formatReader.getMetadataStore();
-
-				this.nImages = retrieve.getImageCount();
-				this.nTp = formatReader.getSizeT();
-				this.nCh = formatReader.getSizeC();
-				this.sizeZ = formatReader.getSizeZ();
-				this.sizeY = formatReader.getSizeY();
-				this.sizeX = formatReader.getSizeX();
-				for (int imageIndex = 0; imageIndex < nImages; imageIndex++) {
-					Length z = retrieve.getPlanePositionZ(imageIndex, 0);
-					Length y = retrieve.getPlanePositionY(imageIndex, 0);
-					Length x = retrieve.getPlanePositionX(imageIndex, 0);
-					Length resX = retrieve.getPixelsPhysicalSizeX(imageIndex);
-					Length resY = retrieve.getPixelsPhysicalSizeY(imageIndex);
-					Length resZ = retrieve.getPixelsPhysicalSizeZ(imageIndex);
-					double zz = z != null ? z.value(UNITS.MICROMETER).doubleValue() : 0;
-					double yy = y != null ? y.value(UNITS.MICROMETER).doubleValue() : 0;
-					double xx = x != null ? x.value(UNITS.MICROMETER).doubleValue() : 0;
-					double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 0;
-					double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 0;
-					double rX = resX != null ? resX.value(UNITS.MICROMETER).doubleValue() : 0;
-					int imageChannels = retrieve.getChannelCount(imageIndex);
-					for (int chIndex = 0; chIndex < imageChannels; chIndex++) {
-						String chName = retrieve.getChannelName(imageIndex, chIndex);
-						tiles.add(new TileInfo(
-								(ti * nImages + imageIndex) * imageChannels + chIndex,
-								file,
-								viewIndex.tp,
-								ti,
-								imageIndex,
-								chIndex, chName,
-								viewIndex.ang, viewIndex.il,
-								sizeZ, sizeY, sizeX,
-								zz, yy, xx,
-								rZ, rY, rX));
-					}
-				}
-				return tiles;
-			} catch (Exception e) {
-				throw new IllegalStateException("Could not read " + file, e);
-			}
+		Path getFilePath() {
+			return Paths.get(baseURI).resolve(relativeFilePath);
 		}
+
+		int getTp() {
+			return viewIndex.tp;
+		}
+
+		int getTi() {
+			return ti;
+		}
+
+		public int getCh() {
+			return viewIndex.ch;
+		}
+
+		public int getAng() {
+			return viewIndex.ang;
+		}
+
+		public int getIl() {
+			return viewIndex.il;
+		}
+	}
+
+	interface ViewSetupBuilder {
+		SequenceDescription getSequenceDescription();
+		ViewSetupBuilder setImgLoader();
+		ViewSetupBuilder createViewSetups(List<StackFile> stackFiles);
+	}
+
+
+	static class LOCIViewSetupBuilder implements ViewSetupBuilder {
+
+		private final SequenceDescription sequenceDescription;
+		private final Map<Integer, StackFile> viewToStackFileMap = new HashMap<>();
+
+		LOCIViewSetupBuilder(TimePoints timePoints) {
+			this.sequenceDescription = new SequenceDescription(
+					timePoints,
+					/*view setups*/Collections.emptyList()
+			);
+		}
+
+		@Override
+		public SequenceDescription getSequenceDescription() {
+			return sequenceDescription;
+		}
+
+		@Override
+		public LOCIViewSetupBuilder setImgLoader() {
+			Map<BasicViewDescription< ? >, FileMapEntry> fileMap = new HashMap<>();
+			for (ViewSetup vs : sequenceDescription.getViewSetupsOrdered()) {
+				StackFile stackFile = viewToStackFileMap.get(vs.getId());
+				ViewDescription vdI = sequenceDescription.getViewDescription( stackFile.getTp(), vs.getId() );
+				fileMap.put( vdI, new FileMapEntry(stackFile.getFilePath().toFile(), vs.getTile().getId(), vs.getChannel().getId()) );
+			}
+
+			sequenceDescription.setImgLoader(new FileMapImgLoaderLOCI(
+					fileMap,
+					sequenceDescription,
+					false
+			));
+			return this;
+		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		public LOCIViewSetupBuilder createViewSetups(List<StackFile> stackFiles) {
+			stackFiles.forEach( stackFile -> {
+				File tileFile = stackFile.getFilePath().toFile();
+				if ( !tileFile.exists() )
+				{
+					return;
+				}
+				IFormatReader formatReader = new ChannelSeparator();
+				try {
+					if ( !LegacyStackImgLoaderLOCI.createOMEXMLMetadata( formatReader ) ) {
+						try {
+							formatReader.close();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+						return;
+					}
+
+					formatReader.setId( tileFile.toString() );
+
+					MetadataRetrieve retrieve = (MetadataRetrieve)formatReader.getMetadataStore();
+
+					stackFile.nImages = retrieve.getImageCount();
+					stackFile.nTp = formatReader.getSizeT();
+					stackFile.nCh = formatReader.getSizeC();
+					stackFile.sizeZ = formatReader.getSizeZ();
+					stackFile.sizeY = formatReader.getSizeY();
+					stackFile.sizeX = formatReader.getSizeX();
+					for (int imageIndex = 0; imageIndex < stackFile.nImages; imageIndex++) {
+						Length resX = retrieve.getPixelsPhysicalSizeX(imageIndex);
+						Length resY = retrieve.getPixelsPhysicalSizeY(imageIndex);
+						Length resZ = retrieve.getPixelsPhysicalSizeZ(imageIndex);
+						double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 0;
+						double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 0;
+						double rX = resX != null ? resX.value(UNITS.MICROMETER).doubleValue() : 0;
+						int imageChannels = retrieve.getChannelCount(imageIndex);
+						for (int chIndex = 0; chIndex < imageChannels; chIndex++) {
+							String chName = retrieve.getChannelName(imageIndex, chIndex);
+							int viewIndex = (stackFile.getTi() * stackFile.nImages + imageIndex) * imageChannels + chIndex;
+							ViewSetup vs = new ViewSetup(
+									viewIndex,
+									chName,
+									new FinalDimensions(stackFile.sizeX, stackFile.sizeY, stackFile.sizeZ),
+									new FinalVoxelDimensions("um", rX, rY, rZ),
+									new Tile(imageIndex),
+									new Channel(chIndex),
+									new Angle(stackFile.getAng()),
+									new Illumination(stackFile.getIl())
+							);
+							viewToStackFileMap.put(viewIndex, stackFile);
+							((Map<Integer, ViewSetup>) sequenceDescription.getViewSetups()).put(viewIndex, vs);
+						}
+					}
+				} catch (Exception e) {
+					throw new IllegalStateException("Could not read " + stackFile, e);
+				}
+			});
+			return this;
+		}
+	}
+
+	static class N5ViewSetupBuilder implements ViewSetupBuilder {
+
+		private final SequenceDescription sequenceDescription;
+		private final URI n5ContainerURI;
+		private final Map<ViewId, String> viewIdToPath;
+		private final N5Reader n5Reader;
+		private final N5MultichannelLoader n5Loader;
+
+		public N5ViewSetupBuilder(URI n5ContainerURI, TimePoints timePoints) {
+			this.sequenceDescription = new SequenceDescription(
+					timePoints,
+					/*view setups*/Collections.emptyList()
+			);
+			this.n5ContainerURI = n5ContainerURI;
+			this.viewIdToPath = new HashMap<>();
+			n5Reader = new N5FSReader(n5ContainerURI.toString());
+			n5Loader = new N5MultichannelLoader( n5ContainerURI, StorageFormat.N5, sequenceDescription, viewIdToPath );
+		}
+
+		@Override
+		public SequenceDescription getSequenceDescription() {
+			return sequenceDescription;
+		}
+
+		@Override
+		public N5ViewSetupBuilder setImgLoader() {
+			sequenceDescription.setImgLoader(n5Loader);
+			return this;
+		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		public N5ViewSetupBuilder createViewSetups(List<StackFile> stackFiles) {
+			for (int i = 0; i < stackFiles.size(); i++) {
+				StackFile stackFile = stackFiles.get(i);
+				if ( Files.notExists(stackFile.getFilePath()) )
+				{
+					continue;
+				}
+				Map<String, Object> pixelResolutions = n5Reader.getAttribute(".", "pixelResolution", Map.class);
+				VoxelDimensions voxelDimensions;
+				if (pixelResolutions != null) {
+					double[] res = ((List<Double>) pixelResolutions.getOrDefault("dimensions", Arrays.asList(1., 1., 1.)))
+							.stream()
+							.mapToDouble(d -> d)
+							.toArray();
+					String resUnits = (String) pixelResolutions.getOrDefault("unit", "voxel");
+					voxelDimensions = new FinalVoxelDimensions(resUnits, res);
+				} else {
+					voxelDimensions = new FinalVoxelDimensions("voxel", 1., 1., 1.);
+				}
+				Dimensions size;
+				if (n5Reader.exists(stackFile.relativeFilePath + "/s0")) {
+					long[] dims = n5Reader.getDatasetAttributes(stackFile.relativeFilePath + "/s0").getDimensions();
+					size = new FinalDimensions(dims[0], dims[1], dims[2]);
+				} else {
+					long[] dims = n5Reader.getDatasetAttributes(stackFile.relativeFilePath).getDimensions();
+					if (dims != null) {
+						size = new FinalDimensions(dims[0], dims[1], dims[2]);
+					} else {
+						System.out.println("Could not find dimensions attribute for " + stackFile.relativeFilePath);
+						size = null;
+					}
+				}
+				ViewSetup vs = new ViewSetup(
+						i, // in this case view index coincides with stack file index
+						stackFile.relativeFilePath,
+						size,
+						voxelDimensions,
+						new Tile(stackFile.getTi()),
+						new Channel(stackFile.getCh()),
+						new Angle(stackFile.getAng()),
+						new Illumination(stackFile.getIl())
+				);
+				((Map<Integer, ViewSetup>) sequenceDescription.getViewSetups()).put(i, vs);
+				viewIdToPath.put(new ViewId(stackFile.getTp(), i), stackFile.relativeFilePath);
+			}
+//				try {
+//					DatasetAttributes attributes = setupImgLoader.getAttributes( sequenceDescription.getTimePoints().getTimePointsOrdered().get(0).getId() );
+//					vs.setSize( new FinalDimensions( attributes.getDimensions() ) );
+//					vs.setVoxelSize( new FinalVoxelDimensions("um",
+//							attributes.getBlockSize()[0],
+//							attributes.getBlockSize()[1],
+//							attributes.getBlockSize().length > 2 ? attributes.getBlockSize()[2] : 1) );
+//				} catch (N5Exception e) {
+//					throw new IllegalStateException("Could not read attributes for " + vs, e);
+//				}
+
+
+			return this;
+		}
+
 	}
 
 	static class StackPattern {
@@ -313,8 +418,7 @@ public class SpimDatasetBuilder {
 		this.fileNamePattern = new StackPattern(fileNamePattern);
 	}
 
-	public SpimData2 createDataset(String imageDir) {
-		Path imagePath = Paths.get(imageDir);
+	public SpimData2 createDataset(URI imagePath) {
 		List<StackFile> stackFiles = getStackFiles(imagePath);
 
 		// collect timepoints from stack files
@@ -322,38 +426,10 @@ public class SpimDatasetBuilder {
 				.map(si -> new TimePoint(si.viewIndex.tp))
 				.collect(Collectors.toSet());
 
-		// create view setups
-		Map<TileInfo, ViewSetup> viewSetups = stackFiles.stream()
-				.flatMap(sf -> sf.loadTileMetadata().stream())
-				.map(tileInfo -> {
-					Dimensions size = new FinalDimensions(tileInfo.sizeX, tileInfo.sizeY, tileInfo.sizeZ);
-					VoxelDimensions voxelSize = new FinalVoxelDimensions("um", tileInfo.resX, tileInfo.resY, tileInfo.resZ);
-					return new Tuple2<>(
-							tileInfo,
-							new ViewSetup(
-									tileInfo.tileIndex,
-									tileInfo.chName,
-									size,
-									voxelSize,
-									new Tile(tileInfo.imageIndex),
-									new Channel(tileInfo.chIndex),
-									new Angle(tileInfo.angle),
-									new Illumination(tileInfo.illumination)
-							)
-					);
-				})
-				.collect(Collectors.toMap(t -> t._1, t -> t._2));
-
-		SequenceDescription sequenceDescription = new SequenceDescription(
-				new TimePoints(timePoints),
-				viewSetups.values(),
-				/*image loader*/null,
-				null // missing views not handled for now
-		);
-
-		ImgLoader imgLoader = createImageLoader(imagePath, viewSetups.keySet(), sequenceDescription);
-
-		sequenceDescription.setImgLoader(imgLoader);
+		SequenceDescription sequenceDescription = createViewSetupBuilder(imagePath, new TimePoints(timePoints))
+				.createViewSetups(stackFiles)
+				.setImgLoader()
+				.getSequenceDescription();
 
 		// get the min resolution from all calibrations
 		double minResolution = DatasetCreationUtils.minResolution(
@@ -368,7 +444,7 @@ public class SpimDatasetBuilder {
 		ViewInterestPoints viewInterestPoints = new ViewInterestPoints();
 
 		return new SpimData2(
-				imagePath.toUri(),
+				imagePath,
 				sequenceDescription,
 				viewRegistrations,
 				viewInterestPoints,
@@ -379,29 +455,22 @@ public class SpimDatasetBuilder {
 		);
 	}
 
-	private ImgLoader createImageLoader(Path imagePath, Collection<TileInfo> tileInfos, SequenceDescription sd) {
-		Map<BasicViewDescription< ? >, FileMapEntry> fileMap = new HashMap<>();
-		for (TileInfo ti : tileInfos) {
-			ViewDescription vdI = sd.getViewDescription( ti.tp, ti.tileIndex );
-			fileMap.put( vdI, new FileMapEntry(ti.filePath.toFile(), ti.imageIndex, ti.chIndex) );
-		}
-
-		return new FileMapImgLoaderLOCI(
-				fileMap,
-				sd,
-				false
-		);
-	}
-
-	private List<StackFile> getStackFiles(Path imagePath)
+	/**
+	 * So far only local paths are supported.
+	 *
+	 * @param imageURI
+	 * @return
+	 */
+	private List<StackFile> getStackFiles(URI imageURI)
 	{
 		int searchDepth = fileNamePattern.getSearchDepth();
 		try {
+			Path imagePath = Paths.get(imageURI);
 			// get the files
 			PathMatcher matcher = FileSystems.getDefault().getPathMatcher(fileNamePattern.getGlobPattern());
 			List<StackFile> fs = Files.walk( imagePath , searchDepth+1)
 					.filter(path -> matcher.matches(imagePath.relativize(path)))
-					.map(p -> getStackFile(imagePath.relativize(p).toString(), p))
+					.map(p -> getStackFile(imageURI, imagePath.relativize(p).toString()))
 					.collect(Collectors.toList());
 			System.out.println(fs);
 			return fs;
@@ -410,18 +479,18 @@ public class SpimDatasetBuilder {
 		}
 	}
 
-	private StackFile getStackFile(String matchingPattern, Path filePath)
+	private StackFile getStackFile(URI imageURI, String imageRelativePath)
 	{
-		Matcher m = fileNamePattern.regexPattern.matcher(matchingPattern);
+		Matcher m = fileNamePattern.regexPattern.matcher(imageRelativePath);
 		if ( m.matches() ) {
 			int tp = extractInt(fileNamePattern.hasKey("t") ? m.group("tp") : "0");
 			int ch = extractInt(fileNamePattern.hasKey("c") ? m.group("ch") : "0");
 			int il = extractInt(fileNamePattern.hasKey("i") ? m.group("il") : "0");
 			int ang = extractInt(fileNamePattern.hasKey("a") ? m.group("ang") : "0");
 			int ti = extractInt(fileNamePattern.hasKey("x") ? m.group("ti") : "0");
-			return new StackFile(tp, ch, il, ang, ti, filePath);
+			return new StackFile(tp, ch, il, ang, ti, imageURI, imageRelativePath);
 		} else {
-			throw new IllegalArgumentException(matchingPattern + " does not match " + fileNamePattern.sourcePattern + ". Refine the pattern and try again");
+			throw new IllegalArgumentException(imageRelativePath + " does not match " + fileNamePattern.sourcePattern + ". Refine the pattern and try again");
 		}
 	}
 
@@ -431,6 +500,14 @@ public class SpimDatasetBuilder {
 			return Integer.parseInt(m.group(1));
 		} else {
 			return 0;
+		}
+	}
+
+	private ViewSetupBuilder createViewSetupBuilder(URI imageURI, TimePoints timePoints) {
+		if ( imageURI.getScheme().equals("n5") || imageURI.getScheme().equals("file") && imageURI.getPath().contains(".n5") ) {
+			return new N5ViewSetupBuilder(imageURI, timePoints);
+		} else {
+			return new LOCIViewSetupBuilder(timePoints);
 		}
 	}
 }

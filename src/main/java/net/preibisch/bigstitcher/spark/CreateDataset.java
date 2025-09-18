@@ -53,7 +53,7 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 
 	private SpimData2 createDataset() {
 		SpimDatasetBuilder spimDatasetBuilder = new SpimDatasetBuilder(inputPattern);
-		return spimDatasetBuilder.createDataset(inputPath);
+		return spimDatasetBuilder.createDataset(URITools.toURI(inputPath));
 	}
 
 	public static void main(final String... args) throws SpimDataException {
