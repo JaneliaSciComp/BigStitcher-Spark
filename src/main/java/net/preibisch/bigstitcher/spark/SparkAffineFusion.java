@@ -288,10 +288,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		final DataType dataType = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/DataType", DataType.class );
 
-		final long[] orig_bbMin = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_min", long[].class );
-		if ( !Double.isNaN( anisotropyFactor ) )
-			orig_bbMin[ 2 ] = Math.round( Math.floor( orig_bbMin[ 2 ] * anisotropyFactor ) );
-
 		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "FusionType: " + fusionType );
 		System.out.println( "Input XML: " + xmlURI );
@@ -499,13 +495,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 					{
 						final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
 
-						final HashMap< ViewId, AffineTransform3D > orig_registrations =
-								TransformVirtual.adjustAllTransforms(
-										viewIds,
-										dataLocal.getViewRegistrations().getViewRegistrations(),
-										Double.NaN,
-										Double.NaN );
-
 						final HashMap< ViewId, AffineTransform3D > registrations =
 								TransformVirtual.adjustAllTransforms(
 										viewIds,
@@ -542,7 +531,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 						// The min coordinates of the block that this job renders (in pixels)
 						final int n = gridBlock[ 0 ].length;
 						final long[] superBlockOffset = new long[ n ];
-						Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + orig_bbMin[ d ] );
+						Arrays.setAll( superBlockOffset, d -> gridBlock[ 0 ][ d ] + bbMin[ d ] );
 
 						// The size of the block that this job renders (in pixels)
 						final long[] superBlockSize = gridBlock[ 1 ];
@@ -557,7 +546,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 						Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 
 						final List< ViewId > overlappingViews =
-								OverlappingViews.findOverlappingViews( dataLocal, viewIds, orig_registrations, fusedBlock );
+								OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
 
 						if ( overlappingViews.size() == 0 )
 							return gridBlock;

@@ -286,7 +286,7 @@ public class SpimDatasetBuilder {
 		}
 	}
 
-	static class N5ViewSetupBuilder implements ViewSetupBuilder {
+	static class N5MultichannelViewSetupBuilder implements ViewSetupBuilder {
 
 		private final URI n5ContainerURI;
 		private final SequenceDescription sequenceDescription;
@@ -294,7 +294,7 @@ public class SpimDatasetBuilder {
 		private final N5Reader n5Reader;
 		private final N5MultichannelProperties n5MultichannelProperties;
 
-		public N5ViewSetupBuilder(URI n5ContainerURI, TimePoints timePoints) {
+		public N5MultichannelViewSetupBuilder(URI n5ContainerURI, TimePoints timePoints) {
 			this.n5ContainerURI = n5ContainerURI;
 			this.sequenceDescription = new SequenceDescription(
 					timePoints,
@@ -311,7 +311,7 @@ public class SpimDatasetBuilder {
 		}
 
 		@Override
-		public N5ViewSetupBuilder setImgLoader() {
+		public N5MultichannelViewSetupBuilder setImgLoader() {
 			sequenceDescription.setImgLoader(
 					new N5MultichannelLoader( n5ContainerURI, StorageFormat.N5, sequenceDescription, viewIdToPath )
 			);
@@ -320,7 +320,7 @@ public class SpimDatasetBuilder {
 
 		@SuppressWarnings("unchecked")
 		@Override
-		public N5ViewSetupBuilder createViewSetups(List<StackFile> stackFiles) {
+		public N5MultichannelViewSetupBuilder createViewSetups(List<StackFile> stackFiles) {
 			for (int i = 0; i < stackFiles.size(); i++) {
 				StackFile stackFile = stackFiles.get(i);
 				if ( Files.notExists(stackFile.getFilePath()) )
@@ -441,6 +441,7 @@ public class SpimDatasetBuilder {
 				sequenceDescription.getViewDescriptions(),
 				minResolution
 		);
+
 		ViewInterestPoints viewInterestPoints = new ViewInterestPoints();
 
 		return new SpimData2(
@@ -505,7 +506,7 @@ public class SpimDatasetBuilder {
 
 	private ViewSetupBuilder createViewSetupBuilder(URI imageURI, TimePoints timePoints) {
 		if ( imageURI.getScheme().equals("n5") || imageURI.getScheme().equals("file") && imageURI.getPath().contains(".n5") ) {
-			return new N5ViewSetupBuilder(imageURI, timePoints);
+			return new N5MultichannelViewSetupBuilder(imageURI, timePoints);
 		} else {
 			return new LOCIViewSetupBuilder(timePoints);
 		}
