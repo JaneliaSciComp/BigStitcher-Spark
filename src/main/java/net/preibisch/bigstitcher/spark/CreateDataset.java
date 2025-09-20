@@ -35,6 +35,18 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 		URI xmlURI = URITools.toURI(xmlURIString);
 
 		System.out.println("Save spimData with original tiles to " + xmlURI);
+		prepareSaveLocation(xmlURI);
+		new XmlIoSpimData2().save(spimData, xmlURI);
+
+		return null;
+	}
+
+	private SpimData2 createDataset() {
+		SpimDatasetBuilder spimDatasetBuilder = new SpimDatasetBuilder(inputPattern);
+		return spimDatasetBuilder.createDataset(URITools.toURI(inputPath));
+	}
+
+	private void prepareSaveLocation(URI xmlURI) {
 		if (URITools.isFile( xmlURI )) {
 			Path xmlPath = Paths.get(xmlURI);
 			// create parent directories if necessary
@@ -46,14 +58,6 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 				}
 			}
 		}
-		new XmlIoSpimData2().save(spimData, xmlURI);
-
-		return null;
-	}
-
-	private SpimData2 createDataset() {
-		SpimDatasetBuilder spimDatasetBuilder = new SpimDatasetBuilder(inputPattern);
-		return spimDatasetBuilder.createDataset(URITools.toURI(inputPath));
 	}
 
 	public static void main(final String... args) throws SpimDataException {

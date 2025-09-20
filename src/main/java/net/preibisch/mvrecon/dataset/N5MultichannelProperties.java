@@ -22,7 +22,9 @@
  */
 package net.preibisch.mvrecon.dataset;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 import bdv.img.n5.N5Properties;
@@ -37,6 +39,7 @@ public class N5MultichannelProperties implements N5Properties
 	private final AbstractSequenceDescription< ?, ?, ? > sequenceDescription;
 
 	private final Map< ViewId, String > viewIdToPath;
+	private int numMipmapLevels;
 
 	public N5MultichannelProperties(
 			final AbstractSequenceDescription< ?, ?, ? > sequenceDescription,
@@ -44,6 +47,7 @@ public class N5MultichannelProperties implements N5Properties
 	{
 		this.sequenceDescription = sequenceDescription;
 		this.viewIdToPath = viewIdToPath;
+		this.numMipmapLevels = -1;
 	}
 
 	private String getPath( final int setupId, final int timepointId )
@@ -60,7 +64,7 @@ public class N5MultichannelProperties implements N5Properties
 	@Override
 	public DataType getDataType( final N5Reader n5, final int setupId )
 	{
-		return getDataType( this, n5, setupId );
+		return N5MultichannelProperties.getDataType( this, n5, setupId );
 	}
 
 	@Override
@@ -75,6 +79,33 @@ public class N5MultichannelProperties implements N5Properties
 		final String path = getDatasetPath( setupId, timepointId, level );
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
 		return Arrays.copyOf( dimensions, 3 );
+	}
+
+	public <T> T getRootAttribute( N5Reader n5, String attributeKey, Class<T> attributeType )
+	{
+		return n5.getAttribute("", attributeKey, attributeType);
+	}
+
+	public <T> T getAttribute( N5Reader n5, int setupId, int timepointId, int level, String attributeKey, Class<T> attributeType )
+	{
+		String path;
+		if (level >= 0) {
+			path = getDatasetPath( setupId, timepointId, level );
+		} else {
+			path = getPath( setupId, timepointId );
+		}
+		return n5.getAttribute(path, attributeKey, attributeType);
+	}
+
+	private int getNumMipmapLevels( final N5Reader n5, final int setupId, final int timepointId )
+	{
+		if ( numMipmapLevels >=0 )
+			return numMipmapLevels;
+
+		final String path = getPath( setupId, timepointId );
+		String[] subgroups = n5.list(path);
+		numMipmapLevels = subgroups != null ? subgroups.length : 0;
+		return numMipmapLevels;
 	}
 
 	//
@@ -103,7 +134,20 @@ public class N5MultichannelProperties implements N5Properties
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
 
 		// read scales and pixelResolution attributes from the base container and build the mipmap resolutions from that
-
-		return new double[][] { { 1, 1, 1 } }; // default
+		List<double[]> scales = new ArrayList<>();
+		int numLevels = n5properties.getNumMipmapLevels(n5, setupId, timePointId);
+		for (int level = 0; level < numLevels; level++ ) {
+			double[] pixelResolution = n5properties.getAttribute(n5, setupId, timePointId, level, "pixelResolution", double[].class);
+			double[] downSamplingFactors = n5properties.getAttribute(n5, setupId, timePointId, level, "downsamplingFactors", double[].class);
+			if (pixelResolution != null) {
+				if (downSamplingFactors != null) {
+					for (int d = 0; d < pixelResolution.length && d < downSamplingFactors.length; d++) {
+						pixelResolution[d] *= downSamplingFactors[d];
+					}
+				}
+				scales.add(pixelResolution);
+			}
+		}
+		return !scales.isEmpty() ? scales.toArray( new double[0][]) : new double[][] { { 1, 1, 1 } };
 	}
 }

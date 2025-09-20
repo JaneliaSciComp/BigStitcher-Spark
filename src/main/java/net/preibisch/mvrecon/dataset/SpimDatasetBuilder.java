@@ -53,7 +53,6 @@ import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
 import org.apache.commons.lang3.builder.ToStringBuilder;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
@@ -193,7 +192,11 @@ public class SpimDatasetBuilder {
 			for (ViewSetup vs : sequenceDescription.getViewSetupsOrdered()) {
 				StackFile stackFile = viewToStackFileMap.get(vs.getId());
 				ViewDescription vdI = sequenceDescription.getViewDescription( stackFile.getTp(), vs.getId() );
-				fileMap.put( vdI, new FileMapEntry(stackFile.getFilePath().toFile(), vs.getTile().getId(), vs.getChannel().getId()) );
+				FileMapEntry fileMapEntry = new FileMapEntry(
+						stackFile.getFilePath().toFile(),
+						vs.getTile().getId() - (stackFile.getTi() * stackFile.nImages), // recreate the image index within the file
+						vs.getChannel().getId());
+				fileMap.put( vdI,  fileMapEntry);
 			}
 
 			sequenceDescription.setImgLoader(new FileMapImgLoaderLOCI(
@@ -207,11 +210,13 @@ public class SpimDatasetBuilder {
 		@SuppressWarnings("unchecked")
 		@Override
 		public LOCIViewSetupBuilder createViewSetups(List<StackFile> stackFiles) {
-			stackFiles.forEach( stackFile -> {
+			int nfiles = stackFiles.size();
+			for (int sfi = 0; sfi < nfiles; sfi++) {
+				StackFile stackFile = stackFiles.get(sfi);
 				File tileFile = stackFile.getFilePath().toFile();
 				if ( !tileFile.exists() )
 				{
-					return;
+					continue;
 				}
 				IFormatReader formatReader = new ChannelSeparator();
 				try {
@@ -221,7 +226,7 @@ public class SpimDatasetBuilder {
 						} catch (IOException e) {
 							e.printStackTrace();
 						}
-						return;
+						continue;
 					}
 
 					formatReader.setId( tileFile.toString() );
@@ -235,23 +240,37 @@ public class SpimDatasetBuilder {
 					stackFile.sizeY = formatReader.getSizeY();
 					stackFile.sizeX = formatReader.getSizeX();
 					for (int imageIndex = 0; imageIndex < stackFile.nImages; imageIndex++) {
+						Length offsetX = retrieve.getPlanePositionX(imageIndex, 0);
+						Length offsetY = retrieve.getPlanePositionY(imageIndex, 0);
+						Length offsetZ = retrieve.getPlanePositionZ(imageIndex, 0);
 						Length resX = retrieve.getPixelsPhysicalSizeX(imageIndex);
 						Length resY = retrieve.getPixelsPhysicalSizeY(imageIndex);
 						Length resZ = retrieve.getPixelsPhysicalSizeZ(imageIndex);
-						double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 0;
-						double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 0;
+
+						double oX = offsetX != null ? offsetX.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oY = offsetY != null ? offsetY.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oZ = offsetZ != null ? offsetZ.value(UNITS.MICROMETER).doubleValue() : 0;
 						double rX = resX != null ? resX.value(UNITS.MICROMETER).doubleValue() : 0;
+						double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 0;
+						double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 0;
+
 						int imageChannels = retrieve.getChannelCount(imageIndex);
 						for (int chIndex = 0; chIndex < imageChannels; chIndex++) {
 							String chName = retrieve.getChannelName(imageIndex, chIndex);
-							int viewIndex = (stackFile.getTi() * stackFile.nImages + imageIndex) * imageChannels + chIndex;
+							// currently viewIndex is only based on the number of images and channels
+							// but a correct implementation would also consider timepoints, illuminations and angles
+							// for now I am ignoring them because so far we never needed them.
+							int viewIndex = chIndex * nfiles * stackFile.nImages + sfi * stackFile.nImages + imageIndex;
+							Tile tile = new Tile(stackFile.getTi() * stackFile.nImages + imageIndex);
+							tile.setLocation(new double[]{oX, oY, oZ});
+							Channel channel = new Channel(chIndex, chName);
 							ViewSetup vs = new ViewSetup(
 									viewIndex,
-									chName,
+									String.valueOf(viewIndex),
 									new FinalDimensions(stackFile.sizeX, stackFile.sizeY, stackFile.sizeZ),
 									new FinalVoxelDimensions("um", rX, rY, rZ),
-									new Tile(imageIndex),
-									new Channel(chIndex),
+									tile,
+									channel,
 									new Angle(stackFile.getAng()),
 									new Illumination(stackFile.getIl())
 							);
@@ -262,28 +281,28 @@ public class SpimDatasetBuilder {
 				} catch (Exception e) {
 					throw new IllegalStateException("Could not read " + stackFile, e);
 				}
-			});
+			}
 			return this;
 		}
 	}
 
 	static class N5ViewSetupBuilder implements ViewSetupBuilder {
 
-		private final SequenceDescription sequenceDescription;
 		private final URI n5ContainerURI;
+		private final SequenceDescription sequenceDescription;
 		private final Map<ViewId, String> viewIdToPath;
 		private final N5Reader n5Reader;
-		private final N5MultichannelLoader n5Loader;
+		private final N5MultichannelProperties n5MultichannelProperties;
 
 		public N5ViewSetupBuilder(URI n5ContainerURI, TimePoints timePoints) {
+			this.n5ContainerURI = n5ContainerURI;
 			this.sequenceDescription = new SequenceDescription(
 					timePoints,
 					/*view setups*/Collections.emptyList()
 			);
-			this.n5ContainerURI = n5ContainerURI;
 			this.viewIdToPath = new HashMap<>();
 			n5Reader = new N5FSReader(n5ContainerURI.toString());
-			n5Loader = new N5MultichannelLoader( n5ContainerURI, StorageFormat.N5, sequenceDescription, viewIdToPath );
+			n5MultichannelProperties = new N5MultichannelProperties(sequenceDescription, viewIdToPath);
 		}
 
 		@Override
@@ -293,7 +312,9 @@ public class SpimDatasetBuilder {
 
 		@Override
 		public N5ViewSetupBuilder setImgLoader() {
-			sequenceDescription.setImgLoader(n5Loader);
+			sequenceDescription.setImgLoader(
+					new N5MultichannelLoader( n5ContainerURI, StorageFormat.N5, sequenceDescription, viewIdToPath )
+			);
 			return this;
 		}
 
@@ -306,7 +327,9 @@ public class SpimDatasetBuilder {
 				{
 					continue;
 				}
-				Map<String, Object> pixelResolutions = n5Reader.getAttribute(".", "pixelResolution", Map.class);
+				viewIdToPath.put(new ViewId(stackFile.getTp(), i), stackFile.relativeFilePath);
+
+				Map<String, Object> pixelResolutions = n5MultichannelProperties.getRootAttribute(n5Reader, "pixelResolution", Map.class);
 				VoxelDimensions voxelDimensions;
 				if (pixelResolutions != null) {
 					double[] res = ((List<Double>) pixelResolutions.getOrDefault("dimensions", Arrays.asList(1., 1., 1.)))
@@ -318,19 +341,8 @@ public class SpimDatasetBuilder {
 				} else {
 					voxelDimensions = new FinalVoxelDimensions("voxel", 1., 1., 1.);
 				}
-				Dimensions size;
-				if (n5Reader.exists(stackFile.relativeFilePath + "/s0")) {
-					long[] dims = n5Reader.getDatasetAttributes(stackFile.relativeFilePath + "/s0").getDimensions();
-					size = new FinalDimensions(dims[0], dims[1], dims[2]);
-				} else {
-					long[] dims = n5Reader.getDatasetAttributes(stackFile.relativeFilePath).getDimensions();
-					if (dims != null) {
-						size = new FinalDimensions(dims[0], dims[1], dims[2]);
-					} else {
-						System.out.println("Could not find dimensions attribute for " + stackFile.relativeFilePath);
-						size = null;
-					}
-				}
+				long[] dims = n5MultichannelProperties.getDimensions(n5Reader, i, stackFile.getTp(), 0);
+				Dimensions size = new FinalDimensions(dims[0], dims[1], dims[2]);
 				ViewSetup vs = new ViewSetup(
 						i, // in this case view index coincides with stack file index
 						stackFile.relativeFilePath,
@@ -342,19 +354,7 @@ public class SpimDatasetBuilder {
 						new Illumination(stackFile.getIl())
 				);
 				((Map<Integer, ViewSetup>) sequenceDescription.getViewSetups()).put(i, vs);
-				viewIdToPath.put(new ViewId(stackFile.getTp(), i), stackFile.relativeFilePath);
 			}
-//				try {
-//					DatasetAttributes attributes = setupImgLoader.getAttributes( sequenceDescription.getTimePoints().getTimePointsOrdered().get(0).getId() );
-//					vs.setSize( new FinalDimensions( attributes.getDimensions() ) );
-//					vs.setVoxelSize( new FinalVoxelDimensions("um",
-//							attributes.getBlockSize()[0],
-//							attributes.getBlockSize()[1],
-//							attributes.getBlockSize().length > 2 ? attributes.getBlockSize()[2] : 1) );
-//				} catch (N5Exception e) {
-//					throw new IllegalStateException("Could not read attributes for " + vs, e);
-//				}
-
 
 			return this;
 		}
