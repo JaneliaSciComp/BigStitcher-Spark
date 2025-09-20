@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -113,12 +114,14 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy, with lowest ViewIds winning (default: false - using weighted average blending fusion)")
-	private boolean firstTileWins = false;
+	//@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy, with lowest ViewIds winning (default: false - using weighted average blending fusion)")
+	//private boolean firstTileWins = false;
 
-	@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
-	private boolean firstTileWinsInverse = false;
+	//@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
+	//private boolean firstTileWinsInverse = false;
 
+	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, "/*AVG_CONTENT, AVG_BLEND_CONTENT*/+", MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
+	private FusionType fusionType = FusionType.AVG_BLEND;
 
 	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
 	private Integer timepointIndex = null;
@@ -194,12 +197,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		if (dryRun)
 		{
 			System.out.println( "dry-run not supported for affine fusion.");
-			return null;
-		}
-
-		if ( firstTileWins && firstTileWinsInverse )
-		{
-			System.out.println( "You can only choose one of the two firstTileWins or firstTileWinsInverse.");
 			return null;
 		}
 
@@ -296,6 +293,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			orig_bbMin[ 2 ] = Math.round( Math.floor( orig_bbMin[ 2 ] * anisotropyFactor ) );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
+		System.out.println( "FusionType: " + fusionType );
 		System.out.println( "Input XML: " + xmlURI );
 		System.out.println( "BDV project: " + bdv );
 		System.out.println( "numTimepoints of fused dataset(s): " + numTimepoints );
@@ -622,15 +620,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 							System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
-							final FusionType fusionType;
-
-							if ( firstTileWins )
-								fusionType = FusionType.FIRST_LOW;
-							else if ( firstTileWinsInverse )
-								fusionType = FusionType.FIRST_HIGH;
-							else
-								fusionType = FusionType.AVG_BLEND;
-
 							// returns a zero-min interval
 							//blockSupplier = BlkAffineFusion.init(
 							blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
@@ -640,6 +629,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									registrations,
 									dataLocal.getSequenceDescription().getViewDescriptions(),
 									fusionType,//fusion.getFusionType(),
+									null, // map<old,new> will go here
 									1, // linear interpolation
 									coefficients, // intensity correction
 									new BoundingBox( interval ),

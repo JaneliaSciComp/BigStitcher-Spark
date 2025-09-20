@@ -68,7 +68,7 @@ public class SplitDatasets extends AbstractBasic
 	private URI xmlOutURI = null;
 
 	protected SpimData2 dataGlobal;
-	protected ArrayList< ViewId > viewIdsGlobal;
+	protected ArrayList< ViewId > viewI1dsGlobal;
 
 	@Override
 	public Void call() throws Exception
