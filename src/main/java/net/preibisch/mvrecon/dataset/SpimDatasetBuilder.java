@@ -253,7 +253,8 @@ public class SpimDatasetBuilder {
 						double rX = resX != null ? resX.value(UNITS.MICROMETER).doubleValue() : 0;
 						double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 0;
 						double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 0;
-
+						VoxelDimensions voxelDimensions = new FinalVoxelDimensions("um", rX, rY, rZ);
+						System.out.println("Voxel dimensions: " + voxelDimensions);
 						int imageChannels = retrieve.getChannelCount(imageIndex);
 						for (int chIndex = 0; chIndex < imageChannels; chIndex++) {
 							String chName = retrieve.getChannelName(imageIndex, chIndex);
@@ -268,7 +269,7 @@ public class SpimDatasetBuilder {
 									viewIndex,
 									String.valueOf(viewIndex),
 									new FinalDimensions(stackFile.sizeX, stackFile.sizeY, stackFile.sizeZ),
-									new FinalVoxelDimensions("um", rX, rY, rZ),
+									voxelDimensions,
 									tile,
 									channel,
 									new Angle(stackFile.getAng()),
@@ -341,6 +342,7 @@ public class SpimDatasetBuilder {
 				} else {
 					voxelDimensions = new FinalVoxelDimensions("voxel", 1., 1., 1.);
 				}
+				System.out.println("Voxel dimensions: " + voxelDimensions);
 				long[] dims = n5MultichannelProperties.getDimensions(n5Reader, i, stackFile.getTp(), 0);
 				Dimensions size = new FinalDimensions(dims[0], dims[1], dims[2]);
 				ViewSetup vs = new ViewSetup(
