@@ -136,6 +136,7 @@ public class ViewUtil
 	 * This transforms the image dimension for {@code viewId} with the {@code
 	 * ViewRegistration} for {@code viewId}, and takes the bounding box.
 	 */
+	/*
 	public static Interval getTransformedBoundingBox( final SpimData data, final ViewId viewId ) throws IllegalArgumentException
 	{
 		final Dimensions dim = getDimensions( data, viewId );
@@ -143,6 +144,7 @@ public class ViewUtil
 
 		return Intervals.smallestContainingInterval( reg.getModel().estimateBounds( new FinalInterval( dim ) ) );
 	}
+	*/
 
 	/**
 	 * Get the estimated bounding box of the specified view in world coordinates.
@@ -173,15 +175,17 @@ public class ViewUtil
 	 * 		which view to check
 	 * @param fusedBlock
 	 * 		the interval that will be processed (in world coordinates)
-	 *
+	 * @param model
+	 * 		the transformation model applied to the View during fusion
 	 * @return a list of {@code PrefetchPixel} callables that will each prefetch one cell.
 	 */
 	public static List< PrefetchPixel< ? > > findOverlappingBlocks(
 			final SpimData data,
 			final ViewId viewId,
-			final Interval fusedBlock )
+			final Interval fusedBlock,
+			final AffineTransform3D model )
 	{
-		return findOverlappingBlocks(data, viewId, data.getViewRegistrations().getViewRegistration( viewId ).getModel(), fusedBlock, 1 );
+		return findOverlappingBlocks(data, viewId, fusedBlock, model, 1 );
 	}
 
 	/**
@@ -206,8 +210,8 @@ public class ViewUtil
 	public static List< PrefetchPixel< ? > > findOverlappingBlocks(
 			final SpimData data,
 			final ViewId viewId,
-			final AffineTransform3D model,
 			final Interval fusedBlock,
+			final AffineTransform3D model,
 			final int expand )
 	{
 		final List< PrefetchPixel< ? > > prefetch = new ArrayList<>();

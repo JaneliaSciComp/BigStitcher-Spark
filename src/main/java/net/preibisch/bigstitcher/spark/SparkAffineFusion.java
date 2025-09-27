@@ -605,7 +605,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							//
 							// PREFETCHING, TODO: should be part of BlkAffineFusion.init
 							//
-							final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, overlappingViews, fusedBlock );
+							final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, registrations, overlappingViews, fusedBlock );
 							if ( overlappingBlocks.overlappingViews().isEmpty() )
 								return gridBlock;
 

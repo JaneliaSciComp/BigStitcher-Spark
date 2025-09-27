@@ -22,6 +22,7 @@
 package net.preibisch.bigstitcher.spark.fusion;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -30,6 +31,7 @@ import java.util.concurrent.Future;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Interval;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Intervals;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
@@ -46,7 +48,9 @@ public class OverlappingBlocks
 	 * {@code interval}.
 	 *
 	 * @param data
-	 * 		has all images and transformations
+	 * 		has all image sizes
+	 * @param registrations
+	 * 		registrations, maybe updated to reflect anisotropy
 	 * @param viewIds
 	 * 		which views to check
 	 * @param interval
@@ -55,6 +59,7 @@ public class OverlappingBlocks
 	 */
 	public static OverlappingBlocks find(
 			final SpimData data,
+			final HashMap< ViewId, AffineTransform3D > registrations,
 			final List<ViewId> viewIds,
 			Interval interval )
 	{
@@ -66,11 +71,11 @@ public class OverlappingBlocks
 
 		for ( final ViewId viewId : viewIds )
 		{
-			final Interval bounds = ViewUtil.getTransformedBoundingBox( data, viewId );
+			final Interval bounds = ViewUtil.getTransformedBoundingBox( data, viewId, registrations.get( viewId ) );
 			if ( ViewUtil.overlaps( expandedInterval, bounds ) )
 			{
 				// determine which Cells exactly we need to compute the fused block
-				final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( data, viewId, interval );
+				final List< PrefetchPixel< ? > > blocks = ViewUtil.findOverlappingBlocks( data, viewId, interval, registrations.get( viewId ) );
 				if ( !blocks.isEmpty() )
 				{
 					prefetch.addAll( blocks );
