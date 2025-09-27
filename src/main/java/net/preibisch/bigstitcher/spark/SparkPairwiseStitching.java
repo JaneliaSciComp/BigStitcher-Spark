@@ -30,6 +30,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+import mpicbg.spim.data.registration.ViewTransform;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -331,13 +333,19 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 		System.out.println( new Date( System.currentTimeMillis() ) + ": Remaining pairs: " + results.size() );
 
-
 		// update StitchingResults with Results
 		for ( final PairwiseStitchingResult< ViewId > psr : results )
 		{
 			if (psr == null)
 				continue;
 
+			// update the registrations transformations
+			psr.pair().getA().getViews().forEach( viewId -> {
+				dataGlobal.getViewRegistrations().getViewRegistration(viewId)
+						.preconcatenateTransform(new ViewTransformAffine(
+								"Stitching Transform",
+								new AffineTransform3D().concatenate(psr.getInverseTransform())));
+			});
 			dataGlobal.getStitchingResults().setPairwiseResultForPair(psr.pair(), psr );
 		}
 
