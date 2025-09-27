@@ -89,6 +89,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
+import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParameters;
@@ -240,13 +241,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// assemble all pairs for parallelization with Spark
 		final ArrayList< Tuple2< ViewId, ViewId > > metadataJobs = new ArrayList<>();
 
+		final HashMap< ViewId, AffineTransform3D > registrations =
+				TransformVirtual.adjustAllTransforms(
+						viewIdsGlobal,
+						dataGlobal.getViewRegistrations().getViewRegistrations(),
+						Double.NaN,
+						Double.NaN );
+
 		for ( final ViewId viewDesc : viewIdsGlobal )
 		{
 			final ViewId viewId = new ViewId( viewDesc.getTimePointId(), viewDesc.getViewSetupId() );
 
 			if ( onlyOverlappingRegions )
 			{
-				for ( final ViewId otherViewId : OverlappingViews.findAllOverlappingViewsFor( viewId, dataGlobal, viewIdsGlobal ) )
+				for ( final ViewId otherViewId : OverlappingViews.findAllOverlappingViewsFor( viewId, dataGlobal, registrations, viewIdsGlobal ) )
 				{
 					if ( !otherViewId.equals( viewId ) )
 					{
@@ -512,7 +520,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				// here we put in the inverse mipmap transform and pretend its a fusion so we can re-use Tobi's code
 				// that finds which blocks need to be prefetched from an input image
-				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, input.getB().inverse(), processInterval, maxKernelSize );
+				final List< PrefetchPixel< ? > > prefetchBlocks = ViewUtil.findOverlappingBlocks( data, viewId, processInterval, input.getB().inverse(), maxKernelSize );
 
 				System.out.println( "Prefetching " + prefetchBlocks.size() + " blocks for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
 

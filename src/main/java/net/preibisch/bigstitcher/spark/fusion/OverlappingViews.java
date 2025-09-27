@@ -22,37 +22,7 @@ public class OverlappingViews
 	 * @param spimData contains bounds and registrations for all views
 	 * @param viewIds which views to check
 	 * @param interval interval in world coordinates
-	 * @return views that overlap {@code interval}
-	 */
-	public static List<ViewId> findOverlappingViews(
-			final SpimData spimData,
-			final List<ViewId> viewIds,
-			final Interval interval )
-	{
-		final List< ViewId > overlapping = new ArrayList<>();
-
-		// expand to be conservative ...
-		final Interval expandedInterval = Intervals.expand( interval, 2 );
-
-		for ( final ViewId viewId : viewIds )
-		{
-			final Interval bounds = ViewUtil.getTransformedBoundingBox( spimData, viewId );
-			if ( ViewUtil.overlaps( expandedInterval, bounds ) )
-				overlapping.add( viewId );
-		}
-
-		return overlapping;
-	}
-
-	/**
-	 * Find all views among the given {@code viewIds} that overlap the given {@code interval}.
-	 * The image interval of each view is transformed into world coordinates
-	 * and checked for overlap with {@code interval}, with a conservative
-	 * extension of 2 pixels in each direction.
-	 *
-	 * @param spimData contains bounds and registrations for all views
-	 * @param viewIds which views to check
-	 * @param interval interval in world coordinates
+	 * @param registrations registrations for each view, may be adjusted for anisotropy
 	 * @return views that overlap {@code interval}
 	 */
 	public static List<ViewId> findOverlappingViews(
@@ -79,18 +49,19 @@ public class OverlappingViews
 	public static ArrayList< ViewId > findAllOverlappingViewsFor(
 			final ViewId viewIdA,
 			final SpimData spimData,
+			final HashMap< ViewId, AffineTransform3D > registrations,
 			final List<ViewId> viewIds)
 	{
 		final ArrayList< ViewId > overlappingViews = new ArrayList<>();
 
-		final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA );
+		final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA, registrations.get( viewIdA ) );
 
 		for ( final ViewId viewIdB : viewIds )
 		{
 			if ( viewIdA.equals( viewIdB ) )
 				continue;
 
-			final Interval bounds2 = ViewUtil.getTransformedBoundingBox( spimData, viewIdB );
+			final Interval bounds2 = ViewUtil.getTransformedBoundingBox( spimData, viewIdB, registrations.get( viewIdB ) );
 
 			if ( ViewUtil.overlaps( bounds1, bounds2 ) )
 				overlappingViews.add( viewIdB );

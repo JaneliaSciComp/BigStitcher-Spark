@@ -331,7 +331,8 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
 
 						// expand by 50 to be conservative for non-rigid overlaps
-						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
+						dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
+						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );
 						final Interval bounds = Intervals.expand( boundingBox, 50 );
 						// TODO: estimate the "50" from the distance of corresponding, transformed interest points
 
@@ -351,12 +352,14 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 					for ( final ViewId viewId : allViews )
 					{
-						final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId );
+						dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
+						final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );
 						final Interval boundsView = Intervals.expand( boundingBoxView, 25 );
 
 						for ( final ViewId fusedId : viewsToFuse )
 						{
-							final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId );
+							dataLocal.getViewRegistrations().getViewRegistration( fusedId ).updateModel();
+							final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId, dataLocal.getViewRegistrations().getViewRegistration( fusedId ).getModel() );
 							final Interval boundsFused = Intervals.expand( boundingBoxFused, 25 );
 							
 							if ( ViewUtil.overlaps( boundsView, boundsFused ))
