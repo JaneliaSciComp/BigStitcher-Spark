@@ -124,6 +124,8 @@ install_command detect-interestpoints "net.preibisch.bigstitcher.spark.SparkInte
 install_command match-interestpoints "net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching"
 install_command stitching "net.preibisch.bigstitcher.spark.SparkPairwiseStitching"
 install_command solver "net.preibisch.bigstitcher.spark.Solver"
+install_command match-intensities "net.preibisch.bigstitcher.spark.SparkIntensityMatching"
+install_command solve-intensities "net.preibisch.bigstitcher.spark.IntensitySolver"
 install_command create-fusion-container "net.preibisch.bigstitcher.spark.CreateFusionContainer"
 install_command affine-fusion "net.preibisch.bigstitcher.spark.SparkAffineFusion"
 install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFusion"
