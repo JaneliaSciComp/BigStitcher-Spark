@@ -34,6 +34,11 @@ import util.URITools;
 
 public class SparkIntensityMatching extends AbstractSelectableViews
 {
+	public enum IntensityMatchingMethod
+	{
+		RANSAC, HISTOGRAM
+	}
+
 	@Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
 	private String numCoefficientsString = "8,8,8";
 
@@ -52,19 +57,23 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@Option(names = { "--minNumCandidates" }, description = "minimum number of (non-discarded) overlapping pixels required to match overlapping coefficient regions (default: 1000)")
 	private int minNumCandidates = 1000;
 
+	@Option(names = {"--method"}, defaultValue = "RANSAC", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Method to match intensities between overlapping views: RANSAC or HISTOGRAM")
+	private IntensityMatchingMethod intensityMatchingMethod;
+
 	@CommandLine.Option(names = { "--numIterations" }, description = "number of RANSAC iterations (default: 1000)")
 	private int iterations = 1000;
 
-	@CommandLine.Option(names = { "--maxEpsilon" }, description = "maximal allowed transfer error (default: 5.1)")
+	@CommandLine.Option(names = { "--maxEpsilon" }, description = "maximal allowed transfer error (default: 5.1, only for RANSAC method)")
 	private double maxEpsilon = 0.02 * 255;
 
-	@CommandLine.Option(names = { "--minInlierRatio" }, description = "minimal ratio of of inliers to number of candidates (default: 0.1)")
+	@CommandLine.Option(names = { "--minInlierRatio" }, description = "minimal ratio of of inliers to number of candidates (default: 0.1, only for RANSAC method)")
 	private double minInlierRatio = 0.1;
 
-	@CommandLine.Option(names = { "--minNumInliers" }, description = "minimally required absolute number of inliers (default: 10)")
+	@CommandLine.Option(names = { "--minNumInliers" }, description = "minimally required absolute number of inliers (default: 10, only for RANSAC method)")
 	private int minNumInliers = 10;
 
-	@CommandLine.Option(names = { "--maxTrust" }, description = "reject candidates with a cost larger than maxTrust * median cost (default: 3)")
+	@CommandLine.Option(names = { "--maxTrust" }, description = "reject candidates with a cost larger than maxTrust * median cost (default: 3, only for RANSAC method)")
 	private double maxTrust = 3.0;
 
 	private SpimData2 dataGlobal;
@@ -100,6 +109,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final double minInlierRatio = this.minInlierRatio;
 		final int minNumInliers = this.minNumInliers;
 		final double maxTrust = this.maxTrust;
+		final IntensityMatchingMethod method = this.intensityMatchingMethod;
 
 		new ViewPairCoefficientMatchesIO( outputURI ).writeCoefficientsSize( coefficientsSize );
 
@@ -156,8 +166,18 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		viewPairRDD.foreach( views -> {
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + views._1().getViewSetupId() + "<>" + views._2().getViewSetupId() );
-			final ViewPairCoefficientMatches matches = IntensityCorrection.match( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
-					minIntensityThreshold, maxIntensityThreshold, minNumCandidates, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
+
+			final ViewPairCoefficientMatches matches;
+			if ( method == IntensityMatchingMethod.RANSAC )
+			{
+				matches = IntensityCorrection.matchRansac( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
+						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
+			}
+			else // method == IntensityMatchingMethod.HISTOGRAM
+			{
+				matches = IntensityCorrection.matchHistograms( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
+						minIntensityThreshold, maxIntensityThreshold, minNumCandidates );
+			}
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
 			matchWriter.write( matches );
 		} );
