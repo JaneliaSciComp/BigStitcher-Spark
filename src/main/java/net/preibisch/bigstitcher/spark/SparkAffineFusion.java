@@ -52,6 +52,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.converter.Converter;
 import net.imglib2.converter.RealUnsignedByteConverter;
@@ -558,7 +559,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 						}
 
 						//final RandomAccessibleInterval img;
-						final BlockSupplier blockSupplier;
+						final BlockSupplier< ? > blockSupplier;
 						final FinalInterval interval = new FinalInterval( bbMin, bbMax );
 
 						if ( masks )
@@ -605,6 +606,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 									registrations,
 									dataLocal.getSequenceDescription().getViewDescriptions(),
 									fusionType,//fusion.getFusionType(),
+									Double.NaN,
 									null, // map<old,new> will go here
 									1, // linear interpolation
 									coefficients, // intensity correction
@@ -622,7 +624,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							blockMax[ d ] = Math.min( Intervals.zeroMin( interval ).max( d ), blockMin[ d ] + gridBlock[1][ d ] - 1 );
 
 						final RandomAccessibleInterval image;
-						final RandomAccessibleInterval img = BlkAffineFusion.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
+						final RandomAccessibleInterval img = BlockAlgoUtils.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
 
 						// 5D OME-ZARR CONTAINER
 						if ( storageType == StorageFormat.ZARR )
