@@ -139,10 +139,13 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.1)")
 	protected Double ransacMinInlierRatio = 0.1;
 
-	@Option(names = { "-rmif", "--ransacMinInlierFactor" }, description = "ransac min inlier factor, i.e. how many time the minimal number of matches need to found, e.g. affine needs 4 matches, 3x means at least 12 matches required (default: 3.0)")
-	protected Double ransacMinInlierFactor = 3.0;
+	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "ransac minimal number of required inliers (default: 12)")
+	protected Integer ransacMinNumInliers = 12;
 
-	
+	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "ransac perform multiconsensus matching (default: false)")
+	protected boolean ransacMultiConsensus = false;
+
+
 	@Option(names = { "-ime", "--icpMaxError" }, description = "ICP max error in pixels (default: 5.0)")
 	protected Double icpMaxError = 5.0;
 
@@ -220,7 +223,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
 		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
-		final double ransacMinInlierFactor = this.ransacMinInlierFactor;
+		final int ransacMinNumInliers = this.ransacMinNumInliers;
+		final boolean ransacMultiConsensus = this.ransacMultiConsensus;
 		final double icpMaxError = this.icpMaxError;
 		final int icpMaxIterations = this.icpIterations;
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
@@ -300,7 +304,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 							System.out.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
 				}
 
-				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
+				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, ransacMinNumInliers, ransacIterations, ransacMultiConsensus );
 				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 				final MatcherPairwise< InterestPoint > matcher = createMatcherInstance(
@@ -424,7 +428,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				groupedInterestpoints.put( task.vB, ipGrouping.group( task.vB ) );
 				IOFunctions.println( task.vA + " <=> " + task.vB + ": Grouping interestpoints for " + task.vB + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 
-				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, (float)ransacMinInlierFactor, ransacIterations );
+				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, ransacMinNumInliers, ransacIterations, ransacMultiConsensus );
 				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 				final MatcherPairwise< GroupedInterestPoint< ViewId > > matcher = createMatcherInstance(
@@ -609,7 +613,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					rp.getMinInlierRatio(),
 					rp.getMaxEpsilon(),
 					rp.getNumIterations(),
-					Math.round( rp.getMinInlierFactor() * model.getMinNumMatches() ) );
+					rp.getMinNumMatches() );
 			matcher = new IterativeClosestPointPairwise<>( ip );
 		}
 
