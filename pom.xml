@@ -96,11 +96,14 @@
 		<bigdataviewer-core.version>10.6.1</bigdataviewer-core.version>
 		<bigdataviewer-vistools.version>1.0.0-beta-36</bigdataviewer-vistools.version>
 		-->
-		<imglib2.version>7.1.4</imglib2.version>
-		<imglib2-algorithm.version>0.18.0</imglib2-algorithm.version>
-		<bigdataviewer-core.version>10.6.4</bigdataviewer-core.version>
+		<imglib2.version>8.0.0</imglib2.version>
+		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
+		<imglib2-algorithm.version>0.18.2</imglib2-algorithm.version>
+		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
+		<bigdataviewer-n5.version>1.0.2</bigdataviewer-n5.version>
+
 		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>7.0.5</multiview-reconstruction.version>
+		<multiview-reconstruction.version>8.0.0</multiview-reconstruction.version>
 		<BigStitcher.version>2.5.0</BigStitcher.version>
 
 		<n5-universe.version>2.3.0</n5-universe.version>
@@ -283,6 +286,11 @@
                 <exclusion>
                     <groupId>ome</groupId>
                     <artifactId>formats-gpl</artifactId>
+                </exclusion>
+                <!-- in n5-google-cloud -->
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
