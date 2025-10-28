@@ -59,7 +59,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 {
 	private static final long serialVersionUID = -9140450542904228386L;
 
-	public static enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
+	public enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
 
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
@@ -365,8 +365,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			// extract the resolution of the s0 export
 			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
 			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
@@ -410,10 +410,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				tps.add( new TimePoint( t ) );
 
 			// extract the resolution of the s0 export
-			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 

@@ -33,7 +33,6 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -152,7 +151,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
-
 
 	// TODO: add support for loading coefficients during fusion
 	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
@@ -540,11 +538,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							return gridBlock;
 
 						// load intensity correction coefficients for all overlapping views
-
-
 						final Map< ViewId, Coefficients > coefficients;
-
-
 						if ( intensityN5PathURI != null )
 						{
 							coefficients = new HashMap<>();
@@ -598,7 +592,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
 							// returns a zero-min interval
-							//blockSupplier = BlkAffineFusion.init(
 							blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
 									conv,
 									dataLocal.getSequenceDescription().getImgLoader(),
