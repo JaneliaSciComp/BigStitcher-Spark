@@ -220,7 +220,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 								viewId,
 								dataTypes.get( viewId.getViewSetupId() ),
 								dimensions.get( viewId.getViewSetupId() ),
-								//dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(), // TODO: this is a hack for now
+								dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
 								compression,
 								blockSize,
 								downsamplings);
