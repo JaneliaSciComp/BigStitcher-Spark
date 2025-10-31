@@ -34,6 +34,7 @@ import java.util.stream.Collectors;
 
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
@@ -214,13 +215,14 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					else
 					{
 						System.out.println( Arrays.toString( blockSize ) );
-						
+						VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize();
 						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
 								n5Writer,
 								viewId,
 								dataTypes.get( viewId.getViewSetupId() ),
 								dimensions.get( viewId.getViewSetupId() ),
-								dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
+								vx.dimensionsAsDoubleArray(),
+								vx.unit(),
 								compression,
 								blockSize,
 								downsamplings);
@@ -331,8 +333,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				}
 
 				final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
-	
-	
+
 				final JavaRDD<long[][]> rdds0Result = rddsN.map( gridBlock ->
 				{
 					final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );

@@ -6,12 +6,21 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 
+import mpicbg.spim.data.generic.base.Entity;
+import mpicbg.spim.data.registration.ViewRegistrations;
+import mpicbg.spim.data.sequence.SequenceDescription;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -117,7 +126,10 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--group" }, description = "Container group path")
 	private String groupPath = "";
 
-	URI outPathURI = null, xmlOutURI = null;
+	private URI outPathURI = null, xmlOutURI = null;
+	private double[] cal = new double[] { 1, 1, 1 };
+	private String calUnit = "micrometer";
+	private double avgAnisotropy = Double.NaN;
 
 	/**
 	 * @return container group path always terminated with a '/'
@@ -376,34 +388,29 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
+			updateAnisotropyAndCalibration(dataGlobal, viewIdsGlobal);
 			// extract the resolution of the s0 export
-			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx );
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + calUnit );
 
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 					5, // int n
 					getContainerGroupPath(), // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
-					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+					calUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
 					(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
 					levelToMipmapTransform );
 
 			// save metadata
-
-			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-			// for this to work you need to register an adapter in the N5Factory class
-			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
 		}
 
 		if ( bdv )
 		{
 			System.out.println( "Creating BDV compatible container at '" + outPathURI + "' ... " );
-
 			if ( storageType == StorageFormat.N5 )
 				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 			else if ( storageType == StorageFormat.ZARR )
@@ -422,14 +429,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				tps.add( new TimePoint( t ) );
 
 			// extract the resolution of the s0 export
-			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx );
+
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
-			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", resolutionS0 );
+			final VoxelDimensions vxNew = new FinalVoxelDimensions( calUnit, resolutionS0 );
 
 			for ( int c = 0; c < numChannels; ++c )
 			{
@@ -533,6 +538,31 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.close();
 
 		return null;
+	}
+
+	private void updateAnisotropyAndCalibration( SpimData2 dataGlobal, List<ViewId> viewIdsGlobal )
+	{
+		ViewRegistrations registrations = dataGlobal.getViewRegistrations();
+		// get all view descriptions
+		List<ViewDescription> vds = SpimData2.getAllViewDescriptionsSorted(dataGlobal, viewIdsGlobal);
+		// group by timepoint and channel
+		Set<Class<? extends Entity>> groupingFactors = new HashSet<>(Arrays.asList(TimePoint.class, Channel.class));
+		List<Group<ViewDescription>> fusionGroups = Group.splitBy( vds, groupingFactors );
+		Pair<double[], String> calAndUnit = fusionGroups.stream().findFirst()
+				.map(group -> TransformationTools.computeAverageCalibration(group, registrations))
+				.orElse(new ValuePair<>(new double[]{ 1, 1, 1 }, "micrometer"));
+		cal = calAndUnit.getA();
+		calUnit = calAndUnit.getB();
+
+		if (preserveAnisotropy) {
+			if (!Double.isNaN(this.anisotropyFactor)) {
+				avgAnisotropy = this.anisotropyFactor;
+			} else {
+				avgAnisotropy = TransformationTools.getAverageAnisotropyFactor(dataGlobal, viewIdsGlobal);
+			}
+		} else {
+			avgAnisotropy = Double.NaN;
+		}
 	}
 
 	public static void main(final String... args) throws SpimDataException

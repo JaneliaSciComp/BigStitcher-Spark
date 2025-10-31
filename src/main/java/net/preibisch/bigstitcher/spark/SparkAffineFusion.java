@@ -33,7 +33,6 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -767,18 +766,18 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 						
 						rddDSResult.cache();
 						rddDSResult.count();
-	
+
 						// extract all blocks that failed
 						final Set<long[][]> failedBlocksSet =
 								retryTrackerDS.processWithSpark( rddDSResult, grid );
-	
+
 						// Use RetryTracker to handle retry counting and removal
 						if (!retryTrackerDS.processFailures(failedBlocksSet))
 						{
 							System.out.println( "Stopping." );
 							System.exit( 1 );
 						}
-	
+
 						// Update grid for next iteration with remaining failed blocks
 						grid.clear();
 						grid.addAll(failedBlocksSet);
@@ -791,13 +790,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
 		driverVolumeWriter.close();
-
-		/*
-		if ( multiRes )
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
-		else
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
-		*/
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
 
