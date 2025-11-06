@@ -15,6 +15,7 @@ import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.Split_Views;
+import net.preibisch.mvrecon.fiji.plugin.Split_Views.InterestPointAdding;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SelectedViewDescriptionListener;
@@ -40,8 +41,8 @@ public class SplitDatasets extends AbstractBasic
 	@Option(names = { "--disableOptimization" }, description = "do not optimize image size and overlap")
 	private boolean disableOptimization = false;
 
-	@Option(names = { "-fip", "--fakeInterestPoints" }, description = "add fake interest points to overlapping regions of split images/views")
-	private boolean fakeInterestPoints = false;
+	@Option(names = { "-fip", "--fakeInterestPoints" }, description = "add fake (corresponding) interest points to overlapping regions of split images/views, NONE for none, IP for self-matching (deprecated), CORR adds points+correspondences (Default: CORRESPONDING)")
+	private InterestPointAdding fakeInterestPoints = InterestPointAdding.CORR;
 
 	@Option(names = { "--fipDensity" }, description = "density of fake interest points; number of points per 100x100x100 px volume (default: 100.0)")
 	private double fipDensity = 100.0;
@@ -55,7 +56,7 @@ public class SplitDatasets extends AbstractBasic
 	@Option(names = { "--fipError" }, description = "artificial error for fake corresponding interest points (default: 0.5)")
 	private double fipError = 0.5;
 
-	@Option(names = { "--fipExclusionRadius" }, description = "exclusion radius for fake interest points; to not put them close to existing points (default: 20)")
+	@Option(names = { "--fipExclusionRadius" }, description = "exclusion radius for fake interest points; to not put them close to existing points, only for --fakeInterestPoints IP (default: 20)")
 	private double fipExclusionRadius = 20.0;
 
 	@Option(names = { "--assignIlluminations" }, description = "assign old tile id's as illumination id's, this can be great for visualization")
