@@ -9,33 +9,44 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 import bdv.ViewerImgLoader;
+import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransform;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
+import net.imglib2.Cursor;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.AbstractBlockSupplier;
+import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.blocks.BlockInterval;
+import net.imglib2.cache.img.CachedCellImg;
+import net.imglib2.img.display.imagej.ImageJFunctions;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealTransformRealRandomAccessible;
 import net.imglib2.realtransform.ThinplateSplineTransform;
+import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.fluent.RealRandomAccessibleView;
+import net.imglib2.view.IntervalView;
+import net.imglib2.view.Views;
 import net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension;
 import net.imglib2.view.fluent.RandomAccessibleView.Interpolation;
 import net.preibisch.mvrecon.fiji.plugin.Split_Views;
@@ -230,33 +241,39 @@ public class TestTPSFusion
 
 		System.out.println( "numJobs = " + grid.size() );
 
-		final TPSFusionBlockSupplier tpsSupplier = new TPSFusionBlockSupplier( coeff, underlyingSD.getImgLoader() );
+		final TPSFusionBlockSupplier tpsSupplier = new TPSFusionBlockSupplier( coeff, underlyingImgLoader );
 
-		
+		//BlockSupplierUtils.cellImgBoundedCache( tpsSupplier, maxBB, computeBlockSize, 0)
+		CachedCellImg<FloatType, ?> fused =
+				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 128, 128, 1 } );
+
+		new ImageJ();
+		ImageJFunctions.show( fused, Executors.newFixedThreadPool( 8 ) );
 	}
 
-	private static class TPSFusionBlockSupplier extends AbstractBlockSupplier< UnsignedByteType >
+	private static class TPSFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
 	{
 		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
-		final ImgLoader imgLoader;
+		final BasicImgLoader imgLoader;
 
 		final HashMap< ViewId, RandomAccessible > transformed;
 
 		public TPSFusionBlockSupplier(
 				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
-				final ImgLoader imgLoader )
+				final BasicImgLoader imgLoader )
 		{
 			this.coeff = coeff;
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
 
 			this.coeff.forEach( (v,c ) ->{
-				
+
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 					// we go from output to input
 					c.getB(),
 					c.getA() );
 
+				System.out.println( Group.pvid( v ) );
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 				final RealRandomAccessibleView< UnsignedByteType > interp =
 						img.view().extend(Extension.zero()).interpolate(Interpolation.nLinear());
@@ -273,20 +290,29 @@ public class TestTPSFusion
 		public void copy( final Interval interval, final Object dest )
 		{
 			final BlockInterval blockInterval = BlockInterval.asBlockInterval( interval );
+
 			final long[] srcPos = blockInterval.min();
 			final int[] size = blockInterval.size();
 			final int len = safeInt( Intervals.numElements( size ) );
 
-			
+			transformed.forEach( (v,ra) -> {
+
+				final Cursor<RealType> c = Views.flatIterable( Views.interval( ra, blockInterval ) ).cursor();
+
+				final float[] fdest = Cast.unchecked( dest );
+
+				for ( int x = 0; x < len; ++x )
+					fdest[ x ] += c.next().getRealFloat();
+			});
 		}
 
 		@Override
-		public BlockSupplier<UnsignedByteType> independentCopy() { return new TPSFusionBlockSupplier(coeff, imgLoader); }
+		public BlockSupplier<FloatType> independentCopy() { return new TPSFusionBlockSupplier(coeff, imgLoader); }
 
-		private static final UnsignedByteType type = new UnsignedByteType();
+		private static final FloatType type = new FloatType();
 
 		@Override
-		public UnsignedByteType getType() { return type; }
+		public FloatType getType() { return type; }
 
 		@Override
 		public int numDimensions() { return 3; }
