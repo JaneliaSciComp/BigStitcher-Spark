@@ -79,9 +79,6 @@ public class TestTPSFusion
 	{
 		final SplitViewerImgLoader splitImgLoader = ( SplitViewerImgLoader ) data.getSequenceDescription().getImgLoader();
 
-		final SequenceDescription splitSD = data.getSequenceDescription();
-		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
-
 		final HashMap<Integer, Integer> new2oldSetupId = splitImgLoader.new2oldSetupId();
 		final HashMap<Integer, Interval> newSetupId2Interval = splitImgLoader.newSetupId2Interval();
 		final Map<ViewId, ViewRegistration> viewRegMap = data.getViewRegistrations().getViewRegistrations();
@@ -99,20 +96,15 @@ public class TestTPSFusion
 
 			final List<Integer> splitSetupIds = old2newSetupId.get( underlyingViewId.getViewSetupId() );
 
-			//double[][] points = new double[][]{
-			//	{sx / 2, 0, sx, 0, sx}, // x
-			//	{sy / 2, 0, 0, sy, sy}  // y };
-
 			final double[][] source = new double[3][splitSetupIds.size()];
 			final double[][] target = new double[3][splitSetupIds.size()];
 
 			for ( int i = 0; i < splitSetupIds.size(); ++i )
 			{
 				final int splitViewSetupId = splitSetupIds.get( i );
-				//final ViewSetup splitViewSetup = splitSD.getViewSetups().get( splitViewSetupId );
 				final ViewId splitViewId = new ViewId( underlyingViewId.getTimePointId(), splitViewSetupId );
 
-				System.out.println( "\tProcessing splitViewId: " + Group.pvid( splitViewId ) + ":" );
+				//System.out.println( "\tProcessing splitViewId: " + Group.pvid( splitViewId ) + ":" );
 
 				final ViewRegistration vr = viewRegMap.get( splitViewId );
 				final List<ViewTransform> vrList = vr.getTransformList();
@@ -123,7 +115,7 @@ public class TestTPSFusion
 
 				// this transformation puts the Zero-Min View of the underlying image where it actually is
 				final ViewTransform splitTransform = vrList.get( vrList.size() - 1);
-				System.out.println( "\t" + SplittingTools.IMAGE_SPLITTING_NAME + " transformation: " + splitTransform );
+				//System.out.println( "\t" + SplittingTools.IMAGE_SPLITTING_NAME + " transformation: " + splitTransform );
 
 				// get the remaining model
 				vr.updateModel();
@@ -144,15 +136,6 @@ public class TestTPSFusion
 				final double[] q = new double[ p.length ];
 				model.apply( p, q );
 
-				//splitTransform.apply(p, q);
-				//q[ 0 ] += -496.6270805555003;
-				//q[ 1 ] += -716.5994143579869;
-				//q[ 2 ] += 866.8662695762898;
-
-				//q[ 0 ] += -256;
-				//q[ 1 ] += -256;
-				//q[ 2 ] += 10; // TODO: why does a shift in Z not work, but in XY it does???
-
 				for ( int d = 0; d < p.length; ++d )
 				{
 					p[ d ] += splitTransform.asAffine3D().get(d, 3); // add the translation offsets of each split view
@@ -160,7 +143,7 @@ public class TestTPSFusion
 					target[ d ][ i ] = q[ d ];
 				}
 
-				System.out.println( "\tCenter point: " + Arrays.toString( p ) + " maps into global output space to: " + Arrays.toString( q ) );
+				//System.out.println( "\tCenter point: " + Arrays.toString( p ) + " maps into global output space to: " + Arrays.toString( q ) );
 			}
 
 			underlyingViewId2TPSCoefficients.put( underlyingViewId, new ValuePair<>( source, target ) );
@@ -248,6 +231,7 @@ public class TestTPSFusion
 		new ImageJ();
 
 		// show a single first image transformed
+		/*
 		final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 				coeff.get( new ViewId( 0, 0 )).getB(),
 				coeff.get( new ViewId( 0, 0 )).getA() );
@@ -259,17 +243,18 @@ public class TestTPSFusion
 				new RealTransformRealRandomAccessible<>(interp, transform).realView().raster().interval(boundingBox);
 		ImageJFunctions.show( img );
 		ImageJFunctions.show(tformedImg);
+		*/
 
 		// use BlockSupplier
-		final TPSFusionBlockSupplier tpsSupplier = new TPSFusionBlockSupplier( boundingBox, coeff, underlyingImgLoader );
+		final TPSMaxFusionBlockSupplier tpsSupplier = new TPSMaxFusionBlockSupplier( boundingBox, coeff, underlyingImgLoader );
 
 		CachedCellImg<FloatType, ?> fused =
-				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 128, 128, 1 } );
+				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 256, 256, 1 } );
 
 		ImageJFunctions.show( fused, Executors.newFixedThreadPool( 8 ) );
 	}
 
-	private static class TPSFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
+	private static class TPSMaxFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
 	{
 		final Interval boundingBox;
 		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
@@ -277,7 +262,7 @@ public class TestTPSFusion
 
 		final HashMap< ViewId, RandomAccessible > transformed;
 
-		public TPSFusionBlockSupplier(
+		public TPSMaxFusionBlockSupplier(
 				final Interval boundingBox,
 				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
 				final BasicImgLoader imgLoader )
@@ -287,7 +272,7 @@ public class TestTPSFusion
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
 
-			this.coeff.forEach( ( v,c ) ->{
+			this.coeff.forEach( ( v,c ) -> {
 
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 					// we go from output to input
@@ -309,9 +294,10 @@ public class TestTPSFusion
 		@Override
 		public void copy( final Interval interval, final Object dest )
 		{
-			final BlockInterval blockInterval = BlockInterval.asBlockInterval( Intervals.translate( interval, boundingBox.minAsLongArray() ) );
+			final BlockInterval blockInterval =
+					BlockInterval.asBlockInterval(
+							Intervals.translate( interval, boundingBox.minAsLongArray() ) );
 
-			final long[] srcPos = blockInterval.min();
 			final int[] size = blockInterval.size();
 			final int len = safeInt( Intervals.numElements( size ) );
 
@@ -328,7 +314,7 @@ public class TestTPSFusion
 		}
 
 		@Override
-		public BlockSupplier<FloatType> independentCopy() { return new TPSFusionBlockSupplier( boundingBox, coeff, imgLoader); }
+		public BlockSupplier<FloatType> independentCopy() { return new TPSMaxFusionBlockSupplier( boundingBox, coeff, imgLoader); }
 
 		private static final FloatType type = new FloatType();
 
