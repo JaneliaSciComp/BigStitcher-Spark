@@ -18,12 +18,9 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransform;
-import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.Cursor;
-import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessible;
@@ -34,6 +31,7 @@ import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealTransformRealRandomAccessible;
 import net.imglib2.realtransform.ThinplateSplineTransform;
@@ -43,13 +41,12 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
+import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.fluent.RealRandomAccessibleView;
-import net.imglib2.view.IntervalView;
 import net.imglib2.view.Views;
 import net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension;
 import net.imglib2.view.fluent.RandomAccessibleView.Interpolation;
-import net.preibisch.mvrecon.fiji.plugin.Split_Views;
+import net.imglib2.view.fluent.RealRandomAccessibleView;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
@@ -59,9 +56,11 @@ import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
-import util.BlockSupplierUtils;
 import util.Grid;
 
+/**
+ * This needs a minimal grid size of 2x2x2, otherwise we get 'funny' transformations
+ */
 public class TestTPSFusion
 {
 	public static ViewerImgLoader getUnderlyingImageLoader( final SpimData2 data )
@@ -116,7 +115,6 @@ public class TestTPSFusion
 				System.out.println( "\tProcessing splitViewId: " + Group.pvid( splitViewId ) + ":" );
 
 				final ViewRegistration vr = viewRegMap.get( splitViewId );
-				vr.updateModel();
 				final List<ViewTransform> vrList = vr.getTransformList();
 
 				// just making sure this is the split transform
@@ -124,8 +122,11 @@ public class TestTPSFusion
 					throw new RuntimeException( "First transformation is not " + SplittingTools.IMAGE_SPLITTING_NAME + " for " + Group.pvid( splitViewId ) + ", stopping." );
 
 				// this transformation puts the Zero-Min View of the underlying image where it actually is
-				System.out.println( "\t" + SplittingTools.IMAGE_SPLITTING_NAME + " transformation: " + vrList.get( vrList.size() - 1).asAffine3D() );
+				final ViewTransform splitTransform = vrList.get( vrList.size() - 1);
+				System.out.println( "\t" + SplittingTools.IMAGE_SPLITTING_NAME + " transformation: " + splitTransform );
 
+				// get the remaining model
+				vr.updateModel();
 				final AffineTransform3D model = vr.getModel().copy();
 
 				// preserve anisotropy
@@ -138,12 +139,23 @@ public class TestTPSFusion
 
 				// create a point in the middle of the Zero-Min View and the corresponding point in the global output space
 				final Interval splitInterval = newSetupId2Interval.get( splitViewSetupId );
+
 				final double[] p = new double[] { splitInterval.dimension( 0 ) / 2.0, splitInterval.dimension( 1 ) / 2.0, splitInterval.dimension( 2 ) / 2.0 };
 				final double[] q = new double[ p.length ];
 				model.apply( p, q );
 
+				//splitTransform.apply(p, q);
+				//q[ 0 ] += -496.6270805555003;
+				//q[ 1 ] += -716.5994143579869;
+				//q[ 2 ] += 866.8662695762898;
+
+				//q[ 0 ] += -256;
+				//q[ 1 ] += -256;
+				//q[ 2 ] += 10; // TODO: why does a shift in Z not work, but in XY it does???
+
 				for ( int d = 0; d < p.length; ++d )
 				{
+					p[ d ] += splitTransform.asAffine3D().get(d, 3); // add the translation offsets of each split view
 					source[ d ][ i ] = p[ d ];
 					target[ d ][ i ] = q[ d ];
 				}
@@ -195,7 +207,7 @@ public class TestTPSFusion
 		final List< ViewId > underlyingViewIds = 
 				underlyingSD.getViewDescriptions().values().stream()
 				.filter( vd -> vd.isPresent() )
-				.filter( vd -> vd.getViewSetup().getChannel().getId() == 0 )
+				.filter( vd -> vd.getViewSetup().getChannel().getId() == 0 /*&& vd.getViewSetupId() == 0*/ )
 				.map( vd -> new ViewId(vd.getTimePointId(), vd.getViewSetupId() ) )
 				.collect( Collectors.toList() );
 
@@ -208,6 +220,8 @@ public class TestTPSFusion
 		// get all split ViewIds for the set of underlying ViewIds
 		final List<ViewId> splitViewIds = splitViewIds( underlyingViewIds, old2newSetupId( splitImgLoader.new2oldSetupId() ) );
 
+		System.out.println( "Split viewIds: " + splitViewIds.size() );
+
 		final double downsampling = Double.NaN;
 		final double anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( data, underlyingViewIds );
 
@@ -218,68 +232,74 @@ public class TestTPSFusion
 		BoundingBox boundingBox = new BoundingBoxMaximal( splitViewIds, data ).estimate( "Full Bounding Box" );
 		System.out.println( boundingBox );
 
-		// prepare downsampled boundingbox
-		final long[] minBB = boundingBox.minAsLongArray();
-		final long[] maxBB = boundingBox.maxAsLongArray();
+		if ( !Double.isNaN( anisotropyFactor ) )
+		{
+			// prepare downsampled boundingbox
+			final long[] minBB = boundingBox.minAsLongArray();
+			final long[] maxBB = boundingBox.maxAsLongArray();
+	
+			minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
+			maxBB[ 2 ] = Math.round( Math.ceil( maxBB[ 2 ] / anisotropyFactor ) );
+	
+			boundingBox = new BoundingBox( new FinalInterval( minBB, maxBB ) );
+			System.out.println( boundingBox );
+		}
 
-		minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
-		maxBB[ 2 ] = Math.round( Math.ceil( maxBB[ 2 ] / anisotropyFactor ) );
+		new ImageJ();
 
-		boundingBox = new BoundingBox( new FinalInterval(minBB, maxBB) );
+		// show a single first image transformed
+		final ThinplateSplineTransform transform = new ThinplateSplineTransform(
+				coeff.get( new ViewId( 0, 0 )).getB(),
+				coeff.get( new ViewId( 0, 0 )).getA() );
 
-		System.out.println( boundingBox );
+		final RandomAccessibleInterval img = underlyingImgLoader.getSetupImgLoader( 0 ).getImage( 0 );
+		final RealRandomAccessibleView interp = 
+				img.view().extend(Extension.zero()).interpolate(Interpolation.nLinear());
+		final RandomAccessibleInterval< UnsignedByteType > tformedImg =
+				new RealTransformRealRandomAccessible<>(interp, transform).realView().raster().interval(boundingBox);
+		ImageJFunctions.show( img );
+		ImageJFunctions.show(tformedImg);
 
-		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-		final int[] blockSize = new int[] { 128, 128, 64 };
-		final int[] blocksPerJob = new int[] { 2, 2, 1 };
+		// use BlockSupplier
+		final TPSFusionBlockSupplier tpsSupplier = new TPSFusionBlockSupplier( boundingBox, coeff, underlyingImgLoader );
 
-		final int[] computeBlockSize = new int[ 3 ];
-		Arrays.setAll( computeBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
-		final List<long[][]> grid = Grid.create(boundingBox.dimensionsAsLongArray(),
-				computeBlockSize,
-				blockSize);
-
-		System.out.println( "numJobs = " + grid.size() );
-
-		final TPSFusionBlockSupplier tpsSupplier = new TPSFusionBlockSupplier( coeff, underlyingImgLoader );
-
-		//BlockSupplierUtils.cellImgBoundedCache( tpsSupplier, maxBB, computeBlockSize, 0)
 		CachedCellImg<FloatType, ?> fused =
 				BlockAlgoUtils.cellImg( tpsSupplier, boundingBox.dimensionsAsLongArray(), new int[] { 128, 128, 1 } );
 
-		new ImageJ();
 		ImageJFunctions.show( fused, Executors.newFixedThreadPool( 8 ) );
 	}
 
 	private static class TPSFusionBlockSupplier extends AbstractBlockSupplier< FloatType >
 	{
+		final Interval boundingBox;
 		final HashMap< ViewId, Pair< double[][], double[][] > > coeff;
 		final BasicImgLoader imgLoader;
 
 		final HashMap< ViewId, RandomAccessible > transformed;
 
 		public TPSFusionBlockSupplier(
+				final Interval boundingBox,
 				final HashMap< ViewId, Pair< double[][], double[][] > > coeff,
 				final BasicImgLoader imgLoader )
 		{
+			this.boundingBox = boundingBox;
 			this.coeff = coeff;
 			this.imgLoader = imgLoader;
 			this.transformed = new HashMap<>();
 
-			this.coeff.forEach( (v,c ) ->{
+			this.coeff.forEach( ( v,c ) ->{
 
 				final ThinplateSplineTransform transform = new ThinplateSplineTransform(
 					// we go from output to input
 					c.getB(),
 					c.getA() );
 
-				System.out.println( Group.pvid( v ) );
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 				final RealRandomAccessibleView< UnsignedByteType > interp =
 						img.view().extend(Extension.zero()).interpolate(Interpolation.nLinear());
 
 				final RandomAccessible tformedImg =
-						new RealTransformRealRandomAccessible(interp, transform).realView().raster();//.interval(img);
+						new RealTransformRealRandomAccessible(interp, transform).realView().raster();
 
 				transformed.put(v, tformedImg);
 			});
@@ -289,7 +309,7 @@ public class TestTPSFusion
 		@Override
 		public void copy( final Interval interval, final Object dest )
 		{
-			final BlockInterval blockInterval = BlockInterval.asBlockInterval( interval );
+			final BlockInterval blockInterval = BlockInterval.asBlockInterval( Intervals.translate( interval, boundingBox.minAsLongArray() ) );
 
 			final long[] srcPos = blockInterval.min();
 			final int[] size = blockInterval.size();
@@ -297,6 +317,7 @@ public class TestTPSFusion
 
 			transformed.forEach( (v,ra) -> {
 
+				//System.out.println( Util.printInterval( blockInterval ) );
 				final Cursor<RealType> c = Views.flatIterable( Views.interval( ra, blockInterval ) ).cursor();
 
 				final float[] fdest = Cast.unchecked( dest );
@@ -307,7 +328,7 @@ public class TestTPSFusion
 		}
 
 		@Override
-		public BlockSupplier<FloatType> independentCopy() { return new TPSFusionBlockSupplier(coeff, imgLoader); }
+		public BlockSupplier<FloatType> independentCopy() { return new TPSFusionBlockSupplier( boundingBox, coeff, imgLoader); }
 
 		private static final FloatType type = new FloatType();
 
