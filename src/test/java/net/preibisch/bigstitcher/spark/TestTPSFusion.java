@@ -31,7 +31,6 @@ import net.imglib2.algorithm.blocks.BlockSupplier;
 import net.imglib2.blocks.BlockInterval;
 import net.imglib2.cache.img.CachedCellImg;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.realtransform.AffineGet;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.RealTransformRealRandomAccessible;
 import net.imglib2.realtransform.ThinplateSplineTransform;
@@ -41,7 +40,6 @@ import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
-import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.imglib2.view.fluent.RandomAccessibleIntervalView.Extension;
@@ -56,7 +54,6 @@ import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
-import util.Grid;
 
 /**
  * This needs a minimal grid size of 2x2x2, otherwise we get 'funny' transformations
