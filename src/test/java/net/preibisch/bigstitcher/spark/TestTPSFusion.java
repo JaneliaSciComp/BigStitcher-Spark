@@ -254,7 +254,7 @@ public class TestTPSFusion
 
 		final RandomAccessibleInterval img = underlyingImgLoader.getSetupImgLoader( 0 ).getImage( 0 );
 		final RealRandomAccessibleView interp = 
-				img.view().extend(Extension.zero()).interpolate(Interpolation.nLinear());
+				img.view().extend(Extension.zero()).interpolate(Interpolation.clampingNLinear());
 		final RandomAccessibleInterval< UnsignedByteType > tformedImg =
 				new RealTransformRealRandomAccessible<>(interp, transform).realView().raster().interval(boundingBox);
 		ImageJFunctions.show( img );
@@ -296,7 +296,7 @@ public class TestTPSFusion
 
 				final RandomAccessibleInterval img = imgLoader.getSetupImgLoader( v.getViewSetupId() ).getImage( v.getTimePointId() );
 				final RealRandomAccessibleView< UnsignedByteType > interp =
-						img.view().extend(Extension.zero()).interpolate(Interpolation.nLinear());
+						img.view().extend(Extension.zero()).interpolate(Interpolation.clampingNLinear());
 
 				final RandomAccessible tformedImg =
 						new RealTransformRealRandomAccessible(interp, transform).realView().raster();
@@ -323,7 +323,7 @@ public class TestTPSFusion
 				final float[] fdest = Cast.unchecked( dest );
 
 				for ( int x = 0; x < len; ++x )
-					fdest[ x ] += c.next().getRealFloat();
+					fdest[ x ] = Math.max( c.next().getRealFloat(), fdest[ x ] );
 			});
 		}
 
