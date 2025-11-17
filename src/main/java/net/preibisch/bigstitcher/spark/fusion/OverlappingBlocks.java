@@ -61,13 +61,14 @@ public class OverlappingBlocks
 			final SpimData data,
 			final HashMap< ViewId, AffineTransform3D > registrations,
 			final List<ViewId> viewIds,
-			Interval interval )
+			final Interval interval,
+			final int expansion )
 	{
 		final List< ViewId > overlapping = new ArrayList<>();
 		final List< Callable< Object > > prefetch = new ArrayList<>();
 
 		// expand to be conservative ...
-		final Interval expandedInterval = Intervals.expand( interval, 2 );
+		final Interval expandedInterval = Intervals.expand( interval, expansion );
 
 		for ( final ViewId viewId : viewIds )
 		{

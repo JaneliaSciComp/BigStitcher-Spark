@@ -35,7 +35,7 @@ import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Util;
-import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
+import net.preibisch.bigstitcher.spark.SparkFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;

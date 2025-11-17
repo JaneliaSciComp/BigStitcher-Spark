@@ -78,7 +78,9 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
@@ -90,12 +92,10 @@ import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
-public class SparkAffineFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
+public class SparkFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
-	public enum DataTypeFusion
-	{
-		UINT8, UINT16, FLOAT32
-	}
+	public enum DataTypeFusion { UINT8, UINT16, FLOAT32 }
+	public enum FusionMethod { AFFINE, THIN_PLATE_SPLINE }
 
 	private static final long serialVersionUID = -6103761116219617153L;
 
@@ -108,20 +108,20 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
 	private String blockScaleString = "2,2,1";
 
-	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images)")
+	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images, currently only works for FusionMethod.AFFINE)")
 	private boolean masks = false;
 
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
 	private String maskOffset = "0.0,0.0,0.0";
 
-	//@Option(names = { "--firstTileWins" }, description = "use firstTileWins fusion strategy, with lowest ViewIds winning (default: false - using weighted average blending fusion)")
-	//private boolean firstTileWins = false;
-
-	//@Option(names = { "--firstTileWinsInverse" }, description = "use firstTileWins fusion strategy, with highest ViewIds winning (default: false - using weighted average blending fusion)")
-	//private boolean firstTileWinsInverse = false;
-
 	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, "/*AVG_CONTENT, AVG_BLEND_CONTENT*/+", MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
 	private FusionType fusionType = FusionType.AVG_BLEND;
+
+	@Option(names = {"-fm", "--fusionMethod"}, description = "The transformation models used for fusion, AFFINE or THIN_PLATE_SPLINE. TPS requires a split dataset with at least 2x2x2 split views (default: AFFINE).")
+	private FusionMethod fusionMethod = FusionMethod.AFFINE;
+
+	@Option(names = { "-oe", "--overlapExpansion" }, description = "Number of pixels by which intervals are expanded when testing for overlap (default: 2 for FusionMethod.AFFINE; 50 for FusionMethod.THIN_PLATE_SPLINE).")
+	private Integer overlapExpansion = null;
 
 	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
 	private Integer timepointIndex = null;
@@ -245,9 +245,47 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 			System.out.println( "Note: this metadata is created by ./create-fusion-container in the previous step." );
 			return null;
 		}
+
 		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
 
 		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
+
+		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
+
+		if ( dataGlobal == null )
+		{
+			System.out.println( "Could not load XML from:" + xmlURI );
+			return null;
+		}
+
+		if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
+		{
+			if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND )
+			{
+				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: only FusionType.CLOSEST_PIXEL_WINS and FusionType.AVG_BLEND supported right now." );
+				return null;
+			}
+
+			if ( masks )
+			{
+				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: masks not yet supported." );
+				return null;
+			}
+
+			if ( BlkThinPlateSplineFusion.getUnderlyingImageLoader( dataGlobal ) == null )
+			{
+				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: ImageLoader is not a SplitViewerImgLoader, this is required for thin plate spline fusion. Please split the dataset first." );
+				return null;
+			}
+
+			if ( overlapExpansion == null )
+				overlapExpansion = 50;
+		}
+		else
+		{
+			if ( overlapExpansion == null )
+				overlapExpansion = 2;
+		}
 
 		final int numTimepoints, numChannels;
 
@@ -274,6 +312,8 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
+		System.out.println( "FusionMethod: " + fusionMethod );
+		System.out.println( "OverlapExpansion: " + overlapExpansion );
 		System.out.println( "FusionType: " + fusionType );
 		System.out.println( "Input XML: " + xmlURI );
 		System.out.println( "BDV project: " + bdv );
@@ -308,11 +348,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
 
 		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
-
-		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
-
-		if ( dataGlobal == null )
-			return null;
 
 		final ArrayList< ViewId > viewIdsGlobal;
 
@@ -401,7 +436,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		}
 		catch (Exception e ) {}
 
-		final SparkConf conf = new SparkConf().setAppName("AffineFusion");
+		final SparkConf conf = new SparkConf().setAppName("SparkFusion");
 
 		if (localSparkBindAddress)
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
@@ -578,37 +613,59 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							//
 							// PREFETCHING, TODO: should be part of BlkAffineFusion.init
 							//
-							final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, registrations, overlappingViews, fusedBlock );
-							if ( overlappingBlocks.overlappingViews().isEmpty() )
-								return gridBlock.clone();
-
-							if ( prefetch )
+							if ( fusionMethod == FusionMethod.AFFINE )
 							{
-								System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
+								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, registrations, overlappingViews, fusedBlock, overlapExpansion );
+								if ( overlappingBlocks.overlappingViews().isEmpty() )
+									return gridBlock.clone();
 
-								final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
-								overlappingBlocks.prefetch(prefetchExecutor);
-								prefetchExecutor.shutdown();
+								if ( prefetch )
+								{
+									System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
+
+									final ExecutorService prefetchExecutor = Executors.newCachedThreadPool();
+									overlappingBlocks.prefetch(prefetchExecutor);
+									prefetchExecutor.shutdown();
+								}
 							}
 
 							System.out.println( "Fusing block: offset=" + Util.printCoordinates( gridBlock[0] ) + ", dimension=" + Util.printCoordinates( gridBlock[1] ) );
 
 							// returns a zero-min interval
-							//blockSupplier = BlkAffineFusion.init(
-							blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
-									conv,
-									dataLocal.getSequenceDescription().getImgLoader(),
-									viewIds,
-									registrations,
-									dataLocal.getSequenceDescription().getViewDescriptions(),
-									fusionType,//fusion.getFusionType(),
-									Double.NaN,
-									null, // map<old,new> will go here
-									1, // linear interpolation
-									coefficients, // intensity correction
-									new BoundingBox( interval ),
-									(RealType & NativeType)type,
-									blockSize );
+							if ( fusionMethod == FusionMethod.AFFINE )
+							{
+								blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
+										conv,
+										dataLocal.getSequenceDescription().getImgLoader(),
+										viewIds,
+										registrations,
+										dataLocal.getSequenceDescription().getViewDescriptions(),
+										fusionType,//fusion.getFusionType(),
+										Double.NaN, // only for content-based
+										null, // map<old,new> will go here
+										1, // linear interpolation
+										coefficients, // intensity correction
+										new BoundingBox( interval ),
+										(RealType & NativeType)type,
+										blockSize );
+							}
+							else
+							{
+								BlkThinPlateSplineFusion.defaultExpansion = overlapExpansion;
+
+								blockSupplier = BlkThinPlateSplineFusion.init(
+										conv,
+										(SplitViewerImgLoader)dataLocal.getSequenceDescription().getImgLoader(),
+										viewIds,
+										dataLocal.getViewRegistrations().getViewRegistrations(), // already adjusted for anisotropy
+										dataLocal.getSequenceDescription().getViewDescriptions(),
+										fusionType,
+										Double.NaN,
+										null, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
+										coefficients, // intensity correction
+										new BoundingBox( interval ), // already adjusted for anisotropy???
+										(RealType & NativeType)type );
+							}
 						}
 
 						final long[] gridOffset;
@@ -791,6 +848,6 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 
 		System.out.println(Arrays.toString(args));
 
-		System.exit(new CommandLine(new SparkAffineFusion()).execute(args));
+		System.exit(new CommandLine(new SparkFusion()).execute(args));
 	}
 }
