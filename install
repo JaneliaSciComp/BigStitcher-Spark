@@ -127,7 +127,7 @@ install_command solver "net.preibisch.bigstitcher.spark.Solver"
 install_command match-intensities "net.preibisch.bigstitcher.spark.SparkIntensityMatching"
 install_command solve-intensities "net.preibisch.bigstitcher.spark.IntensitySolver"
 install_command create-fusion-container "net.preibisch.bigstitcher.spark.CreateFusionContainer"
-install_command affine-fusion "net.preibisch.bigstitcher.spark.SparkAffineFusion"
+install_command fusion "net.preibisch.bigstitcher.spark.SparkFusion"
 install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFusion"
 
 echo 'Installing utils ...'
