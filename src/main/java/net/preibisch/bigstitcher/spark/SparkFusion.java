@@ -651,8 +651,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							}
 							else
 							{
-								BlkThinPlateSplineFusion.defaultExpansion = overlapExpansion;
-
 								blockSupplier = BlkThinPlateSplineFusion.init(
 										conv,
 										(SplitViewerImgLoader)dataLocal.getSequenceDescription().getImgLoader(),
@@ -660,11 +658,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										dataLocal.getViewRegistrations().getViewRegistrations(), // already adjusted for anisotropy
 										dataLocal.getSequenceDescription().getViewDescriptions(),
 										fusionType,
+										overlapExpansion,
 										Double.NaN,
 										null, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
 										coefficients, // intensity correction
 										new BoundingBox( interval ), // already adjusted for anisotropy???
-										(RealType & NativeType)type );
+										(RealType & NativeType)type,
+										blockSize );
 							}
 						}
 
