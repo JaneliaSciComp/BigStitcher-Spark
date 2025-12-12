@@ -41,7 +41,7 @@ public class SplitDatasets extends AbstractBasic
 	private boolean disableOptimization = false;
 
 	@Option(names = { "-fip", "--fakeInterestPoints" }, description = "add fake interest points to overlapping regions of split images/views")
-	private boolean fakeInterestPoints = false;
+	private Split_Views.InterestPointAdding fakeInterestPoints = Split_Views.InterestPointAdding.NONE;
 
 	@Option(names = { "--fipDensity" }, description = "density of fake interest points; number of points per 100x100x100 px volume (default: 100.0)")
 	private double fipDensity = 100.0;

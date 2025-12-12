@@ -77,7 +77,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset compression")
-	private Compressions compression = null;
+	private Compressions compressionType = null;
 
 	@Option(names = {"-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
 	private Integer compressionLevel = null;
@@ -240,9 +240,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
 
 		// compression and data type
-		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
+		final Compression compression = N5Util.getCompression( this.compressionType, this.compressionLevel );
 
-		System.out.println( "Compression: " + this.compression );
+		System.out.println( "Compression: " + this.compressionType );
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
 
 		final DataType dt;
