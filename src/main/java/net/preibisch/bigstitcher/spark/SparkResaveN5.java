@@ -43,9 +43,9 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
-import net.preibisch.bigstitcher.spark.CreateFusionContainer.Compressions;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
@@ -96,7 +96,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset compression")
-	private Compressions compression = null;
+	private Compressions compressionType = null;
 
 	@Option(names = {"-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
 	private Integer compressionLevel = null;
@@ -164,7 +164,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		}
 
 		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParentURI( xmlOutURI ), (useN5 ? "dataset.n5" : "dataset.ome.zarr") ) : n5PathURIString );
-		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
+		final Compression compression = N5Util.getCompression( this.compressionType, this.compressionLevel );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final int[] blockScale = Import.csvStringToIntArray(blockScaleString);
@@ -177,7 +177,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//final N5Writer n5 = new N5FSWriter(n5Path);
 		final N5Writer n5Writer = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
 
-		System.out.println( "Compression: " + this.compression );
+		System.out.println( "Compression: " + this.compressionType );
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
 		System.out.println( "N5 block size=" + Util.printCoordinates( blockSize ) );
 		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlockSize ) );
@@ -242,13 +242,14 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					else
 					{
 						System.out.println( Arrays.toString( blockSize ) );
-						
+						VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize();
 						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
 								n5Writer,
 								viewId,
 								dataTypes.get( viewId.getViewSetupId() ),
 								dimensions.get( viewId.getViewSetupId() ),
-								dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(),
+								vx.dimensionsAsDoubleArray(),
+								vx.unit(),
 								compression,
 								blockSize,
 								downsamplings);

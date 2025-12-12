@@ -24,6 +24,7 @@ package net.preibisch.bigstitcher.spark;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -283,7 +284,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				} );
 
 				// load & transform all interest points
-				final Map< ViewId, HashMap< String, List< InterestPoint > > > interestpoints =
+				final Map< ViewId, HashMap< String, Collection< InterestPoint > > > interestpoints =
 						TransformationTools.getAllTransformedInterestPoints(
 							views,
 							data.getViewRegistrations().getViewRegistrations(),
@@ -299,8 +300,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 							interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
 
 					System.out.println( Group.pvid( task.vA ) + " (" + task.labelA + ") <=> " + Group.pvid( task.vB ) + " (" + task.labelB + "): Remaining interest points for alignment: " );
-					for ( final Entry< ViewId, HashMap< String, List< InterestPoint > > > element: interestpoints.entrySet() )
-						for ( final Entry< String, List< InterestPoint > > subElement : element.getValue().entrySet() )
+					for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
+						for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
 							System.out.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
 				}
 
@@ -390,7 +391,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				} );
 
 				// load & transform all interest points
-				final Map< ViewId, HashMap< String, List< InterestPoint > > > interestpoints =
+				final Map< ViewId, HashMap< String, Collection< InterestPoint >> > interestpoints =
 						TransformationTools.getAllTransformedInterestPoints(
 							views,
 							data.getViewRegistrations().getViewRegistrations(),
@@ -410,12 +411,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					TransformationTools.filterForOverlappingInterestPoints( interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
 
 					System.out.println( task.vA + " (" + task.labelA + ") <=> " + task.vB + " (" + task.labelB + "): Remaining interest points for alignment: " );
-					for ( final Entry< ViewId, HashMap< String, List< InterestPoint > > > element: interestpoints.entrySet() )
-						for ( final Entry< String, List< InterestPoint > > subElement : element.getValue().entrySet() )
+					for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
+						for ( final Entry< String, Collection< InterestPoint > > subElement : element.getValue().entrySet() )
 							System.out.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
 				}
 
-				final Map< Group< ViewId >, HashMap< String, List< GroupedInterestPoint< ViewId > > > > groupedInterestpoints = new HashMap<>();
+				final Map< Group< ViewId >, HashMap< String, Collection< GroupedInterestPoint< ViewId > > > > groupedInterestpoints = new HashMap<>();
 
 				final InterestPointGroupingMinDistance< ViewId > ipGrouping 
 						= new InterestPointGroupingMinDistance<>( interestPointMergeDistance, interestpoints );

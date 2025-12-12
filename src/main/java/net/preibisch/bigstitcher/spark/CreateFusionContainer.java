@@ -7,11 +7,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 
+import mpicbg.spim.data.generic.base.Entity;
+import mpicbg.spim.data.registration.ViewRegistrations;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -59,8 +66,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 {
 	private static final long serialVersionUID = -9140450542904228386L;
 
-	public enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
-
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
 
@@ -70,7 +75,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset compression")
-	private Compressions compression = null;
+	private Compressions compressionType = null;
 
 	@Option(names = {"-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
 	private Integer compressionLevel = null;
@@ -116,7 +121,10 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
-	URI outPathURI = null, xmlOutURI = null;
+	private URI outPathURI = null, xmlOutURI = null;
+	private double[] cal = new double[] { 1, 1, 1 };
+	private String calUnit = "micrometer";
+	private double avgAnisotropy = Double.NaN;
 
 	@Override
 	public Void call() throws Exception
@@ -215,9 +223,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
 
 		// compression and data type
-		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
+		final Compression compression = N5Util.getCompression( this.compressionType, this.compressionLevel );
 
-		System.out.println( "Compression: " + this.compression );
+		System.out.println( "Compression: " + this.compressionType );
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
 
 		final DataType dt;
@@ -362,29 +370,23 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
+			updateAnisotropyAndCalibration(dataGlobal, viewIdsGlobal);
 			// extract the resolution of the s0 export
-			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx );
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + calUnit );
 
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
 					5, // int n
 					"/", // String name, I also saw "/"
 					resolutionS0, // double[] resolutionS0,
-					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+					calUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
 					levelToName,
 					levelToMipmapTransform );
 
 			// save metadata
-
-			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-			// for this to work you need to register an adapter in the N5Factory class
-			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
 			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
 		}
 
@@ -410,12 +412,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				tps.add( new TimePoint( t ) );
 
 			// extract the resolution of the s0 export
-			final VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx );
+
+			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
-			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", resolutionS0 );
+			final VoxelDimensions vxNew = new FinalVoxelDimensions( calUnit, resolutionS0 );
 
 			for ( int c = 0; c < numChannels; ++c )
 			{
@@ -441,7 +443,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					for ( int t = 0; t < numTimepoints; ++t )
 					{
 						final OMEZARREntry omeZarrEntry = new OMEZARREntry(
-								mrInfos[ 0 ][ 0 ].dataset.substring(0, mrInfos[ 0 ][ 0 ].dataset.lastIndexOf( "/" ) ),
+								mrInfos[ t ][ c ].dataset.substring(0, mrInfos[ t ][ c ].dataset.lastIndexOf( "/" ) ),
 								new int[] { c, t } );
 
 						viewIdToPath.put( new ViewId( t, c ), omeZarrEntry );
@@ -521,14 +523,33 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		return null;
 	}
 
+	private void updateAnisotropyAndCalibration( SpimData2 dataGlobal, List<ViewId> viewIdsGlobal )
+	{
+		ViewRegistrations registrations = dataGlobal.getViewRegistrations();
+		// get all view descriptions
+		List<ViewDescription> vds = SpimData2.getAllViewDescriptionsSorted(dataGlobal, viewIdsGlobal);
+		// group by timepoint and channel
+		Set<Class<? extends Entity>> groupingFactors = new HashSet<>(Arrays.asList(TimePoint.class, Channel.class));
+		List<Group<ViewDescription>> fusionGroups = Group.splitBy( vds, groupingFactors );
+		Pair<double[], String> calAndUnit = fusionGroups.stream().findFirst()
+				.map(group -> TransformationTools.computeAverageCalibration(group, registrations))
+				.orElse(new ValuePair<>(new double[]{ 1, 1, 1 }, "micrometer"));
+		cal = calAndUnit.getA();
+		calUnit = calAndUnit.getB();
+
+		if (preserveAnisotropy) {
+			if (!Double.isNaN(this.anisotropyFactor)) {
+				avgAnisotropy = this.anisotropyFactor;
+			} else {
+				avgAnisotropy = TransformationTools.getAverageAnisotropyFactor(dataGlobal, viewIdsGlobal);
+			}
+		} else {
+			avgAnisotropy = Double.NaN;
+		}
+	}
+
 	public static void main(final String... args) throws SpimDataException
 	{
-
-		//final XmlIoSpimData io = new XmlIoSpimData();
-		//final SpimData spimData = io.load( "/Users/preibischs/Documents/Microscopy/Stitching/Truman/standard/output/dataset.xml" );
-		//BdvFunctions.show( spimData );
-		//SimpleMultiThreading.threadHaltUnClean();
-
 		System.out.println(Arrays.toString(args));
 
 		System.exit(new CommandLine(new CreateFusionContainer()).execute(args));
