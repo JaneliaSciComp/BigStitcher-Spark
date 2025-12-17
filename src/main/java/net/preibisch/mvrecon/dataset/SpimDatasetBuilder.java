@@ -486,11 +486,11 @@ public class SpimDatasetBuilder {
 	{
 		Matcher m = fileNamePattern.regexPattern.matcher(imageRelativePath);
 		if ( m.matches() ) {
-			int tp = extractInt(fileNamePattern.hasKey("t") ? m.group("tp") : "0");
-			int ch = extractInt(fileNamePattern.hasKey("c") ? m.group("ch") : "0");
-			int il = extractInt(fileNamePattern.hasKey("i") ? m.group("il") : "0");
-			int ang = extractInt(fileNamePattern.hasKey("a") ? m.group("ang") : "0");
-			int ti = extractInt(fileNamePattern.hasKey("x") ? m.group("ti") : "0");
+			int tp = extractInt(fileNamePattern.hasKey("t") ? m.group("tp") : "0"); // timepoint
+			int ch = extractInt(fileNamePattern.hasKey("c") ? m.group("ch") : "0"); // channel
+			int il = extractInt(fileNamePattern.hasKey("i") ? m.group("il") : "0"); // illumination
+			int ang = extractInt(fileNamePattern.hasKey("a") ? m.group("ang") : "0"); // angle
+			int ti = extractInt(fileNamePattern.hasKey("x") ? m.group("ti") : "0"); // tile
 			return new StackFile(tp, ch, il, ang, ti, imageURI, imageRelativePath);
 		} else {
 			throw new IllegalArgumentException(imageRelativePath + " does not match " + fileNamePattern.sourcePattern + ". Refine the pattern and try again");
