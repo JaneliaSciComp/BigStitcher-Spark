@@ -63,7 +63,7 @@ public class N5Util
 
 				driverVolumeWriter = sharedHDF5Writer = new N5HDF5Writer( URITools.fromURI( n5PathURI ) );
 			}
-			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+			else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 			{
 				driverVolumeWriter = URITools.instantiateN5Writer( storageType, n5PathURI );
 			}

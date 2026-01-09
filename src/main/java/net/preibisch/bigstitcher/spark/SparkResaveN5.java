@@ -82,13 +82,14 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 	private URI xmlOutURI = null;
 
-	@Option(names = { "--N5" }, description = "Export as N5 (default: OMEZARR)")
-	private boolean useN5 = false;
+	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "Dataset storage type: N5, ZARR2 (Zarr v2), or ZARR (Zarr v3 with sharding support, default)")
+	private StorageFormat storageFormat = StorageFormat.ZARR;
 
 	@Option(names = "--blockSize", description = "blockSize, you can use smaller blocks for HDF5 (default: 128,128,64)")
 	private String blockSizeString = "128,128,64";
 
-	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,32 that each spark thread writes 512,512,32 (default: 16,16,1)")
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize 128,128,32 that each spark thread writes 512,512,32; also serves as shard size factor when ZARR v3 sharding is enabled (default: 16,16,1)")
 	private String blockScaleString = "16,16,1";
 
 	@Option(names = { "-ds", "--downsampling" }, description = "downsampling pyramid (must contain full res 1,1,1 that is always created), e.g. 1,1,1; 2,2,1; 4,4,1; 8,8,2 (default: automatically computed)")
@@ -103,6 +104,10 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 	@Option(names = { "-o", "--n5Path" }, description = "N5/OME-ZARR path for saving, (default: 'folder of the xml'/dataset.n5 or e.g. s3://myBucket/data.n5)")
 	private String n5PathURIString = null;
+
+	@Option(names = { "--useSharding" },
+		description = "Enable Zarr v3 sharding using blockScale as shard size factor (default: enabled for ZARR v3, disabled for N5/ZARR v2)")
+	private Boolean useSharding = null; // null = auto-detect
 
 	@Override
 	public Void call() throws Exception
@@ -163,7 +168,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			System.out.println();
 		}
 
-		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParentURI( xmlOutURI ), (useN5 ? "dataset.n5" : "dataset.ome.zarr") ) : n5PathURIString );
+		// Determine default output filename based on storage format
+		final String defaultFilename = storageFormat == StorageFormat.N5 ? "dataset.n5" : "dataset.ome.zarr";
+		final URI n5PathURI = URITools.toURI( this.n5PathURIString == null ? URITools.appendName( URITools.getParentURI( xmlOutURI ), defaultFilename ) : n5PathURIString );
 		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
 
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
@@ -174,13 +181,41 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				blockSize[1] * blockScale[ 1 ],
 				blockSize[2] * blockScale[ 2 ] };
 
+		// Auto-detect sharding based on storage format (enabled for ZARR v3, disabled for N5/ZARR2)
+		if ( useSharding == null )
+			useSharding = (storageFormat == StorageFormat.ZARR);
+
+		// Validate: sharding only for ZARR v3
+		if ( useSharding && storageFormat != StorageFormat.ZARR )
+		{
+			System.out.println( "WARNING: Sharding only supported for ZARR v3. Disabling sharding." );
+			useSharding = false;
+		}
+
+		// Calculate shard size (shard size = blockSize * blockScale when sharding is enabled)
+		final int[] shardSize;
+		if ( useSharding )
+		{
+			shardSize = new int[] {
+				blockSize[0] * blockScale[0],
+				blockSize[1] * blockScale[1],
+				blockSize[2] * blockScale[2]
+			};
+			System.out.println( "Sharding enabled. Shard size: " + Util.printCoordinates( shardSize ) + " (blockSize * blockScale)" );
+			System.out.println( "Note: For Zarr v3 sharding, computeBlockSize equals shardSize for shard-aware writing." );
+		}
+		else
+		{
+			shardSize = null;
+			System.out.println( "Sharding disabled." );
+		}
 		//final N5Writer n5 = new N5FSWriter(n5Path);
-		final N5Writer n5Writer = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+		final N5Writer n5Writer = URITools.instantiateN5Writer( storageFormat, n5PathURI );
 
 		System.out.println( "Compression: " + this.compression );
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
-		System.out.println( "N5 block size=" + Util.printCoordinates( blockSize ) );
-		System.out.println( "Compute block size=" + Util.printCoordinates( computeBlockSize ) );
+		System.out.println( "N5/ZARR block size=" + Util.printCoordinates( blockSize ) );
+		System.out.println( "Compute/Shard block size=" + Util.printCoordinates( computeBlockSize ) );
 		System.out.println( "Setting up XML at: " + xmlOutURI );
 		System.out.println( "Setting up N5 writing to basepath: " + n5PathURI );
 
@@ -228,7 +263,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				{
 					final MultiResolutionLevelInfo[] mrInfo;
 
-					if ( useN5 )
+					if ( storageFormat == StorageFormat.N5 )
 					{
 						mrInfo = N5ApiTools.setupBdvDatasetsN5(
 								n5Writer,
@@ -243,7 +278,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					{
 						System.out.println( Arrays.toString( blockSize ) );
 						
-						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR(
+						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR_ResaveRaw(
 								n5Writer,
 								viewId,
 								dataTypes.get( viewId.getViewSetupId() ),
@@ -251,7 +286,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 								//dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize().dimensionsAsDoubleArray(), // TODO: this is a hack for now
 								compression,
 								blockSize,
-								downsamplings);
+								downsamplings,
+								useSharding,
+								shardSize );
 					}
 
 					return new ValuePair<>(
@@ -293,14 +330,14 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			final JavaRDD<long[][]> rdds0Result = rdds0.map( gridBlock ->
 			{
 				final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
-				final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+				final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
 
 				N5ApiTools.resaveS0Block(
 						dataLocal,
 						n5Lcl,
-						useN5 ? StorageFormat.N5 : StorageFormat.ZARR,
+						storageFormat,
 						dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
-						N5ApiTools.gridToDatasetBdv( 0, useN5 ? StorageFormat.N5 : StorageFormat.ZARR ), // a function mapping the gridblock to the dataset name for level 0 and N5
+						N5ApiTools.gridToDatasetBdv( 0, storageFormat ), // a function mapping the gridblock to the dataset name for level 0 and N5
 						gridBlock );
 
 				n5Lcl.close();
@@ -328,7 +365,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		}
 		while ( gridS0.size() > 0 );
 
-		System.out.println( "Resaved " + (useN5 ? "N5 s0" : "OME-ZARR 0") + "-level, took: " + (System.currentTimeMillis() - time ) + " ms." );
+		System.out.println( "Resaved " + (storageFormat == StorageFormat.N5 ? "N5 s0" : "OME-ZARR 0") + "-level, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		//
 		// Save remaining downsampling levels (s1 ... sN)
@@ -344,7 +381,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 									viewId,
 									viewIdToMrInfo.get(viewId)[s] )).flatMap(List::stream).collect( Collectors.toList() );
 
-			System.out.println( "Downsampling level " + (useN5 ? "s" : "") + s + "... " );
+			System.out.println( "Downsampling level " + (storageFormat == StorageFormat.N5 ? "s" : "") + s + "... " );
 			System.out.println( "Number of compute blocks: " + allBlocks.size() );
 
 			final RetryTrackerSpark<long[][]> retryTrackerDS =
@@ -365,9 +402,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	
 				final JavaRDD<long[][]> rdds0Result = rddsN.map( gridBlock ->
 				{
-					final N5Writer n5Lcl = URITools.instantiateN5Writer( useN5 ? StorageFormat.N5 : StorageFormat.ZARR, n5PathURI );
+					final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
 
-					if ( useN5 )
+					if ( storageFormat == StorageFormat.N5 )
 					{
 						N5ApiTools.writeDownsampledBlock(
 								n5Lcl,
@@ -411,7 +448,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 			} while ( allBlocks.size() > 0 );
 
-			System.out.println( "Resaved " + (useN5 ? "N5 s" : "OME-ZARR ") + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
+			System.out.println( "Resaved " + (storageFormat == StorageFormat.N5 ? "N5 s" : "OME-ZARR ") + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
 		}
 
 		sc.close();
@@ -421,12 +458,12 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		// things look good, let's save the new XML
 		System.out.println( "Saving new xml to: " + xmlOutURI );
 
-		if ( useN5 && URITools.isFile( n5PathURI ))
+		if ( storageFormat == StorageFormat.N5 && URITools.isFile( n5PathURI ))
 		{
 			dataGlobal.getSequenceDescription().setImgLoader(
 					new N5ImageLoader( n5PathURI, dataGlobal.getSequenceDescription()));
 		}
-		else if ( useN5 )
+		else if ( storageFormat == StorageFormat.N5 )
 		{
 			dataGlobal.getSequenceDescription().setImgLoader(
 					new N5CloudImageLoader( null, n5PathURI, dataGlobal.getSequenceDescription())); // null is OK because the instance is not used now
@@ -442,7 +479,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			);
 
 			dataGlobal.getSequenceDescription().setImgLoader(
-					new AllenOMEZarrLoader( n5PathURI, dataGlobal.getSequenceDescription(), viewIdToPath )); // null is OK because the instance is not used now
+					new AllenOMEZarrLoader( n5PathURI, StorageFormat.ZARR, dataGlobal.getSequenceDescription(), viewIdToPath )); // null is OK because the instance is not used now
 		}
 
 		new XmlIoSpimData2().save( dataGlobal, xmlOutURI );

@@ -102,11 +102,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
 	private String outputPathURIString = null;
 
-	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending)")
+	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
 	private StorageFormat storageType = null;
 
-	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 2,2,1)")
-	private String blockScaleString = "2,2,1";
+	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 4,4,1; NOT compatible with sharded containers)")
+	private String blockScaleString = null;
 
 	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images, currently only works for FusionMethod.AFFINE)")
 	private boolean masks = false;
@@ -157,7 +157,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
 	private String intensityN5PathURIString = null;
 
-	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending)")
+	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
 	private StorageFormat intensityN5StorageType = null;
 
 	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
@@ -231,7 +231,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		catch ( Exception e )
 		{
 			System.out.println( "Exception: " + e);
-			System.out.println( "Error, container '" + outPathURI + "' does not exist. Please create it with create-fusion-container.");
+			System.out.println( "Error, container '" + outPathURI + "' does not exist/could not be loaded. If you are using ZARR2, you need specify it "
+					+ "since the default for .zarr is ZARR v3. If it doesn't exist, you need create an output container with create-fusion-container.");
 			return null;
 		}
 
@@ -347,6 +348,37 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
 
+		// Load sharding metadata
+		final boolean useSharding = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/UseSharding", boolean.class );
+		final int[] shardSize;
+		final int[] shardSizeFactor;
+
+		if ( useSharding )
+		{
+			shardSize = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/ShardSize", int[].class );
+			shardSizeFactor = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/ShardSizeFactor", int[].class );
+			System.out.println( "Sharding enabled. Shard size: " + Util.printCoordinates( shardSize ) + " (factor: " + Util.printCoordinates( shardSizeFactor ) + ")" );
+
+			// Validate: blockScale cannot be specified when sharding is enabled
+			if ( blockScaleString != null )
+			{
+				System.err.println( "ERROR: Sharding is enabled in this container (shard size: " + Util.printCoordinates( shardSize ) + ")." );
+				System.err.println( "       The --blockScale parameter cannot be used with sharded containers." );
+				System.err.println( "       Shard size automatically determines the compute block size for shard-aware writing." );
+				throw new IllegalArgumentException( "Cannot specify --blockScale when sharding is enabled." );
+			}
+		}
+		else
+		{
+			shardSize = null;
+			shardSizeFactor = null;
+			System.out.println( "Sharding disabled." );
+
+			// Set default blockScale if not specified
+			if ( blockScaleString == null )
+				blockScaleString = "4,4,1";
+		}
+
 		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
 
 		final ArrayList< ViewId > viewIdsGlobal;
@@ -379,7 +411,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
 		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
-				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" );
+				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job/shard" );
 
 		if ( dataType == DataType.UINT8 )
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
@@ -415,6 +447,19 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			else
 			{
 				System.out.println( "Format " + intensityN5StorageType + " will be used to open " + intensityN5PathURI );
+			}
+
+			// test that the intensity coefficients exists
+			try( final N5Reader r = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI  ) )
+			{
+				System.out.println( "Found intensity container '" + intensityN5PathURI + "'.");
+			}
+			catch ( Exception e )
+			{
+				System.out.println( "Exception: " + e);
+				System.out.println( "Error, intensity coefficients '" + intensityN5PathURI + "' does not exist/could not be loaded. If you are using ZARR2, you need specify it "
+						+ "since the default for .zarr is ZARR v3.");
+				return null;
 			}
 		}
 
@@ -482,14 +527,26 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				viewIds.forEach( vd -> System.out.println( Group.pvid( vd ) ) );
 				final MultiResolutionLevelInfo[] mrInfo;
 
-				if ( storageType == StorageFormat.ZARR )
+				if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 					mrInfo = mrInfos[ 0 ];
 				else
 					mrInfo = mrInfos[ cIndex + tIndex*numChannels ];
 
-				// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
-				final int[] computeBlockSize = new int[ 3 ];
-				Arrays.setAll( computeBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
+				// CRITICAL: When sharding enabled, computeBlockSize MUST equal shardSize for shard-aware writing
+				final int[] computeBlockSize;
+				if ( useSharding )
+				{
+					computeBlockSize = shardSize;
+					System.out.println( "Sharding enabled: computeBlockSize = shardSize = " + Util.printCoordinates( computeBlockSize ) );
+				}
+				else
+				{
+					// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
+					computeBlockSize = new int[ 3 ];
+					Arrays.setAll( computeBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
+					System.out.println( "No sharding: computeBlockSize = blockSize * blocksPerJob = " + Util.printCoordinates( computeBlockSize ) );
+				}
+
 				final List<long[][]> grid = Grid.create(dimensions,
 						computeBlockSize,
 						blockSize);
@@ -680,7 +737,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						final RandomAccessibleInterval img = BlockAlgoUtils.arrayImg( blockSupplier, new FinalInterval( blockMin, blockMax ) );
 
 						// 5D OME-ZARR CONTAINER
-						if ( storageType == StorageFormat.ZARR )
+						if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 						{
 							// gridBlock is 3d, make it 5d
 							//blockOffset = new long[] { gridBlock[0][0], gridBlock[0][1], gridBlock[0][2], cIndex, tIndex };
@@ -773,7 +830,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							final N5Writer driverVolumeWriterLocal = N5Util.createN5Writer( outPathURI, storageType );
 	
 							// 5D OME-ZARR CONTAINER
-							if ( storageType == StorageFormat.ZARR )
+							if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 							{
 								N5ApiTools.writeDownsampledBlock5dOMEZARR(
 										driverVolumeWriterLocal,

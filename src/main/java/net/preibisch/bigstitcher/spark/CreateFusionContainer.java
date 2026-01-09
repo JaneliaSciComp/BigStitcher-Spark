@@ -116,6 +116,14 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
+	@Option(names = { "--useSharding" },
+		description = "Enable Zarr v3 sharding (only for ZARR format, not ZARR2, default: auto-detect - enabled for ZARR, disabled otherwise)")
+	private Boolean useSharding = null; // null = auto-detect
+
+	@Option(names = { "--shardSizeFactor" },
+		description = "Shard size as multiple of block size (e.g. 4,4,2 means shard will be 4x4x2 blocks), default: 8,8,2")
+	private String shardSizeFactorString = "8,8,2";
+
 	URI outPathURI = null, xmlOutURI = null;
 
 	@Override
@@ -214,6 +222,44 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
 
+		// Parse shard size factor
+		final int[] shardSizeFactor = Import.csvStringToIntArray( shardSizeFactorString );
+
+		if ( shardSizeFactor.length != 3 )
+		{
+			System.out.println( "ERROR: shardSizeFactor must have 3 values (x,y,z)" );
+			return null;
+		}
+
+		// Auto-detect sharding based on storage type (enabled for ZARR v3, disabled otherwise)
+		if ( useSharding == null )
+			useSharding = (storageType == StorageFormat.ZARR);
+
+		// Validate: sharding only for ZARR v3
+		if ( useSharding && storageType != StorageFormat.ZARR )
+		{
+			System.out.println( "WARNING: Sharding only supported for ZARR v3. Disabling sharding." );
+			useSharding = false;
+		}
+
+		// Calculate shard size
+		final int[] shardSize;
+		if ( useSharding )
+		{
+			shardSize = new int[] {
+				blockSize[0] * shardSizeFactor[0],
+				blockSize[1] * shardSizeFactor[1],
+				blockSize[2] * shardSizeFactor[2]
+			};
+			System.out.println( "Sharding enabled. Shard size: " + Util.printCoordinates( shardSize ) + " (factor: " + Util.printCoordinates( shardSizeFactor ) + ")" );
+			System.out.println( "Note: For Zarr v3 sharding, computeBlockSize will equal shardSize for shard-aware writing." );
+		}
+		else
+		{
+			shardSize = null;
+			System.out.println( "Sharding disabled." );
+		}
+
 		// compression and data type
 		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
 
@@ -289,7 +335,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				dir.mkdirs();
 			driverVolumeWriter = new N5HDF5Writer( URITools.fromURI( outPathURI ) );
 		}
-		else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+		else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
 			driverVolumeWriter = URITools.instantiateN5Writer( storageType, outPathURI );
 		}
@@ -313,6 +359,13 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/BlockSize", blockSize );
 
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/UseSharding", useSharding );
+		if ( useSharding )
+		{
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/ShardSize", shardSize );
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/ShardSizeFactor", shardSizeFactor );
+		}
+
 		if ( minIntensity != null && maxIntensity != null )
 		{
 			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MinIntensity", minIntensity );
@@ -328,7 +381,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// is code that creates the N5/HDF5 container and the XML in one if statement. The reason is that
 		// HDF5/N5 containers with XML may be different that OME-ZARR's; they are always the same no matter
 		// if it is a BDV project or not
-		if ( storageType == StorageFormat.ZARR )
+		if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
 			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
 
@@ -348,6 +401,11 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
 
 			// all is 5d now
+			// Convert shardSize to 5D if sharding is enabled
+			final int[] shardSize5d = useSharding && shardSize != null
+				? new int[] { shardSize[ 0 ], shardSize[ 1 ], shardSize[ 2 ], 1, 1 }
+				: null;
+
 			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
 					driverVolumeWriter,
 					levelToName,
@@ -355,7 +413,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					dim, //5d
 					compression,
 					blockSize5d, //5d
-					ds ); // 5d
+					ds, // 5d
+					useSharding,
+					shardSize5d ); // 5d
 
 			final MultiResolutionLevelInfo[] mrInfo = mrInfos[ 0 ];
 
@@ -394,7 +454,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			if ( storageType == StorageFormat.N5 )
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
-			else if ( storageType == StorageFormat.ZARR )
+			else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
 			else
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
@@ -435,7 +495,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final Map< ViewId, OMEZARREntry > viewIdToPath;
 
-			if ( storageType == StorageFormat.ZARR )
+			if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 			{
 				viewIdToPath = new HashMap<>();
 
@@ -459,7 +519,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			new XmlIoSpimData2().save( dataFusion, xmlOutURI );
 
-			if ( storageType != StorageFormat.ZARR )
+			if ( storageType != StorageFormat.ZARR && storageType != StorageFormat.ZARR2 )
 			{
 				final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
 
@@ -474,7 +534,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					if ( storageType == StorageFormat.N5 )
 					{
 						myMrInfo[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
-								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings );
 
 						driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 					}
@@ -511,7 +571,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 							boundingBox.dimensionsAsLongArray(),
 							compression,
 							blockSize,
-							downsamplings );
+							downsamplings,
+						useSharding,
+						shardSize );
 				}
 		}
 
