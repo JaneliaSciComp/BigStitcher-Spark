@@ -247,12 +247,12 @@ public class SpimDatasetBuilder {
 						Length resY = retrieve.getPixelsPhysicalSizeY(imageIndex);
 						Length resZ = retrieve.getPixelsPhysicalSizeZ(imageIndex);
 
-						double oX = offsetX != null ? offsetX.value(UNITS.MICROMETER).doubleValue() : 0;
-						double oY = offsetY != null ? offsetY.value(UNITS.MICROMETER).doubleValue() : 0;
-						double oZ = offsetZ != null ? offsetZ.value(UNITS.MICROMETER).doubleValue() : 0;
-						double rX = resX != null ? resX.value(UNITS.MICROMETER).doubleValue() : 0;
-						double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 0;
-						double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oX = offsetX != null && offsetX.value(UNITS.MICROMETER) != null ? offsetX.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oY = offsetY != null && offsetY.value(UNITS.MICROMETER) != null ? offsetY.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oZ = offsetZ != null && offsetZ.value(UNITS.MICROMETER) != null ? offsetZ.value(UNITS.MICROMETER).doubleValue() : 0;
+						double rX = resX != null && resX.value(UNITS.MICROMETER) != null ? resX.value(UNITS.MICROMETER).doubleValue() : 1;
+						double rY = resY != null && resY.value(UNITS.MICROMETER) != null ? resY.value(UNITS.MICROMETER).doubleValue() : 1;
+						double rZ = resZ != null && resZ.value(UNITS.MICROMETER) != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 1;
 						VoxelDimensions voxelDimensions = new FinalVoxelDimensions("um", rX, rY, rZ);
 						System.out.println("Voxel dimensions: " + voxelDimensions);
 						int imageChannels = retrieve.getChannelCount(imageIndex);

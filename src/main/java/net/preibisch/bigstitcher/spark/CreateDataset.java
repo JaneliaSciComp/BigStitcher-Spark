@@ -21,7 +21,7 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 	private static final long serialVersionUID = -5155338208494730656L;
 
 	@Option(names = {"--input-path"}, required = true, description = "Path to the input images, e.g. /data/images/")
-	private String inputPath = "/Users/goinac/Work/HHMI/stitching/datasets/tiny_4_bigstitcher/t1/";
+	private String inputPath = null;
 
 	@Option(names = {"--input-pattern"}, description = "Glob pattern for input images, e.g. /data/images/*.tif")
 	private String inputPattern = "*";
