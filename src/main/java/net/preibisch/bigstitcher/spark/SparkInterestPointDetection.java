@@ -503,6 +503,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			// runs virtual downsampling so it only loads what it needs
 			// ideally only run with pre-computed downsample steps for efficiency
 			//
+			// Note: virtual downsampling uses LazyDownsample2x which produces slightly different
+			// results than Downsample.simple2x used by non-Spark DoG.java (typically ±1 point)
+			//
 			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
 						dog.imgloader,
 						vd,
@@ -548,7 +551,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			@SuppressWarnings("unchecked")
 			final ArrayList< InterestPoint > ips = DoGImgLib2.computeDoG(
-					(RandomAccessible)Views.extendMirrorDouble( inputImage ), // the entire image, extended to infinity
+					(RandomAccessible)Views.extendMirrorSingle( inputImage ), // the entire image, extended to infinity (must match DoG.java)
 					null, // mask
 					processInterval,
 					dog.sigma,
@@ -558,7 +561,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					dog.findMax,
 					dog.minIntensity,
 					dog.maxIntensity,
-					new int[] {128, 128, 64},
+					new int[] {32, 32, 16}, // smaller blocks for testing
 					service,
 					dog.cuda,
 					dog.deviceCUDA,

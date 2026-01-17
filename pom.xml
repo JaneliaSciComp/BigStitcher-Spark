@@ -364,6 +364,27 @@
             </exclusions>
         </dependency>
 
+        <!-- multiview-reconstruction test classes for shared test assertions -->
+        <dependency>
+            <groupId>net.preibisch</groupId>
+            <artifactId>multiview-reconstruction</artifactId>
+            <version>${multiview-reconstruction.version}</version>
+            <classifier>tests</classifier>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JUnit 5 for testing -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- old bioformats -->
         <dependency>
             <groupId>org.openmicroscopy</groupId>
