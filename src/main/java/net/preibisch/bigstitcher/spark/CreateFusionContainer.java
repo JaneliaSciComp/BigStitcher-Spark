@@ -419,8 +419,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final MultiResolutionLevelInfo[] mrInfo = mrInfos[ 0 ];
 
+			// Note: mrInfo contains 5D downsampling (x,y,z,c,t) but MipmapTransforms expects 3D
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
-					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
+					(level) -> MipmapTransforms.getMipmapTransformDefault( Arrays.copyOf( mrInfo[level].absoluteDownsamplingDouble(), 3 ) );
 
 			// extract the resolution of the s0 export
 			// TODO: use TransformationTools.computeAverageCalibration()
