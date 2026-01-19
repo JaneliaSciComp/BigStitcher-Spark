@@ -233,38 +233,45 @@ public class SpimDatasetBuilder {
 
 					MetadataRetrieve retrieve = (MetadataRetrieve)formatReader.getMetadataStore();
 
-					stackFile.nImages = retrieve.getImageCount();
-					stackFile.nTp = formatReader.getSizeT();
-					stackFile.nCh = formatReader.getSizeC();
-					stackFile.sizeZ = formatReader.getSizeZ();
-					stackFile.sizeY = formatReader.getSizeY();
-					stackFile.sizeX = formatReader.getSizeX();
-					for (int imageIndex = 0; imageIndex < stackFile.nImages; imageIndex++) {
-						Length offsetX = retrieve.getPlanePositionX(imageIndex, 0);
-						Length offsetY = retrieve.getPlanePositionY(imageIndex, 0);
-						Length offsetZ = retrieve.getPlanePositionZ(imageIndex, 0);
-						Length resX = retrieve.getPixelsPhysicalSizeX(imageIndex);
-						Length resY = retrieve.getPixelsPhysicalSizeY(imageIndex);
-						Length resZ = retrieve.getPixelsPhysicalSizeZ(imageIndex);
+					int seriesCount = formatReader.getSeriesCount();
 
-						double oX = offsetX != null && offsetX.value(UNITS.MICROMETER) != null ? offsetX.value(UNITS.MICROMETER).doubleValue() : 0;
-						double oY = offsetY != null && offsetY.value(UNITS.MICROMETER) != null ? offsetY.value(UNITS.MICROMETER).doubleValue() : 0;
-						double oZ = offsetZ != null && offsetZ.value(UNITS.MICROMETER) != null ? offsetZ.value(UNITS.MICROMETER).doubleValue() : 0;
-						double rX = resX != null && resX.value(UNITS.MICROMETER) != null ? resX.value(UNITS.MICROMETER).doubleValue() : 1;
-						double rY = resY != null && resY.value(UNITS.MICROMETER) != null ? resY.value(UNITS.MICROMETER).doubleValue() : 1;
-						double rZ = resZ != null && resZ.value(UNITS.MICROMETER) != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 1;
+					for (int series = 0; series < seriesCount; series++) {
+						formatReader.setSeries(series);
+						stackFile.nImages = seriesCount;
+						stackFile.nTp = formatReader.getSizeT();
+						stackFile.nCh = formatReader.getSizeC();
+						stackFile.sizeZ = formatReader.getSizeZ();
+						stackFile.sizeY = formatReader.getSizeY();
+						stackFile.sizeX = formatReader.getSizeX();
+
+						Length offsetX = retrieve.getPlanePositionX(series, 0);
+						Length offsetY = retrieve.getPlanePositionY(series, 0);
+						Length offsetZ = retrieve.getPlanePositionZ(series, 0);
+						Length resX = retrieve.getPixelsPhysicalSizeX(series);
+						Length resY = retrieve.getPixelsPhysicalSizeY(series);
+						Length resZ = retrieve.getPixelsPhysicalSizeZ(series);
+
+						double oX = offsetX != null ? offsetX.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oY = offsetY != null ? offsetY.value(UNITS.MICROMETER).doubleValue() : 0;
+						double oZ = offsetZ != null ? offsetZ.value(UNITS.MICROMETER).doubleValue() : 0;
+
+						double rX = resX != null ? resX.value(UNITS.MICROMETER).doubleValue() : 1;
+						double rY = resY != null ? resY.value(UNITS.MICROMETER).doubleValue() : 1;
+						double rZ = resZ != null ? resZ.value(UNITS.MICROMETER).doubleValue() : 1;
+
 						VoxelDimensions voxelDimensions = new FinalVoxelDimensions("um", rX, rY, rZ);
 						System.out.println("Voxel dimensions: " + voxelDimensions);
-						int imageChannels = retrieve.getChannelCount(imageIndex);
-						for (int chIndex = 0; chIndex < imageChannels; chIndex++) {
-							String chName = retrieve.getChannelName(imageIndex, chIndex);
+						int metadataChannels = retrieve.getChannelCount(series);
+
+						for (int metadataChIndex = 0; metadataChIndex < metadataChannels; metadataChIndex++) {
+							String chName = retrieve.getChannelName(series, metadataChIndex);
 							// currently viewIndex is only based on the number of images and channels
 							// but a correct implementation would also consider timepoints, illuminations and angles
 							// for now I am ignoring them because so far we never needed them.
-							int viewIndex = chIndex * nfiles * stackFile.nImages + sfi * stackFile.nImages + imageIndex;
-							Tile tile = new Tile(stackFile.getTi() * stackFile.nImages + imageIndex);
+							int viewIndex = metadataChIndex * nfiles * seriesCount + sfi * seriesCount + series;
+							Tile tile = new Tile(stackFile.getTi() * seriesCount + series);
 							tile.setLocation(new double[]{oX, oY, oZ});
-							Channel channel = new Channel(chIndex, chName);
+							Channel channel = new Channel(metadataChIndex, chName);
 							ViewSetup vs = new ViewSetup(
 									viewIndex,
 									String.valueOf(viewIndex),
