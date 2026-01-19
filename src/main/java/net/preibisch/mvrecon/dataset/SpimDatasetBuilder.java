@@ -237,6 +237,7 @@ public class SpimDatasetBuilder {
 
 					for (int series = 0; series < seriesCount; series++) {
 						formatReader.setSeries(series);
+						int imageCount = formatReader.getImageCount();
 						stackFile.nImages = seriesCount;
 						stackFile.nTp = formatReader.getSizeT();
 						stackFile.nCh = formatReader.getSizeC();
@@ -244,9 +245,9 @@ public class SpimDatasetBuilder {
 						stackFile.sizeY = formatReader.getSizeY();
 						stackFile.sizeX = formatReader.getSizeX();
 
-						Length offsetX = retrieve.getPlanePositionX(series, 0);
-						Length offsetY = retrieve.getPlanePositionY(series, 0);
-						Length offsetZ = retrieve.getPlanePositionZ(series, 0);
+						Length offsetX = getPlaneOffsetX(retrieve, series, imageCount);
+						Length offsetY = getPlaneOffsetY(retrieve, series, imageCount);
+						Length offsetZ = getPlaneOffsetZ(retrieve, series, imageCount);
 						Length resX = retrieve.getPixelsPhysicalSizeX(series);
 						Length resY = retrieve.getPixelsPhysicalSizeY(series);
 						Length resZ = retrieve.getPixelsPhysicalSizeZ(series);
@@ -292,7 +293,39 @@ public class SpimDatasetBuilder {
 			}
 			return this;
 		}
+
+		private Length getPlaneOffsetX(MetadataRetrieve retrieve, int series, int imageCount) {
+			for (int p = 0; p < imageCount; p++) {
+				Length x = retrieve.getPlanePositionX(series, imageCount);
+				if (x != null && x.value(UNITS.MICROMETER) != null) {
+					return x;
+				}
+			}
+			return null;
+		}
+
+		private Length getPlaneOffsetY(MetadataRetrieve retrieve, int series, int imageCount) {
+			for (int p = 0; p < imageCount; p++) {
+				Length y = retrieve.getPlanePositionY(series, imageCount);
+				if (y != null && y.value(UNITS.MICROMETER) != null) {
+					return y;
+				}
+			}
+			return null;
+		}
+
+		private Length getPlaneOffsetZ(MetadataRetrieve retrieve, int series, int imageCount) {
+			for (int p = 0; p < imageCount; p++) {
+				Length z = retrieve.getPlanePositionZ(series, imageCount);
+				if (z != null && z.value(UNITS.MICROMETER) != null) {
+					return z;
+				}
+			}
+			return null;
+		}
+
 	}
+
 
 	static class N5MultichannelViewSetupBuilder implements ViewSetupBuilder {
 
