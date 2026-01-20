@@ -248,9 +248,9 @@ public class SpimDatasetBuilder {
 						stackFile.sizeY = formatReader.getSizeY();
 						stackFile.sizeX = formatReader.getSizeX();
 
-						double oX = getOffsetX(retrieve, globalMetadata, series);
-						double oY = getOffsetY(retrieve, globalMetadata, series);
-						double oZ = getOffsetZ(retrieve, globalMetadata, series);
+						double oX = getOffsetX(globalMetadata, series);
+						double oY = getOffsetY(globalMetadata, series);
+						double oZ = getOffsetZ(globalMetadata, series);
 						Length resX = retrieve.getPixelsPhysicalSizeX(series);
 						Length resY = retrieve.getPixelsPhysicalSizeY(series);
 						Length resZ = retrieve.getPixelsPhysicalSizeZ(series);
@@ -293,64 +293,43 @@ public class SpimDatasetBuilder {
 			return this;
 		}
 
-		private double getOffsetX(MetadataRetrieve retrieve, Map<String, Object> globalMetadata, int series) {
-			// First try PlanePosition with plane index 0
-			Length planeVal = retrieve.getPlanePositionX(series, 0);
-			if (planeVal != null && planeVal.value(UNITS.MICROMETER) != null && planeVal.value(UNITS.MICROMETER).floatValue() != 0.0f) {
-				return planeVal.value(UNITS.MICROMETER).doubleValue();
-			}
-
-			// Try global metadata keys (series is 1-based in global metadata)
+		private double getOffsetX(Map<String, Object> globalMetadata, int series) {
+			// get position from global metadata (image number in metadata is 1-based in global metadata)
 			Double val = findPositionInGlobalMeta(
 					globalMetadata,
 					series + 1,
-					Arrays.asList("Position|X", "PositionX"));
+					Arrays.asList("PositionX", "Position|X"));
 
 			if (val != null) {
-				String dir = (String) globalMetadata.get("Experiment|Axis|X|Direction");
-				return "IncreasingLeft".equals(dir) ? -val : val;
+				return val;
 			}
 
 			return 0;
 		}
 
-		private double getOffsetY(MetadataRetrieve retrieve, Map<String, Object> globalMetadata, int series) {
-			// First try PlanePosition with plane index 0
-			Length planeVal = retrieve.getPlanePositionY(series, 0);
-			if (planeVal != null && planeVal.value(UNITS.MICROMETER) != null && planeVal.value(UNITS.MICROMETER).floatValue() != 0.0f) {
-				return planeVal.value(UNITS.MICROMETER).doubleValue();
-			}
-
-			// Try global metadata keys (series is 1-based in global metadata)
+		private double getOffsetY(Map<String, Object> globalMetadata, int series) {
+			// get position from global metadata (image number in metadata is 1-based in global metadata)
 			Double val = findPositionInGlobalMeta(
 					globalMetadata,
 					series + 1,
-					Arrays.asList("Position|Y", "PositionY"));
+					Arrays.asList("PositionY", "Position|Y"));
 
 			if (val != null) {
-				String dir = (String) globalMetadata.get("Experiment|Axis|Y|Direction");
-				return "IncreasingLeft".equals(dir) ? -val : val;
+				return val;
 			}
 
 			return 0;
 		}
 
-		private double getOffsetZ(MetadataRetrieve retrieve, Map<String, Object> globalMetadata, int series) {
-			// First try PlanePosition with plane index 0
-			Length planeVal = retrieve.getPlanePositionZ(series, 0);
-			if (planeVal != null && planeVal.value(UNITS.MICROMETER) != null && planeVal.value(UNITS.MICROMETER).floatValue() != 0.0f) {
-				return planeVal.value(UNITS.MICROMETER).doubleValue();
-			}
-
-			// Try global metadata keys (series is 1-based in global metadata)
+		private double getOffsetZ(Map<String, Object> globalMetadata, int series) {
+			// get position from global metadata (image number in metadata is 1-based in global metadata)
 			Double val = findPositionInGlobalMeta(
 					globalMetadata,
 					series + 1,
-					Arrays.asList("Position|Z", "PositionZ"));
+					Arrays.asList("PositionZ", "Position|Z"));
 
 			if (val != null) {
-				String dir = (String) globalMetadata.get("Experiment|Axis|Z|Direction");
-				return "IncreasingLeft".equals(dir) ? -val : val;
+				return val;
 			}
 
 			return 0;

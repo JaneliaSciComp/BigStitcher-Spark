@@ -278,9 +278,9 @@ public class CZIMetadataDebug {
             int sizeZ = formatReader.getSizeZ();
 
             // Get position from global metadata or MetadataRetrieve
-            double oX = getOffsetX(retrieve, globalMeta, series);
-            double oY = getOffsetY(retrieve, globalMeta, series);
-            double oZ = getOffsetZ(retrieve, globalMeta, series);
+            double oX = getOffsetX(globalMeta, series);
+            double oY = getOffsetY(globalMeta, series);
+            double oZ = getOffsetZ(globalMeta, series);
 
             // Get voxel/pixel size from MetadataRetrieve
             Length physSizeX = retrieve.getPixelsPhysicalSizeX(series);
@@ -385,15 +385,7 @@ public class CZIMetadataDebug {
      * 1. PlanePosition with plane index 0
      * 2. Global metadata: Information|Image|V|View|Position|X or Information|Image|S|Scene|Position|X
      */
-    private static double getOffsetX(MetadataRetrieve retrieve, Map<String, Object> globalMetadata, int series) {
-        // First try PlanePosition with plane index 0
-        Length planeVal = retrieve.getPlanePositionX(series, 0);
-        if (planeVal != null && planeVal.value(UNITS.MICROMETER) != null && planeVal.value(UNITS.MICROMETER).floatValue() != 0.0f) {
-            double d = planeVal.value(UNITS.MICROMETER).doubleValue();
-            System.out.println("Series " + (series+1) + ": Found x offset: " + d + " µm using PlanePositionX plane=0");
-            return d;
-        }
-
+    private static double getOffsetX(Map<String, Object> globalMetadata, int series) {
         // Try global metadata keys (series is 1-based in global metadata)
         Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("Position|X", "PositionX"));
         if (val != null) {
@@ -408,15 +400,7 @@ public class CZIMetadataDebug {
     /**
      * Gets Y offset for a series, trying multiple sources.
      */
-    private static double getOffsetY(MetadataRetrieve retrieve, Map<String, Object> globalMetadata, int series) {
-        // First try PlanePosition with plane index 0
-        Length planeVal = retrieve.getPlanePositionY(series, 0);
-        if (planeVal != null && planeVal.value(UNITS.MICROMETER) != null && planeVal.value(UNITS.MICROMETER).floatValue() != 0.0f) {
-            double d = planeVal.value(UNITS.MICROMETER).doubleValue();
-            System.out.println("Series " + (series+1) + ": Found y offset: " + d + " µm using PlanePositionY plane=0");
-            return d;
-        }
-
+    private static double getOffsetY(Map<String, Object> globalMetadata, int series) {
         // Try global metadata keys (series is 1-based in global metadata)
         Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("Position|Y", "PositionY"));
         if (val != null) {
@@ -431,15 +415,7 @@ public class CZIMetadataDebug {
     /**
      * Gets Z offset for a series, trying multiple sources.
      */
-    private static double getOffsetZ(MetadataRetrieve retrieve, Map<String, Object> globalMetadata, int series) {
-        // First try PlanePosition with plane index 0
-        Length planeVal = retrieve.getPlanePositionZ(series, 0);
-        if (planeVal != null && planeVal.value(UNITS.MICROMETER) != null && planeVal.value(UNITS.MICROMETER).floatValue() != 0.0f) {
-            double d = planeVal.value(UNITS.MICROMETER).doubleValue();
-            System.out.println("Series " + (series+1) + ": Found z offset: " + d + " µm using PlanePositionZ plane=0");
-            return d;
-        }
-
+    private static double getOffsetZ(Map<String, Object> globalMetadata, int series) {
         // Try global metadata keys (series is 1-based in global metadata)
         Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("Position|Z", "PositionZ"));
         if (val != null) {
