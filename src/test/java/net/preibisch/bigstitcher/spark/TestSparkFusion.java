@@ -30,7 +30,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.type.numeric.integer.UnsignedShortType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -228,6 +232,72 @@ public class TestSparkFusion
 			assertTrue( reader.exists( "ch0tp0/s0" ), "Level 0 should exist" );
 
 			System.out.println( "N5 container created successfully" );
+		}
+	}
+
+	/**
+	 * Tests full fusion pipeline: CreateFusionContainer + SparkFusion.
+	 * Verifies that pixel intensities at both resolution levels are non-zero.
+	 */
+	@Test
+	public void testFusionWithMultiResPyramid() throws Exception
+	{
+		final File outputPath = tempDir.resolve( "fused_full.zarr" ).toFile();
+
+		System.out.println( "\n=== Testing full fusion with multi-resolution pyramid ===" );
+
+		// 1. Create the fusion container with 2 levels: 1,1,1 and 2,2,2
+		// Use ZARR2 to avoid sharding (which requires special handling in SparkFusion)
+		final String[] createArgs = new String[] {
+			"-x", xmlFile.getAbsolutePath(),
+			"-o", outputPath.getAbsolutePath(),
+			"-s", "ZARR2",
+			"-d", "UINT16",
+			"--preserveAnisotropy",
+			"--blockSize", "32,32,32",
+			"-ds", "1,1,1",
+			"-ds", "2,2,2"
+		};
+
+		int exitCode = new CommandLine( new CreateFusionContainer() ).execute( createArgs );
+		assertEquals( 0, exitCode, "CreateFusionContainer should succeed" );
+
+		// 2. Run SparkFusion to populate the container (reads XML and config from container metadata)
+		final String[] fusionArgs = new String[] {
+			"-o", outputPath.getAbsolutePath(),
+			"-s", "ZARR2",
+			"--localSparkBindAddress"
+		};
+
+		exitCode = new CommandLine( new SparkFusion() ).execute( fusionArgs );
+		assertEquals( 0, exitCode, "SparkFusion should succeed" );
+
+		// 3. Verify pixel intensities at both levels
+		try ( N5Reader reader = URITools.instantiateN5Reader( StorageFormat.ZARR2, outputPath.toURI() ) )
+		{
+			// Check level 0 (full resolution)
+			assertTrue( reader.exists( "/0" ), "Level 0 should exist" );
+			final RandomAccessibleInterval< UnsignedShortType > imgS0 = N5Utils.open( reader, "/0" );
+			final long[] dimsS0 = imgS0.dimensionsAsLongArray();
+			System.out.println( "Level 0 dimensions: " + java.util.Arrays.toString( dimsS0 ) );
+
+			// Check level 1 (2x2x2 downsampled)
+			assertTrue( reader.exists( "/1" ), "Level 1 should exist" );
+			final RandomAccessibleInterval< UnsignedShortType > imgS1 = N5Utils.open( reader, "/1" );
+			final long[] dimsS1 = imgS1.dimensionsAsLongArray();
+			System.out.println( "Level 1 dimensions: " + java.util.Arrays.toString( dimsS1 ) );
+
+			// OME-ZARR is 5D [x, y, z, c, t]
+			// Verify specific pixel values at coordinates where fused beads exist
+			// Note: OME-ZARR is zero-min, coordinates chosen from regions with fused bead data
+			final int valS0 = imgS0.getAt( 64, 32, 64, 0, 0 ).get();
+			final int valS1 = imgS1.getAt( 32, 16, 32, 0, 0 ).get();
+
+			// Assert specific expected values from fusion
+			assertEquals( 44, valS0, "Level 0 at (64,32,64) should be 44" );
+			assertEquals( 86, valS1, "Level 1 at (32,16,32) should be 86" );
+
+			System.out.println( "✓ Full fusion with multi-resolution pyramid test passed" );
 		}
 	}
 
