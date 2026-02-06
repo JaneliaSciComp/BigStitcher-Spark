@@ -450,6 +450,125 @@ Grid.create(
 
 ## Testing and Validation
 
+### Test Infrastructure
+
+BigStitcher-Spark uses shared test infrastructure from multiview-reconstruction:
+
+**Test Classes**:
+- `TestSparkInterestPointDetection` - Tests Spark-based interest point detection
+- `TestSparkFusion` - Tests fusion container creation and SparkFusion execution
+
+**Shared Utilities** (from multiview-reconstruction):
+- `SimulateUtil.setUp()` - Creates simulated dataset with 3 views, 200 beads
+- `TestInterestPointDetection.testDoG()` - Runs DoG detection
+- `TestRegistration.testRegistration()` - Runs registration
+- `TestBoundingBox.testBoundingBox()` - Computes bounding box
+
+### Running Tests
+
+```bash
+# Run all tests
+mvn test -Denforcer.skip=true
+
+# Run specific test class
+mvn test -Dtest=TestSparkFusion -Denforcer.skip=true
+
+# Run specific test method
+mvn test -Dtest=TestSparkFusion#testFusionWithMultiResPyramid -Denforcer.skip=true
+```
+
+### Important Testing Lessons
+
+#### 1. OME-ZARR is 5D with Zero-Min Coordinates
+
+OME-ZARR containers store data in 5D format `[x, y, z, channels, timepoints]`:
+
+```java
+// CORRECT - 5D access:
+final int val = imgS0.getAt( 64, 32, 64, 0, 0 ).get();
+
+// WRONG - 3D access will fail:
+final int val = imgS0.getAt( 64, 32, 64 ).get();  // AssertionError!
+```
+
+**Zero-min vs Offset**: Unlike multiview-reconstruction's translated intervals (which have min offsets like `[-1, 0, -39]`), OME-ZARR containers are zero-min. When translating test coordinates:
+- multiview-reconstruction: `img.getAt( 3, 22, 4 )` with interval min `(0, 0, -5)`
+- OME-ZARR: coordinates are zero-based, no translation needed
+
+#### 2. SparkFusion Reads Configuration from Container Metadata
+
+SparkFusion does **NOT** accept `-x` (XML path) or `-d` (data type) as command line arguments. These are stored in the container metadata by CreateFusionContainer:
+
+```java
+// WRONG - SparkFusion doesn't have these options:
+final String[] fusionArgs = new String[] {
+    "-x", xmlFile.getAbsolutePath(),  // NO!
+    "-d", "UINT16",                    // NO!
+    "-o", outputPath.getAbsolutePath()
+};
+
+// CORRECT - SparkFusion reads from container metadata:
+final String[] fusionArgs = new String[] {
+    "-o", outputPath.getAbsolutePath(),
+    "-s", "ZARR2",  // Storage format must be specified
+    "--localSparkBindAddress"
+};
+```
+
+#### 3. Storage Format Must Be Explicitly Specified
+
+When opening a `.zarr` file, SparkFusion cannot auto-detect if it's v2 or v3. Always specify:
+
+```java
+// For ZARR v2 containers:
+"-s", "ZARR2"
+
+// For ZARR v3 containers:
+"-s", "ZARR"
+```
+
+#### 4. ZARR v3 Enables Sharding by Default
+
+When using `StorageFormat.ZARR` (v3), sharding is enabled by default. For simpler tests, use `ZARR2` to avoid sharding complications:
+
+```java
+// Simple test without sharding:
+final String[] createArgs = new String[] {
+    "-s", "ZARR2",  // Use v2 to avoid sharding
+    // ...
+};
+
+// Test with sharding (requires special handling):
+final String[] createArgs = new String[] {
+    "-s", "ZARR",
+    "--useSharding",
+    "--shardSizeFactor", "2,2,2",
+    // ...
+};
+```
+
+#### 5. Simulated Data Location
+
+The simulated beads from `SimulateUtil.setUp()` are **distributed throughout the volume**, not concentrated at the origin (0,0,0). When testing pixel values:
+
+```java
+// WRONG - corner is likely empty:
+final int val = img.getAt( 0, 0, 0, 0, 0 ).get();  // Probably 0
+
+// CORRECT - sample where data exists:
+// Use coordinates discovered from actual test runs
+final int val = img.getAt( 64, 32, 64, 0, 0 ).get();  // Has actual fused data
+```
+
+To discover valid test coordinates, first scan for non-zero pixels:
+```java
+for (long z = 0; z < dims[2]; z++)
+    for (long y = 0; y < dims[1]; y++)
+        for (long x = 0; x < dims[0]; x++)
+            if (img.getAt(x, y, z, 0, 0).get() > 0)
+                System.out.println("Found at: " + x + ", " + y + ", " + z);
+```
+
 ### Building and Testing
 
 ```bash
