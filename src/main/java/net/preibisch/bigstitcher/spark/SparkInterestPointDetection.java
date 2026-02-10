@@ -1014,6 +1014,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final boolean transformOnly, // only for ImgLib1 legacy code
 			final boolean virtualDownsampling )
 	{
+		if ( imgLoader == null )
+			throw new RuntimeException( "ImgLoader is null for " + vd + ". The image loader failed to instantiate - check earlier log output for 'ERROR: cannot instantiate' messages." );
+
 		long dsx = downsampleFactors[0];
 		long dsy = downsampleFactors[1];
 		long dsz = (downsampleFactors.length > 2) ? downsampleFactors[ 2 ] : 1;
@@ -1053,6 +1056,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( !transformOnly )
 			{
+				if ( mrImgLoader.getSetupImgLoader( vd.getViewSetupId() ) == null )
+					throw new RuntimeException( "SetupImgLoader is null for " + Group.pvid( vd ) + ", this should not happen!" );
+
 				input = mrImgLoader.getSetupImgLoader( vd.getViewSetupId() ).getImage( vd.getTimePointId(), bestLevel );
 			}
 		}
@@ -1060,6 +1066,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		{
 			if ( !transformOnly )
 			{
+				if ( imgLoader.getSetupImgLoader( vd.getViewSetupId() ) == null )
+					throw new RuntimeException( "BasicSetupImgLoader is null for " + Group.pvid( vd ) + ", this should not happen!" );
+
 				input = imgLoader.getSetupImgLoader( vd.getViewSetupId() ).getImage( vd.getTimePointId() );
 			}
 

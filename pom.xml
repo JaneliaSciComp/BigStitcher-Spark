@@ -108,10 +108,10 @@
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.0-alpha-6</n5.version>
-		<n5-imglib2.version>7.1.0-alpha-6</n5-imglib2.version>
+		<n5.version>4.0.0-alpha-9-SNAPSHOT</n5.version>
+		<n5-imglib2.version>7.1.0-alpha-7</n5-imglib2.version>
 		<n5-universe.version>2.4.0-alpha-6</n5-universe.version>
-		<n5-zarr.version>2.0.0-alpha-4</n5-zarr.version>
+		<n5-zarr.version>2.0.0-alpha-6-SNAPSHOT</n5-zarr.version>
 		<n5-zstandard.version>2.0.0-alpha-4</n5-zstandard.version>
 		<n5-blosc.version>2.0.0-alpha-4</n5-blosc.version>
 
@@ -371,6 +371,12 @@
             <version>${multiview-reconstruction.version}</version>
             <classifier>tests</classifier>
             <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>ch.epfl.biop</groupId>
+                    <artifactId>ijp-kheops</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- JUnit 5 for testing -->
@@ -447,6 +453,10 @@
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/org.janelia.saalfeldlab.n5.Compression$CompressionType</resource>
+                                </transformer>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/json/org.janelia.saalfeldlab.n5.serialization.NameConfig$Name</resource>
                                 </transformer>
                             </transformers>
                             <!--<minimizeJar>true</minimizeJar> -->
