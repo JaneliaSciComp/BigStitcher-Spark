@@ -484,7 +484,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final SparkConf conf = new SparkConf().setAppName("SparkFusion");
 
 		if (localSparkBindAddress)
+		{
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
+			conf.set("spark.driver.host", "localhost");
+			org.apache.spark.util.Utils.setCustomHostname("localhost");
+		}
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");

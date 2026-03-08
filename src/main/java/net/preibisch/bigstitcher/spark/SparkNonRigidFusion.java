@@ -301,7 +301,11 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final SparkConf conf = new SparkConf().setAppName("NonRigidFusion");
 
 		if (localSparkBindAddress)
+		{
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
+			conf.set("spark.driver.host", "localhost");
+			org.apache.spark.util.Utils.setCustomHostname("localhost");
+		}
 
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");

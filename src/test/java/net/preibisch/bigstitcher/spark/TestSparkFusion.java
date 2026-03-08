@@ -340,6 +340,67 @@ public class TestSparkFusion
 	// 	}
 	// }
 
+	/*
+	ERROR MESSAGE:
+
+	Setting up container and metadata in 'file:/var/folders/b0/sgyw0d9918vfjl96c5dlc3fw0000gp/T/junit-3707500257499232434/fused_v2.zarr' ... 
+	Creating 5D OME-ZARR metadata for 'file:/var/folders/b0/sgyw0d9918vfjl96c5dlc3fw0000gp/T/junit-3707500257499232434/fused_v2.zarr' ... 
+	Resolution of level 0: (1.0, 1.0, 1.0) micrometer
+	Zarr v2 container created successfully
+	[ERROR] Tests run: 4, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 2.787 s <<< FAILURE! -- in net.preibisch.bigstitcher.spark.TestSparkFusion
+	[ERROR] net.preibisch.bigstitcher.spark.TestSparkFusion.testFusionWithMultiResPyramid -- Time elapsed: 0.671 s <<< FAILURE!
+	java.lang.AssertionError: assertion failed: Expected hostname or IPv6 IP enclosed in [] but got fe80:0:0:0:34f6:9dff:fe9c:d86a%13
+		at scala.Predef$.assert(Predef.scala:223)
+		at org.apache.spark.util.Utils$.checkHost(Utils.scala:1121)
+		at org.apache.spark.executor.Executor.<init>(Executor.scala:89)
+		at org.apache.spark.scheduler.local.LocalEndpoint.<init>(LocalSchedulerBackend.scala:64)
+		at org.apache.spark.scheduler.local.LocalSchedulerBackend.start(LocalSchedulerBackend.scala:132)
+		at org.apache.spark.scheduler.TaskSchedulerImpl.start(TaskSchedulerImpl.scala:222)
+		at org.apache.spark.SparkContext.<init>(SparkContext.scala:595)
+		at org.apache.spark.api.java.JavaSparkContext.<init>(JavaSparkContext.scala:58)
+		at net.preibisch.bigstitcher.spark.SparkFusion.call(SparkFusion.java:489)
+		at net.preibisch.bigstitcher.spark.SparkFusion.call(SparkFusion.java:95)
+		at picocli.CommandLine.executeUserObject(CommandLine.java:2045)
+		at picocli.CommandLine.access$1500(CommandLine.java:148)
+		at picocli.CommandLine$RunLast.executeUserObjectOfLastSubcommandWithSameParent(CommandLine.java:2465)
+		at picocli.CommandLine$RunLast.handle(CommandLine.java:2457)
+		at picocli.CommandLine$RunLast.handle(CommandLine.java:2419)
+		at picocli.CommandLine$AbstractParseResultHandler.execute(CommandLine.java:2277)
+		at picocli.CommandLine$RunLast.execute(CommandLine.java:2421)
+		at picocli.CommandLine.execute(CommandLine.java:2174)
+		at net.preibisch.bigstitcher.spark.TestSparkFusion.testFusionWithMultiResPyramid(TestSparkFusion.java:272)
+		at java.lang.reflect.Method.invoke(Method.java:498)
+		at java.util.ArrayList.forEach(ArrayList.java:1259)
+		at java.util.ArrayList.forEach(ArrayList.java:1259)
+
+	[INFO] 
+	[INFO] Results:
+	[INFO] 
+	[ERROR] Failures: 
+	[ERROR]   TestSparkFusion.testFusionWithMultiResPyramid:272 assertion failed: Expected hostname or IPv6 IP enclosed in [] but got fe80:0:0:0:34f6:9dff:fe9c:d86a%13
+	[ERROR]   TestSparkInterestPointDetection.testSparkDoGDetection:92 assertion failed: Expected hostname or IPv6 IP enclosed in [] but got fe80:0:0:0:34f6:9dff:fe9c:d86a%13
+	[INFO] 
+	[ERROR] Tests run: 6, Failures: 2, Errors: 0, Skipped: 0
+	[INFO] 
+	[INFO] ------------------------------------------------------------------------
+	[INFO] BUILD FAILURE
+	[INFO] ------------------------------------------------------------------------
+	[INFO] Total time:  23.004 s
+	[INFO] Finished at: 2026-03-06T17:22:44+01:00
+	[INFO] ------------------------------------------------------------------------
+	[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test (default-test) on project BigStitcher-Spark: There are test failures.
+	[ERROR] 
+	[ERROR] Please refer to /Users/preibischs/workspace/BigStitcher-Spark/target/surefire-reports for the individual test results.
+	[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+	[ERROR] -> [Help 1]
+	[ERROR] 
+	[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+	[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+	[ERROR] 
+	[ERROR] For more information about the errors and possible solutions, please read the following articles:
+	[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+	*/
+
 	/**
 	 * Main method for manual testing outside of JUnit.
 	 */
@@ -362,6 +423,10 @@ public class TestSparkFusion
 		System.out.println( "\n========================================" );
 		System.out.println( "Running N5 test..." );
 		test.testCreateContainerN5();
+
+		System.out.println( "\n========================================" );
+		System.out.println( "Running fusion multiresolution test..." );
+		test.testFusionWithMultiResPyramid();
 
 		System.out.println( "\n========================================" );
 		System.out.println( "All tests passed!" );
