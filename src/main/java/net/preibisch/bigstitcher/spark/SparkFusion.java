@@ -803,7 +803,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				{
 					final int s = level;
 
-					final List<long[][]> allBlocks = Grid.create(
+					List<long[][]> allBlocks = Grid.create(
 							new long[] { mrInfo[ level ].dimensions[ 0 ], mrInfo[ level ].dimensions[ 1 ], mrInfo[ level ].dimensions[ 2 ] },
 							computeBlockSize,
 							blockSize);
@@ -862,7 +862,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	
 						// extract all blocks that failed
 						final Set<long[][]> failedBlocksSet =
-								retryTrackerDS.processWithSpark( rddDSResult, grid );
+								retryTrackerDS.processWithSpark( rddDSResult, allBlocks );
 	
 						// Use RetryTracker to handle retry counting and removal
 						if (!retryTrackerDS.processFailures(failedBlocksSet))
@@ -871,11 +871,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							System.exit( 1 );
 						}
 	
-						// Update grid for next iteration with remaining failed blocks
-						grid.clear();
-						grid.addAll(failedBlocksSet);
+						// Update allBlocks for next iteration with remaining failed blocks
+						allBlocks.clear();
+						allBlocks.addAll(failedBlocksSet);
 					}
-					while ( grid.size() > 0 );
+					while ( allBlocks.size() > 0 );
 
 					System.out.println( new Date( System.currentTimeMillis() ) + ": Saved level s " + level + ", took: " + (System.currentTimeMillis() - time ) + " ms." );
 				}
