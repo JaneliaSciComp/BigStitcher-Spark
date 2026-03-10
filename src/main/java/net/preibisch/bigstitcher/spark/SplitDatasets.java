@@ -14,11 +14,11 @@ import net.imglib2.util.Pair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.legacy.io.IOFunctions;
-import net.preibisch.mvrecon.fiji.plugin.Split_Views;
 import net.preibisch.mvrecon.fiji.plugin.Split_Views.InterestPointAdding;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SelectedViewDescriptionListener;
+import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import net.preibisch.stitcher.gui.StitchingExplorer;
 import picocli.CommandLine;
@@ -92,24 +92,24 @@ public class SplitDatasets extends AbstractBasic
 		final int[] targetImageSize = Import.csvStringToIntArray(targetImageSizeString);
 		final int[] targetOverlap = Import.csvStringToIntArray(targetOverlapString);
 
-		final Pair< HashMap< String, Integer >, long[] > imgSizes = Split_Views.collectImageSizes( this.dataGlobal );
+		final Pair< HashMap< String, Integer >, long[] > imgSizes = SplittingTools.collectImageSizes( this.dataGlobal );
 
 		System.out.println( "Current image sizes of dataset:");
 
 		for ( final String size : imgSizes.getA().keySet() )
 			IOFunctions.println( imgSizes.getA().get( size ) + "x: " + size );
 
-		final long[] minStepSize = Split_Views.findMinStepSize( this.dataGlobal );
+		final long[] minStepSize = SplittingTools.findMinStepSize( this.dataGlobal );
 
 		System.out.println( "Target image sizes and overlaps need be adjusted to be divisible by " + Arrays.toString( minStepSize ) );
 
-		final long sx = Split_Views.closestLargerLongDivisableBy( targetImageSize[ 0 ], minStepSize[ 0 ] );
-		final long sy = Split_Views.closestLargerLongDivisableBy( targetImageSize[ 1 ], minStepSize[ 1 ] );
-		final long sz = Split_Views.closestLargerLongDivisableBy( targetImageSize[ 2 ], minStepSize[ 2 ] );
+		final long sx = SplitDistributeEvenly.closestLargerLongDivisableBy( targetImageSize[ 0 ], minStepSize[ 0 ] );
+		final long sy = SplitDistributeEvenly.closestLargerLongDivisableBy( targetImageSize[ 1 ], minStepSize[ 1 ] );
+		final long sz = SplitDistributeEvenly.closestLargerLongDivisableBy( targetImageSize[ 2 ], minStepSize[ 2 ] );
 
-		final long ox = Split_Views.closestLargerLongDivisableBy( targetOverlap[ 0 ], minStepSize[ 0 ] );
-		final long oy = Split_Views.closestLargerLongDivisableBy( targetOverlap[ 1 ], minStepSize[ 1 ] );
-		final long oz = Split_Views.closestLargerLongDivisableBy( targetOverlap[ 2 ], minStepSize[ 2 ] );
+		final long ox = SplitDistributeEvenly.closestLargerLongDivisableBy( targetOverlap[ 0 ], minStepSize[ 0 ] );
+		final long oy = SplitDistributeEvenly.closestLargerLongDivisableBy( targetOverlap[ 1 ], minStepSize[ 1 ] );
+		final long oz = SplitDistributeEvenly.closestLargerLongDivisableBy( targetOverlap[ 2 ], minStepSize[ 2 ] );
 
 		System.out.println( "Adjusted target image size: [" + sx + ", " + sy + ", " + sz + "]" );
 		System.out.println( "Adjusted target overlap: [" + ox + ", " + oy + ", " + oz + "]" );
@@ -121,8 +121,9 @@ public class SplitDatasets extends AbstractBasic
 		}
 
 		final SpimData2 newData = SplittingTools.splitImages(
-				this.dataGlobal, new long[]{ ox, oy, oz }, new long[]{ sx, sy, sz }, minStepSize, assignIlluminations,
-				!disableOptimization, fakeInterestPoints, fipDensity, fipMinNumPoints, fipMaxNumPoints, fipError, fipExclusionRadius );
+				this.dataGlobal,
+				new SplitDistributeEvenly( new long[]{ ox, oy, oz }, new long[]{ sx, sy, sz }, minStepSize, !disableOptimization ),
+				assignIlluminations, fakeInterestPoints, fipDensity, fipMinNumPoints, fipMaxNumPoints, fipError, fipExclusionRadius );
 
 		if ( displayResult )
 		{
