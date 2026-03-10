@@ -409,9 +409,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			viewIdsGlobal = Import.getViewIds( dataGlobal );
 		}
 
-		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
+		final int[] blocksPerJob = useSharding ? null : Import.csvStringToIntArray(blockScaleString);
 		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
-				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job/shard" );
+				" with blocksize " + Util.printCoordinates( blockSize ) + ( useSharding
+						? " and shard size " + Util.printCoordinates( shardSize )
+						: " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job" ) );
 
 		if ( dataType == DataType.UINT8 )
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
