@@ -387,7 +387,7 @@ public class CZIMetadataDebug {
      */
     private static double getOffsetX(Map<String, Object> globalMetadata, int series) {
         // Try global metadata keys (series is 1-based in global metadata)
-        Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("Position|X", "PositionX"));
+        Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("PositionX", "Position|X"));
         if (val != null) {
             String dir = (String) globalMetadata.get("Experiment|Axis|X|Direction");
             return "IncreasingLeft".equals(dir) ? -val : val;
@@ -402,7 +402,7 @@ public class CZIMetadataDebug {
      */
     private static double getOffsetY(Map<String, Object> globalMetadata, int series) {
         // Try global metadata keys (series is 1-based in global metadata)
-        Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("Position|Y", "PositionY"));
+        Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("PositionY", "Position|Y"));
         if (val != null) {
             String dir = (String) globalMetadata.get("Experiment|Axis|Y|Direction");
             return "IncreasingLeft".equals(dir) ? -val : val;
@@ -417,7 +417,7 @@ public class CZIMetadataDebug {
      */
     private static double getOffsetZ(Map<String, Object> globalMetadata, int series) {
         // Try global metadata keys (series is 1-based in global metadata)
-        Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("Position|Z", "PositionZ"));
+        Double val = findPositionInGlobalMeta(globalMetadata, series + 1, Arrays.asList("PositionZ", "Position|Z"));
         if (val != null) {
             String dir = (String) globalMetadata.get("Experiment|Axis|Z|Direction");
             return "IncreasingLeft".equals(dir) ? -val : val;
