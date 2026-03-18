@@ -462,7 +462,9 @@ public class SpimDatasetBuilder {
 
 	static class StackPattern {
 		final String sourcePattern;
+		// globPattern is used for file lookup
 		final String globPattern;
+		// regexPattern is used for creating tile metadata based on t|c|i|a|x
 		final Pattern regexPattern;
 		final Set<String> keys;
 
@@ -477,11 +479,11 @@ public class SpimDatasetBuilder {
 			this.regexPattern = Pattern.compile( sourcePattern
 					.replaceAll("\\.", "\\\\.") // escape dot
 					.replaceAll("\\*", ".*")
-					.replaceAll("\\{t\\}", "(?<tp>\\\\D*?\\\\d+)")
-					.replaceAll("\\{c\\}", "(?<ch>\\\\D*?\\\\d+)")
-					.replaceAll("\\{i\\}", "(?<il>\\\\D*?\\\\d+)")
-					.replaceAll("\\{a\\}", "(?<ang>\\\\D*?\\\\d+)")
-					.replaceAll("\\{x\\}", "(?<ti>\\\\D*?\\\\d+)") );
+					.replaceAll("\\{t\\}", "(?<tp>\\\\D*?\\\\d+)")    // timepoint
+					.replaceAll("\\{c\\}", "(?<ch>\\\\D*?\\\\d+)")    // channel
+					.replaceAll("\\{i\\}", "(?<il>\\\\D*?\\\\d+)")    // illumination
+					.replaceAll("\\{a\\}", "(?<ang>\\\\D*?\\\\d+)")   // angle
+					.replaceAll("\\{x\\}", "(?<ti>\\\\D*?\\\\d+)") ); // tile
 
 			this.keys = initializeKeys(sourcePattern);
 		}
