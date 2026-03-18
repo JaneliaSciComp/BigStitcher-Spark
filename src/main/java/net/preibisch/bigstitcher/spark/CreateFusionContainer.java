@@ -121,6 +121,14 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
+	// the purpose of this parameter is to allow me to create a round specific group under the main container, e.g.
+	// stitched.ome.zarr
+	//     |- Round0
+	//         |- S0
+	//         |- S1
+	//     |- Round1
+	//         |- S0
+	//         |- S1
 	@Option(names = { "--group" }, description = "Container group path")
 	private String groupPath = "";
 
