@@ -5,3 +5,15 @@
 /.settings/
 /.idea/
 affine-fusion
+clear-interestpoints
+clear-registrations
+create-fusion-container
+detect-interestpoints
+downsample
+match-interestpoints
+nonrigid-fusion
+resave
+solver
+split-images
+stitching
+transform-points
