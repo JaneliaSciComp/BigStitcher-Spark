@@ -602,7 +602,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 							blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
 									conv,
 									dataLocal.getSequenceDescription().getImgLoader(),
-									viewIds,
+									overlappingViews,
 									registrations,
 									dataLocal.getSequenceDescription().getViewDescriptions(),
 									fusionType,//fusion.getFusionType(),
