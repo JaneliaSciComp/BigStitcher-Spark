@@ -700,7 +700,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 								blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
 										conv,
 										dataLocal.getSequenceDescription().getImgLoader(),
-										viewIds,
+                                        overlappingViews, // NOT viewIds
 										registrations,
 										dataLocal.getSequenceDescription().getViewDescriptions(),
 										fusionType,//fusion.getFusionType(),
@@ -717,7 +717,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 								blockSupplier = BlkThinPlateSplineFusion.init(
 										conv,
 										(SplitViewerImgLoader)dataLocal.getSequenceDescription().getImgLoader(),
-										viewIds,
+                                        overlappingViews,
 										dataLocal.getViewRegistrations().getViewRegistrations(), // already adjusted for anisotropy
 										dataLocal.getSequenceDescription().getViewDescriptions(),
 										fusionType,
