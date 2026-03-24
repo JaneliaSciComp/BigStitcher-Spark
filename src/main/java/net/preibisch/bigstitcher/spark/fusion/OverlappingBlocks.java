@@ -55,6 +55,8 @@ public class OverlappingBlocks
 	 * 		which views to check
 	 * @param interval
 	 * 		the interval that will be processed (in world coordinates)
+	 * @param expansion
+	 * 		how much the interval will be expanded to avoid accidental missed (e.g. affine could be 2)
 	 * @return list of views with overlapping blocks, and a prefetcher for those blocks.
 	 */
 	public static OverlappingBlocks find(

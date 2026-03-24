@@ -280,12 +280,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			}
 
 			if ( overlapExpansion == null )
-				overlapExpansion = 50;
+				overlapExpansion = OverlappingViews.defaultTPSExpansion;
 		}
 		else
 		{
 			if ( overlapExpansion == null )
-				overlapExpansion = 2;
+				overlapExpansion = OverlappingViews.defaultAffineExpansion;
 		}
 
 		final int numTimepoints, numChannels;
@@ -629,7 +629,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						Arrays.setAll( fusedBlockMax, d -> superBlockOffset[ d ] + superBlockSize[ d ] - 1 );
 
 						final List< ViewId > overlappingViews =
-								OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock );
+								OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock, overlapExpansion );
 
 						if ( overlappingViews.size() == 0 )
 							return gridBlock.clone();
@@ -674,6 +674,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							//
 							// PREFETCHING, TODO: should be part of BlkAffineFusion.init
 							//
+							// TODO: I think we only need this if PREFETCH == TRUE, we already test for overlapping views above
+							// TODO: this should be fine for TPS since it is using overlapExpansion
 							if ( fusionMethod == FusionMethod.AFFINE )
 							{
 								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, registrations, overlappingViews, fusedBlock, overlapExpansion );
