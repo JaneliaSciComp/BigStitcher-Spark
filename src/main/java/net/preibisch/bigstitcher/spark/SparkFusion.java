@@ -700,7 +700,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 								blockSupplier = BlkAffineFusion.initWithIntensityCoefficients(
 										conv,
 										dataLocal.getSequenceDescription().getImgLoader(),
-                                        overlappingViews, // NOT viewIds
+                                        overlappingViews,
 										registrations,
 										dataLocal.getSequenceDescription().getViewDescriptions(),
 										fusionType,//fusion.getFusionType(),
