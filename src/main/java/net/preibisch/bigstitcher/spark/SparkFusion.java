@@ -674,15 +674,17 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							//
 							// PREFETCHING, TODO: should be part of BlkAffineFusion.init
 							//
-							// TODO: I think we only need this if PREFETCH == TRUE, we already test for overlapping views above
-							// TODO: this should be fine for TPS since it is using overlapExpansion
-							if ( fusionMethod == FusionMethod.AFFINE )
+							// I think we only need this if PREFETCH == TRUE, we already test for overlapping views above
+							// this should be fine for TPS since it is using overlapExpansion
+							if ( prefetch ) //fusionMethod == FusionMethod.AFFINE )
 							{
 								final OverlappingBlocks overlappingBlocks = OverlappingBlocks.find( dataLocal, registrations, overlappingViews, fusedBlock, overlapExpansion );
+
+								// my current thinking is that this never happens because we already test for overlapping views above
 								if ( overlappingBlocks.overlappingViews().isEmpty() )
 									return gridBlock.clone();
 
-								if ( prefetch )
+								//if ( prefetch )
 								{
 									System.out.println( "Prefetching: " + overlappingBlocks.numPrefetchBlocks() + " block(s) from " + overlappingBlocks.overlappingViews().size() + " overlapping view(s) in the input data." );
 
