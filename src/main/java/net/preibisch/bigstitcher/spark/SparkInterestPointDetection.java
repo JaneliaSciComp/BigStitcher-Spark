@@ -905,9 +905,13 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
+			long timeAddIP = System.currentTimeMillis();
 			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
+			System.out.println( "addInterestPoints took " + ( System.currentTimeMillis() - timeAddIP ) + " ms." );
 
+			long timeSaveXML = System.currentTimeMillis();
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
+			System.out.println( "Saving XML took " + ( System.currentTimeMillis() - timeSaveXML ) + " ms." );
 
 			// store image intensities for interest points
 			if( storeIntensities )
@@ -916,6 +920,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				{
 					try
 					{
+						long timeIntensities = System.currentTimeMillis();
 						System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
 
 						final InterestPointsN5 i = (InterestPointsN5)dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
@@ -952,8 +957,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 							N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new ZstandardCompression() );
 						}
 
-						System.out.println( "Saved: " + tempURI + "/" + datasetIntensities );
-						
+						System.out.println( "Saved: " + tempURI + "/" + datasetIntensities + " (took " + ( System.currentTimeMillis() - timeIntensities ) + " ms)" );
+
 					}
 					catch ( Exception e )
 					{
