@@ -7,8 +7,11 @@ import java.util.List;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import ch.epfl.biop.formats.in.ZeissQuickStartCZIReader;
 import loci.formats.in.DefaultMetadataOptions;
+import loci.formats.in.DynamicMetadataOptions;
 import loci.formats.in.MetadataLevel;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.util.BioformatsReaderUtils;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -122,7 +125,8 @@ public class CZIMetadataDebug {
         String filePath = args.length > 0
             ? args[0]
 //            : "/Users/goinac/Work/HHMI/stitching/datasets/medium/t1/LHA3_R3_medium.czi";
-            : "/nrs/scicompsoft/goinac/multifish/testlaura/results/stitching/r0/Gel1_04x_GFP_Tpbg_633_Ribo550_nDapi.czi";
+            : "/nrs/flynp/EASI-FISH_NP_Gut_Atlas/G2_S2/results/stitching/g2_s2_r0/GutAtlas_R0_2_2_Canton-S-MF_jhamt_488_Amon_546_28S-fused_647_036x.czi";
+//            : "/nrs/flynp/EASI-FISH_NP_Gut_Atlas/G2_S2/results/stitching/g2_s2_r1/GutAtlas_R1_2_2_Canton-S-MF_Tk_488_Klu_546_Pros_647_036x.czi";
 
         String mvlFileName = args.length > 1
             ? args[1]
@@ -164,9 +168,9 @@ public class CZIMetadataDebug {
         }
 
         // Use IFormatReader with ChannelSeparator (auto-detects format)
-        IFormatReader formatReader = new ChannelSeparator();
-
-        formatReader.setMetadataOptions(new DefaultMetadataOptions(MetadataLevel.ALL));
+        IFormatReader formatReader = new ChannelSeparator(
+                BioformatsReaderUtils.createImageReaderWithSetupHooks()
+        );
 
         // Set up OME-XML metadata store
         ServiceFactory factory = new ServiceFactory();
@@ -181,18 +185,19 @@ public class CZIMetadataDebug {
 
         MetadataRetrieve retrieve = (MetadataRetrieve) formatReader.getMetadataStore();
 
-        int seriesCount = formatReader.getSeriesCount();
-
         // Dump original metadata looking for MVL-like entry data
         // MVL Entry elements have: PositionX, PositionY, PositionZ, PositionR, StackRange, StackSlices, etc.
         System.out.println("=== CZI Global Metadata (MVL-like Entry data) ===");
         Hashtable<String, Object> globalMeta = formatReader.getGlobalMetadata();
+
+        int seriesCount = formatReader.getSeriesCount();
 
         // Find all view/tile indices by looking for Position keys
         // Look for patterns like: "Information|Image|V|View|Position|X #N"
         List<Integer> viewIndices = new ArrayList<>();
         for (String key : globalMeta.keySet()) {
             if (key.contains("Position|X") || key.contains("PositionX")) {
+                System.out.printf("PositionX key found %s = %s\n", key, globalMeta.get(key));
                 int idx = extractImageNumberFromKey(key);
                 if (idx >= 0 && !viewIndices.contains(idx)) {
                     viewIndices.add(idx);
@@ -241,7 +246,7 @@ public class CZIMetadataDebug {
 
         // Also try getStageLabelX/Y/Z
         System.out.println("=== StageLabel positions ===");
-        for (int s = 0; s < Math.min(5, seriesCount); s++) {
+        for (int s = 0; s < seriesCount; s++) {
             try {
                 Length stageLabelX = retrieve.getStageLabelX(s);
                 Length stageLabelY = retrieve.getStageLabelY(s);
@@ -264,8 +269,8 @@ public class CZIMetadataDebug {
         // Display ViewSetups as created by SpimDatasetBuilder.LOCIViewSetupBuilder.createViewSetups()
         System.out.println("=== ViewSetups (as created by SpimDatasetBuilder) ===");
         System.out.println();
-        System.out.printf("%-8s | %-8s | %-20s | %-8s | %-30s | %-30s | %-25s%n",
-                "ViewIdx", "TileID", "Tile Location (um)", "Channel", "Dimensions (X,Y,Z)", "Voxel Size (um)", "Channel Name");
+        System.out.printf("%-6s | %-6s | %-20s | %-20s | %-6s | %-30s | %-30s | %-25s%n",
+                "ViewIdx", "TileID", "Tile Location (um)", "Stage Location (um)", "Channel", "Dimensions (X,Y,Z)", "Voxel Size (um)", "Channel Name");
         System.out.println("--------------------------------------------------------------------------------------------------------------------------------------");
 
         int viewIndex = 0;
@@ -281,6 +286,14 @@ public class CZIMetadataDebug {
             double oX = getOffsetX(globalMeta, series);
             double oY = getOffsetY(globalMeta, series);
             double oZ = getOffsetZ(globalMeta, series);
+
+            // Get stageLabel
+            Length stageLabelX = retrieve.getStageLabelX(series);
+            Length stageLabelY = retrieve.getStageLabelY(series);
+            Length stageLabelZ = retrieve.getStageLabelZ(series);
+            double slX = stageLabelX != null && stageLabelX.value(UNITS.MICROMETER) != null ? stageLabelX.value(UNITS.MICROMETER).doubleValue() : 0;
+            double slY = stageLabelY != null && stageLabelY.value(UNITS.MICROMETER) != null ? stageLabelY.value(UNITS.MICROMETER).doubleValue() : 0;
+            double slZ = stageLabelZ != null && stageLabelZ.value(UNITS.MICROMETER) != null ? stageLabelZ.value(UNITS.MICROMETER).doubleValue() : 0;
 
             // Get voxel/pixel size from MetadataRetrieve
             Length physSizeX = retrieve.getPixelsPhysicalSizeX(series);
@@ -298,6 +311,7 @@ public class CZIMetadataDebug {
             int tileId = series;
 
             String tileLocation = String.format("(%.2f, %.2f, %.2f)", oX, oY, oZ);
+            String stageLocation = String.format("(%.2f, %.2f, %.2f)", slX, slY, slZ);
             String dims = String.format("(%d, %d, %d)", sizeX, sizeY, sizeZ);
             String voxel = String.format("(%.4f, %.4f, %.4f)", voxelX, voxelY, voxelZ);
 
@@ -306,8 +320,8 @@ public class CZIMetadataDebug {
                 String chName = retrieve.getChannelName(series, chIndex);
                 if (chName == null) chName = "(unnamed)";
 
-                System.out.printf("%-8d | %-8d | %-20s | %-8d | %-30s | %-30s | %-25s%n",
-                        viewIndex, tileId, tileLocation, chIndex, dims, voxel, chName);
+                System.out.printf("%-6d | %-6d | %-20s | %-20s | %-6d | %-30s | %-30s | %-25s%n",
+                        viewIndex, tileId, tileLocation, stageLocation, chIndex, dims, voxel, chName);
 
                 viewIndex++;
             }
