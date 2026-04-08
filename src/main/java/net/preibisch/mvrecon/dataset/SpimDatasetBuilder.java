@@ -22,7 +22,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import loci.formats.IFormatReader;
-import loci.formats.ImageReader;
 import loci.formats.meta.MetadataRetrieve;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistrations;
@@ -46,6 +45,7 @@ import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.FileMapImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.LegacyStackImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapEntry;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.util.BioformatsReaderUtils;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -221,7 +221,8 @@ public class SpimDatasetBuilder {
 				{
 					continue;
 				}
-				IFormatReader formatReader = new ImageReader();
+
+				IFormatReader formatReader = BioformatsReaderUtils.createImageReaderWithSetupHooks();
 				try {
 					if ( !LegacyStackImgLoaderLOCI.createOMEXMLMetadata( formatReader ) ) {
 						try {
@@ -233,7 +234,6 @@ public class SpimDatasetBuilder {
 					}
 
 					formatReader.setId( tileFile.toString() );
-
 					MetadataRetrieve retrieve = (MetadataRetrieve)formatReader.getMetadataStore();
 
 					int seriesCount = formatReader.getSeriesCount();
@@ -248,9 +248,9 @@ public class SpimDatasetBuilder {
 						stackFile.sizeY = formatReader.getSizeY();
 						stackFile.sizeX = formatReader.getSizeX();
 
-						double oX = getOffsetX(globalMetadata, series);
-						double oY = getOffsetY(globalMetadata, series);
-						double oZ = getOffsetZ(globalMetadata, series);
+						double oX = getOffsetX(retrieve, globalMetadata, series);
+						double oY = getOffsetY(retrieve, globalMetadata, series);
+						double oZ = getOffsetZ(retrieve, globalMetadata, series);
 						Length resX = retrieve.getPixelsPhysicalSizeX(series);
 						Length resY = retrieve.getPixelsPhysicalSizeY(series);
 						Length resZ = retrieve.getPixelsPhysicalSizeZ(series);
@@ -293,7 +293,7 @@ public class SpimDatasetBuilder {
 			return this;
 		}
 
-		private double getOffsetX(Map<String, Object> globalMetadata, int series) {
+		private double getOffsetX(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
 			// get position from global metadata (image number in metadata is 1-based in global metadata)
 			Double val = findPositionInGlobalMeta(
 					globalMetadata,
@@ -304,10 +304,11 @@ public class SpimDatasetBuilder {
 				return val;
 			}
 
-			return 0;
+			Length l = metadataRetrieve.getStageLabelX(series);
+			return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
 		}
 
-		private double getOffsetY(Map<String, Object> globalMetadata, int series) {
+		private double getOffsetY(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
 			// get position from global metadata (image number in metadata is 1-based in global metadata)
 			Double val = findPositionInGlobalMeta(
 					globalMetadata,
@@ -318,10 +319,11 @@ public class SpimDatasetBuilder {
 				return val;
 			}
 
-			return 0;
+			Length l = metadataRetrieve.getStageLabelY(series);
+			return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
 		}
 
-		private double getOffsetZ(Map<String, Object> globalMetadata, int series) {
+		private double getOffsetZ(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
 			// get position from global metadata (image number in metadata is 1-based in global metadata)
 			Double val = findPositionInGlobalMeta(
 					globalMetadata,
@@ -332,7 +334,8 @@ public class SpimDatasetBuilder {
 				return val;
 			}
 
-			return 0;
+			Length l = metadataRetrieve.getStageLabelZ(series);
+			return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
 		}
 
 		private Double findPositionInGlobalMeta(Map<String, Object> globalMeta, int imageNumber, List<String> patterns) {

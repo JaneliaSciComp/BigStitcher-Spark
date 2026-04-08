@@ -169,6 +169,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 								dimensions.get( viewId.getViewSetupId() ),
 								blockSize,
 								computeBlockSize ) ).flatMap(List::stream).collect( Collectors.toList() );
+		System.out.printf("Process %d S0 grid blocks\n", gridS0.size());
 
 		final Map<Integer, DataType> dataTypes =
 				N5ApiTools.assembleDataTypes( dataGlobal, dimensions.keySet() );
@@ -260,7 +261,10 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				System.exit( 1 );
 			}
 
-			final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, Math.min( Spark.maxPartitions, gridS0.size() ) );
+			int nPartitions = Math.min(Math.max(sc.defaultParallelism(), 1), gridS0.size());
+			System.out.printf("Use %d partitions to process %d blocks\n", nPartitions, gridS0.size());
+
+			final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, nPartitions );
 
 			final JavaRDD<long[][]> rdds0Result = rdds0.map( gridBlock ->
 			{
@@ -280,9 +284,6 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				return gridBlock.clone();
 			});
 
-			rdds0Result.cache();
-			rdds0Result.count();
-
 			// extract all blocks that failed
 			final Set<long[][]> failedBlocksSet =
 					retryTracker.processWithSpark( rdds0Result, gridS0 );
@@ -296,7 +297,10 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 			// Update grid for next iteration with remaining failed blocks
 			gridS0.clear();
-			gridS0.addAll(failedBlocksSet);
+			if (! failedBlocksSet.isEmpty() ) {
+				System.out.printf("Retry %d failed blocks\n", failedBlocksSet.size());
+				gridS0.addAll(failedBlocksSet);
+			}
 		}
 		while ( gridS0.size() > 0 );
 
