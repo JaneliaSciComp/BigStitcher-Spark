@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.scijava</groupId>
         <artifactId>pom-scijava</artifactId>
-        <version>39.0.0</version>
+        <version>43.0.0</version>
         <relativePath/>
     </parent>
 
@@ -103,8 +103,8 @@
 		<bigdataviewer-n5.version>1.0.2</bigdataviewer-n5.version>
 
 		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>8.0.0</multiview-reconstruction.version>
-		<BigStitcher.version>2.5.0</BigStitcher.version>
+		<multiview-reconstruction.version>8.1.3</multiview-reconstruction.version>
+		<BigStitcher.version>2.6.2-SNAPSHOT</BigStitcher.version>
 
 		<n5-universe.version>2.3.0</n5-universe.version>
 		<n5.version>3.5.0</n5.version>
@@ -167,6 +167,11 @@
         <dependency>
             <groupId>sc.fiji</groupId>
             <artifactId>spim_data</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.epfl.biop</groupId>
+            <artifactId>quick-start-czi-reader</artifactId>
+            <version>0.3.0</version>
         </dependency>
         <!-- <dependency>
             <groupId>com.amazonaws</groupId>
