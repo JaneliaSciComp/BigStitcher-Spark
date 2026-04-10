@@ -33,6 +33,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+import java.util.Set;
+import java.util.HashSet;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -662,6 +664,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		rddResult.count();
 
 		final List<Tuple3<ViewId, long[][], String>> results = rddResult.collect();
+		final Set<String> datasetSet = new HashSet<String>();
+		for (Tuple3<ViewId, long[][], String> res : results) {
+            datasetSet.add(res._3());
+        }
+		final List<String> datasetNoDups = new ArrayList<>(datasetSet);
 
 		// assemble all interest point intervals per ViewId
 		final HashMap< ViewId, List< List< InterestPoint > > > interestPointsPerViewId = new HashMap<>();
@@ -704,18 +711,18 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		{
 			System.out.println( "Deleting temporary Spark files ... ");
 
-			final JavaRDD<Tuple3<ViewId, long[][], String>> rdd = sc.parallelize( results, Math.min( Spark.maxPartitions, results.size() ) );
+			final JavaRDD<String> rdd = sc.parallelize( datasetNoDups, Math.min( Spark.maxPartitions, datasetNoDups.size() ) );
 
 			rdd.foreach( boundingBox ->
 			{
 				final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
 
-				if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/points" ))
+				if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox + "/points" ))
 				{
-					n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/points" );
+					n5WriterLocal.remove( tempDataset + "/" + boundingBox + "/points" );
 
-					if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/intensities" ) )
-						n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/intensities" );
+					if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox + "/intensities" ) )
+						n5WriterLocal.remove( tempDataset + "/" + boundingBox + "/intensities" );
 
 					n5WriterLocal.close();
 				}
