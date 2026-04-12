@@ -104,10 +104,7 @@ public class SplitDatasets extends AbstractBasic
 	@Option(names = "--minSizeMultiplier", description = "min tile size multiplier for oct-tree (default: 4)")
 	private int minSizeMultiplier = 4;
 
-	@Option(names = "--enableMerge", description = "enable block re-merging for oct-tree (default: true)")
-	private boolean enableMerge = true;
-
-	@Option(names = "--minSplitLevels", description = "force minimum split levels for oct-tree (default: 0)")
+	@Option(names = "--minSplitLevels", description = "force minimum split levels for oct-tree (default: 0, use 1 for TPS-compatible)")
 	private int minSplitLevels = 0;
 
 	// ==================== Fake interest points options ====================
@@ -727,14 +724,24 @@ public class SplitDatasets extends AbstractBasic
 		{
 			criterion = new ConsensusSetCriterion(
 					data, trimmedLabels, maxCorrespondences,
-					ConsensusSetCriterion.TOLERANCE_NONE, 0 );
+					ConsensusSetCriterion.TOLERANCE_PERCENTAGE, 10.0 );
 		}
 		else
 		{
 			criterion = new CrossViewCorrespondenceCriterion( data, trimmedLabels, maxCorrespondences );
 		}
 
-		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, enableMerge, minSplitLevels, SplitOctTree.MERGE_SAME_AS_SPLIT );
+		// Compute anisotropy from registrations
+		final List< ViewId > allViewIds = new ArrayList<>();
+		for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
+			if ( vd.isPresent() )
+				allViewIds.add( vd );
+
+		final double avgAnisoF = net.preibisch.mvrecon.process.interestpointregistration.TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
+		final double[] anisotropy = new double[] { 1, 1, avgAnisoF };
+		IOFunctions.println( "Using anisotropy factor: " + Arrays.toString( anisotropy ) );
+
+		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, minSplitLevels, anisotropy );
 	}
 
 	public static void main( final String... args ) throws SpimDataException
