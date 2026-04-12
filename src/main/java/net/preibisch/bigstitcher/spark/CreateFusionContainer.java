@@ -44,7 +44,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
@@ -432,7 +432,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 					5, // int n
 					"/", // String name, I also saw "/"
 					vx.dimensionsAsDoubleArray(), // double[] resolutionS0,
