@@ -316,7 +316,7 @@ public class Solver extends AbstractRegistration
 			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError, maxIterations, maxPlateauwidth );
 
 			models = (HashMap)GlobalOpt.computeTiles(
-							(Model)(Object)model,
+							(Model)model,
 							globalOptParameters.preAlign,
 							pmc,
 							cs,
@@ -326,7 +326,7 @@ public class Solver extends AbstractRegistration
 		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 		{
 			models = (HashMap)GlobalOptIterative.computeTiles(
-							(Model)(Object)model,
+							(Model)model,
 							globalOptParameters.preAlign,
 							pmc,
 							new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, maxIterations, maxPlateauwidth, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ),
@@ -341,7 +341,7 @@ public class Solver extends AbstractRegistration
 				globalOptParameters.relativeThreshold = globalOptParameters.absoluteThreshold  = Double.MAX_VALUE;
 
 			models = (HashMap)GlobalOptTwoRound.computeTiles(
-					(Model & Affine3D)(Object)model,
+					(Model & Affine3D)model,
 					globalOptParameters.preAlign,
 					pmc,
 					new SimpleIterativeConvergenceStrategy( Double.MAX_VALUE, maxIterations, maxPlateauwidth, globalOptParameters.relativeThreshold, globalOptParameters.absoluteThreshold ), // if it's simple, both will be Double.MAX
@@ -537,14 +537,14 @@ public class Solver extends AbstractRegistration
 		
 						final Map< Integer, InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getInterestPointsCopy();
 						final Map< Integer, InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB ).getInterestPointsCopy();
-		
+
 						for ( final CorrespondingInterestPoints p : cpA )
 						{
 							if ( p.getCorrespodingLabel().equals( labelB ) && p.getCorrespondingViewId().equals( vB ) )
 							{
 								InterestPoint ipA = ipListA.get( p.getDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 								InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
-		
+
 								// we need to copy the array because it might not be bijective
 								// (some points in one list might correspond with the same point in the other list)
 								// which leads to the SpimData model being applied twice

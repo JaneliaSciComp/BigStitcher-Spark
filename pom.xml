@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.scijava</groupId>
         <artifactId>pom-scijava</artifactId>
-        <version>39.0.0</version>
+        <version>43.0.0</version>
         <relativePath/>
     </parent>
 
@@ -104,7 +104,7 @@
 
 		<spim_data.version>2.3.5</spim_data.version>
 		<multiview-reconstruction.version>9.0.0-SNAPSHOT</multiview-reconstruction.version>
-		<BigStitcher.version>2.6.0</BigStitcher.version>
+		<BigStitcher.version>2.6.1</BigStitcher.version>
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
@@ -173,16 +173,6 @@
             <groupId>sc.fiji</groupId>
             <artifactId>spim_data</artifactId>
         </dependency>
-        <!-- <dependency>
-            <groupId>com.amazonaws</groupId>
-            <artifactId>aws-java-sdk-s3</artifactId>
-            <version>${aws-java-sdk-s3.version}</version>
-        </dependency> -->
-        <!-- <dependency>
-            <groupId>org.bigdataviewer</groupId>
-            <artifactId>bigdataviewer-omezarr</artifactId>
-            <version>0.2.3</version>
-        </dependency> -->
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5</artifactId>
@@ -196,7 +186,7 @@
             <artifactId>n5-aws-s3</artifactId>
             <!-- <version>4.0.0</version> -->
         </dependency>
-<!--        Scala is sensitive to fasterxml version -->
+        <!-- Scala is sensitive to fasterxml version -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -204,7 +194,7 @@
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
-<!--            Spark 3.3.2 release comes with scala 2.12.15 -->
+            <!-- Spark 3.3.2 release comes with scala 2.12.15 -->
             <artifactId>spark-core_2.12</artifactId>
             <version>3.3.2</version>
             <exclusions>

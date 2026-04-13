@@ -152,7 +152,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
-
 	// TODO: add support for loading coefficients during fusion
 	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
 	private String intensityN5PathURIString = null;
@@ -166,6 +165,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
 	private String intensityN5Dataset = "intensity";
 
+	@Option(names = { "--group" }, description = "Container group path")
+	private String groupPath = "";
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
@@ -173,6 +175,18 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	//static final int N_PREFETCH_THREADS = 72;
 
 	URI intensityN5PathURI = null;
+
+	/**
+	 * @return container group path always terminated with a '/'
+	 */
+	private String getContainerGroupPath()
+	{
+		if (!groupPath.endsWith("/")) {
+			return groupPath + "/";
+		} else {
+			return groupPath;
+		}
+	}
 
 	@Override
 	public Void call() throws Exception
@@ -238,7 +252,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
 
-		final String fusionFormat = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/FusionFormat", String.class );
+		final String fusionFormat = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", String.class );
 
 		if ( fusionFormat == null )
 		{
@@ -249,7 +263,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
 
-		final URI xmlURI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/InputXML", URI.class );
+		final URI xmlURI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/InputXML", URI.class );
 
 		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
 
@@ -292,8 +306,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		if ( timepointIndex == null )
 		{
-			numTimepoints = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumTimepoints", int.class );
-			numChannels = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/NumChannels", int.class );
+			numTimepoints = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumTimepoints", int.class );
+			numChannels = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumChannels", int.class );
 		}
 		else
 		{
@@ -301,16 +315,16 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			numTimepoints = numChannels = 1;
 		}
 
-		final long[] bbMin = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
-		final long[] bbMax = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", long[].class );
-
+		final long[] bbMin = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_min", long[].class );
+		final long[] bbMax = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_max", long[].class );
+ 
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
-		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
-		final double anisotropyFactor = preserveAnisotropy ? driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", double.class ) : Double.NaN;
-		final int[] blockSize = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/BlockSize", int[].class );
+		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
+		final double anisotropyFactor = preserveAnisotropy ? driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/AnisotropyFactor", double.class ) : Double.NaN;
+		final int[] blockSize = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/BlockSize", int[].class );
 
-		final DataType dataType = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/DataType", DataType.class );
+		final DataType dataType = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/DataType", DataType.class );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "FusionMethod: " + fusionMethod );
@@ -329,8 +343,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		double minI = Double.NaN, maxI = Double.NaN;
 		try
 		{
-			minI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MinIntensity", double.class );
-			maxI = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MaxIntensity", double.class );
+			minI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MinIntensity", double.class );
+			maxI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MaxIntensity", double.class );
 		}
 		catch ( Exception e )
 		{
@@ -344,19 +358,19 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		System.out.println( "maxIntensity: " + maxI );
 
 		final MultiResolutionLevelInfo[][] mrInfos =
-				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
+				driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
 
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
 
 		// Load sharding metadata
-		final boolean useSharding = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/UseSharding", boolean.class );
+		final boolean useSharding = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/UseSharding", boolean.class );
 		final int[] shardSize;
 		final int[] shardSizeFactor;
 
 		if ( useSharding )
 		{
-			shardSize = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/ShardSize", int[].class );
-			shardSizeFactor = driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/ShardSizeFactor", int[].class );
+			shardSize = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/ShardSize", int[].class );
+			shardSizeFactor = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/ShardSizeFactor", int[].class );
 			System.out.println( "Sharding enabled. Shard size: " + Util.printCoordinates( shardSize ) + " (factor: " + Util.printCoordinates( shardSizeFactor ) + ")" );
 
 			// Validate: blockScale cannot be specified when sharding is enabled
@@ -556,8 +570,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						blockSize);
 
 				System.out.println( "numJobs = " + grid.size() );
-
-				//driverVolumeWriter.setAttribute( n5Dataset, "offset", minBB );
 
 				final RetryTrackerSpark<long[][]> retryTracker =
 						RetryTrackerSpark.forGridBlocks("s0 block processing", grid.size());
@@ -865,18 +877,18 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						
 						rddDSResult.cache();
 						rddDSResult.count();
-	
+
 						// extract all blocks that failed
 						final Set<long[][]> failedBlocksSet =
 								retryTrackerDS.processWithSpark( rddDSResult, grid );
-	
+
 						// Use RetryTracker to handle retry counting and removal
 						if (!retryTrackerDS.processFailures(failedBlocksSet))
 						{
 							System.out.println( "Stopping." );
 							System.exit( 1 );
 						}
-	
+
 						// Update grid for next iteration with remaining failed blocks
 						grid.clear();
 						grid.addAll(failedBlocksSet);
@@ -889,13 +901,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
 		driverVolumeWriter.close();
-
-		/*
-		if ( multiRes )
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset.substring( 0, n5Dataset.length() - 3) + "'" );
-		else
-			System.out.println( "Saved, e.g. view with './n5-view -i " + n5PathURI + " -d " + n5Dataset + "'" );
-		*/
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
 

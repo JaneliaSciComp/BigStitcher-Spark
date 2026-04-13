@@ -7,11 +7,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 
+import mpicbg.spim.data.generic.base.Entity;
+import mpicbg.spim.data.registration.ViewRegistrations;
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -59,8 +66,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 {
 	private static final long serialVersionUID = -9140450542904228386L;
 
-	public static enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
-
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
 
@@ -70,7 +75,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset compression")
-	private Compressions compression = null;
+	private Compressions compressionType = null;
 
 	@Option(names = {"-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
 	private Integer compressionLevel = null;
@@ -125,6 +130,33 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	private String shardSizeFactorString = "8,8,2";
 
 	URI outPathURI = null, xmlOutURI = null;
+
+	// the purpose of this parameter is to allow me to create a round specific group under the main container, e.g.
+	// stitched.ome.zarr
+	//     |- Round0
+	//         |- S0
+	//         |- S1
+	//     |- Round1
+	//         |- S0
+	//         |- S1
+	@Option(names = { "--group" }, description = "Container group path")
+	private String groupPath = "";
+
+	private double[] cal = new double[] { 1, 1, 1 };
+	private String calUnit = "micrometer";
+	private double avgAnisotropy = Double.NaN;
+
+	/**
+	 * @return container group path always terminated with a '/'
+	 */
+	private String getContainerGroupPath()
+	{
+		if (!groupPath.endsWith("/")) {
+			return groupPath + "/";
+		} else {
+			return groupPath;
+		}
+	}
 
 	@Override
 	public Void call() throws Exception
@@ -261,9 +293,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 
 		// compression and data type
-		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
+		final Compression compression = N5Util.getCompression( this.compressionType, this.compressionLevel );
 
-		System.out.println( "Compression: " + this.compression );
+		System.out.println( "Compression: " + this.compressionType );
 		System.out.println( "Compression level: " + ( compressionLevel == null ? "default" : compressionLevel ) );
 
 		final DataType dt;
@@ -345,31 +377,35 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			return null;
 		}
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/InputXML", xmlURI );
+		// if there is a group different from the root, create it
+		if ( ! getContainerGroupPath().equals("/") )
+			driverVolumeWriter.createGroup( getContainerGroupPath() );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumTimepoints", numTimepoints );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/NumChannels", numChannels );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/InputXML", xmlURI );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", boundingBox.minAsLongArray() );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/Boundingbox_max", boundingBox.maxAsLongArray() );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumTimepoints", numTimepoints );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/NumChannels", numChannels );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_min", boundingBox.minAsLongArray() );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_max", boundingBox.maxAsLongArray() );
+
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/PreserveAnisotropy", preserveAnisotropy );
 		if (preserveAnisotropy) // cannot write Double.NaN into JSON
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/BlockSize", blockSize );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/AnisotropyFactor", anisotropyFactor );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/DataType", dt );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/BlockSize", blockSize );
 
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/UseSharding", useSharding );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/UseSharding", useSharding );
 		if ( useSharding )
 		{
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/ShardSize", shardSize );
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/ShardSizeFactor", shardSizeFactor );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/ShardSize", shardSize );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/ShardSizeFactor", shardSizeFactor );
 		}
 
 		if ( minIntensity != null && maxIntensity != null )
 		{
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MinIntensity", minIntensity );
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MaxIntensity", maxIntensity );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MinIntensity", minIntensity );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MaxIntensity", maxIntensity );
 		}
 
 		// setup datasets and metadata
@@ -386,7 +422,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
 
 			if ( !bdv )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "OME-ZARR" );
 
 			final long[] dim3d = boundingBox.dimensionsAsLongArray();
 
@@ -395,8 +431,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final int[][] ds = new int[ downsamplings.length ][];
 			for ( int d = 0; d < ds.length; ++d )
 				ds[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
-
-			final Function<Integer, String> levelToName = (level) -> "/" + level;
 
 			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
 
@@ -408,7 +442,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
 					driverVolumeWriter,
-					levelToName,
+					(level) -> getContainerGroupPath() + level, // multiscale pyramid will be created for the entire provided group
 					dt,
 					dim, //5d
 					compression,
@@ -423,44 +457,37 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( Arrays.copyOf( mrInfo[level].absoluteDownsamplingDouble(), 3 ) );
 
+			updateAnisotropyAndCalibration(dataGlobal, viewIdsGlobal);
 			// extract the resolution of the s0 export
-			// TODO: use TransformationTools.computeAverageCalibration()
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			//final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+			final double[] resolutionS0 = OMEZarrAttributes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + calUnit );
 
 			// create metadata
 			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
 					5, // int n
-					"/", // String name, I also saw "/"
-					vx.dimensionsAsDoubleArray(), // double[] resolutionS0,
-					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+					getContainerGroupPath(), // String name, I also saw "/"
+					resolutionS0, // double[] resolutionS0,
+					calUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
-					levelToName,
+					(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
 					levelToMipmapTransform );
 
 			// save metadata
-
-			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
-			// for this to work you need to register an adapter in the N5Factory class
-			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
 		}
 
 		if ( bdv )
 		{
 			System.out.println( "Creating BDV compatible container at '" + outPathURI + "' ... " );
-
 			if ( storageType == StorageFormat.N5 )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
-			else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+			else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2)
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
 			else
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
 
-			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/OutputXML", xmlOutURI );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/OutputXML", xmlOutURI );
 
 			final long[] bb = boundingBox.dimensionsAsLongArray();
 
@@ -471,14 +498,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				tps.add( new TimePoint( t ) );
 
 			// extract the resolution of the s0 export
-			// TODO: use TransformationTools.computeAverageCalibration()
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			//final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
 
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			final double[] resolutionS0 = OMEZarrAttributes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
-			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", vx.dimensionsAsDoubleArray() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + calUnit );
+
+			final VoxelDimensions vxNew = new FinalVoxelDimensions( calUnit, resolutionS0 );
 
 			for ( int c = 0; c < numChannels; ++c )
 			{
@@ -504,7 +529,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					for ( int t = 0; t < numTimepoints; ++t )
 					{
 						final OMEZARREntry omeZarrEntry = new OMEZARREntry(
-								mrInfos[ 0 ][ 0 ].dataset.substring(0, mrInfos[ 0 ][ 0 ].dataset.lastIndexOf( "/" ) ),
+								mrInfos[ t ][ c ].dataset.substring(0, mrInfos[ t ][ c ].dataset.lastIndexOf( "/" ) ),
 								new int[] { c, t } );
 
 						viewIdToPath.put( new ViewId( t, c ), omeZarrEntry );
@@ -537,7 +562,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 						myMrInfo[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
 								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings );
 
-						driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
+						driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 					}
 					else // HDF5
 					{
@@ -553,9 +578,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			mrInfos = new MultiResolutionLevelInfo[ numChannels * numTimepoints ][];
 
 			if ( storageType == StorageFormat.N5 )
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "N5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "N5" );
 			else
-				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "HDF5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/FusionFormat", "HDF5" );
 
 			for ( int c = 0; c < numChannels; ++c )
 				for ( int t = 0; t < numTimepoints; ++t )
@@ -573,27 +598,46 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 							compression,
 							blockSize,
 							downsamplings,
-						useSharding,
-						shardSize );
+							useSharding,
+							shardSize );
 				}
 		}
 
 		// TODO: set extra attributes to load the state
-		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", mrInfos );
+		driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MultiResolutionInfos", mrInfos );
 
 		driverVolumeWriter.close();
 
 		return null;
 	}
 
+	private void updateAnisotropyAndCalibration( SpimData2 dataGlobal, List<ViewId> viewIdsGlobal )
+	{
+		ViewRegistrations registrations = dataGlobal.getViewRegistrations();
+		// get all view descriptions
+		List<ViewDescription> vds = SpimData2.getAllViewDescriptionsSorted(dataGlobal, viewIdsGlobal);
+		// group by timepoint and channel
+		Set<Class<? extends Entity>> groupingFactors = new HashSet<>(Arrays.asList(TimePoint.class, Channel.class));
+		List<Group<ViewDescription>> fusionGroups = Group.splitBy( vds, groupingFactors );
+		Pair<double[], String> calAndUnit = fusionGroups.stream().findFirst()
+				.map(group -> TransformationTools.computeAverageCalibration(group, registrations))
+				.orElse(new ValuePair<>(new double[]{ 1, 1, 1 }, "micrometer"));
+		cal = calAndUnit.getA();
+		calUnit = calAndUnit.getB();
+
+		if (preserveAnisotropy) {
+			if (!Double.isNaN(this.anisotropyFactor)) {
+				avgAnisotropy = this.anisotropyFactor;
+			} else {
+				avgAnisotropy = TransformationTools.getAverageAnisotropyFactor(dataGlobal, viewIdsGlobal);
+			}
+		} else {
+			avgAnisotropy = Double.NaN;
+		}
+	}
+
 	public static void main(final String... args) throws SpimDataException
 	{
-
-		//final XmlIoSpimData io = new XmlIoSpimData();
-		//final SpimData spimData = io.load( "/Users/preibischs/Documents/Microscopy/Stitching/Truman/standard/output/dataset.xml" );
-		//BdvFunctions.show( spimData );
-		//SimpleMultiThreading.threadHaltUnClean();
-
 		System.out.println(Arrays.toString(args));
 
 		System.exit(new CommandLine(new CreateFusionContainer()).execute(args));

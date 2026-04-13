@@ -36,7 +36,7 @@ import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
-import net.preibisch.bigstitcher.spark.CreateFusionContainer.Compressions;
+import net.preibisch.bigstitcher.spark.Compressions;
 import net.preibisch.legacy.io.IOFunctions;
 import util.URITools;
 
