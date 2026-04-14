@@ -92,7 +92,8 @@ public class ChainCommands extends AbstractInfrastructure implements Callable<Vo
 			case "match-interestpoints": return new SparkGeometricDescriptorMatching();
 			case "nonrigid-fusion": return new SparkNonRigidFusion();
 			case "create-dataset": return new CreateDataset();
-			case "stitching": return new SparkPairwiseStitching();
+			case "phase-correlation-stitching": return new SparkPhaseCorrelationPairwiseStitching();
+			case "lucas-kanade-stitching": return new SparkLucasKanadePairwiseStitching();
 			case "resave": return new SparkResaveN5();
 			case "downsample": return new SparkDownsample();
 			case "fusion": return new SparkFusion();

@@ -30,14 +30,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
-import mpicbg.spim.data.registration.ViewTransformAffine;
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.registration.ViewRegistrations;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.Illumination;
@@ -62,50 +58,32 @@ import net.preibisch.stitcher.algorithm.FilteredStitchingResults;
 import net.preibisch.stitcher.algorithm.GroupedViewAggregator;
 import net.preibisch.stitcher.algorithm.GroupedViewAggregator.ActionType;
 import net.preibisch.stitcher.algorithm.PairwiseStitching;
-import net.preibisch.stitcher.algorithm.PairwiseStitchingParameters;
+import net.preibisch.stitcher.algorithm.lucaskanade.LucasKanadeParameters;
 import net.preibisch.stitcher.algorithm.SpimDataFilteringAndGrouping;
 import net.preibisch.stitcher.algorithm.TransformTools;
 import net.preibisch.stitcher.algorithm.globalopt.TransformationTools;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class SparkPairwiseStitching extends AbstractSelectableViews
+public class SparkLucasKanadePairwiseStitching extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = 2745578960909812636L;
 
 	@Option(names = { "-ds", "--downsampling" }, required = false, description = "Define the downsampling at which the stitching should be performed, e.g. -ds 4,4,1 (default: 2,2,1)")
 	private String downsampling = "2,2,1";
 
-	@Option(names = { "-p", "--peaksToCheck" }, description = "number of peaks in phase correlation image to check with cross-correlation (default: 5)")
-	protected int peaksToCheck = 5;
+	@Option(names = { "--maxIterations" }, description = "Maximum number of Lucas-Kanade iterations (default: 100)")
+	private int maxIterations = 100;
 
-	@Option(names = { "--disableSubpixelResolution" }, description = "do not use subpixel-accurate pairwise stitching")
-	protected boolean disableSubpixelResolution = false;
+	@Option(names = { "--minParameterChange" }, description = "Convergence threshold: minimum L2 norm of parameter update to continue iterating (default: 0.01)")
+	private double minParameterChange = 0.01;
 
-	@Option(names = { "--minR" }, description = "minimum required cross correlation between two images (default: 0.3)")
-	protected double minR = 0.3;
-
-	@Option(names = { "--maxR" }, description = "maximum cross correlation between two images for a pair to be valid; a typical example is that correlations of 1.0 should be omitted (default: 1.0 / nothing omitted)")
-	protected double maxR = 1.0;
-
-	@Option(names = { "--maxShiftX" }, description = "maximum shift in X (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftX = null;
-
-	@Option(names = { "--maxShiftY" }, description = "maximum shift in Y (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftY = null;
-
-	@Option(names = { "--maxShiftZ" }, description = "maximum shift in Z (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftZ = null;
-
-	@Option(names = { "--maxShiftTotal" }, description = "maximum shift (in pixels) between two images (total distance) that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftTotal = null;
-
-	@Option(names = { "--channelCombine" }, description = "defines how images of different channels of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: AVERAGE)")
-	protected ActionType channelCombine = ActionType.AVERAGE;
-
-	@Option(names = { "--illumCombine" }, description = "defines how images of different illuminations of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: PICK_BRIGHTEST)")
-	protected ActionType illumCombine = ActionType.PICK_BRIGHTEST;
+	@Option(names = { "--modelType" }, description = "Warp function / transformation model type: TRANSLATION, RIGID, or AFFINE (default: TRANSLATION)")
+	protected LucasKanadeParameters.WarpFunctionType modelType = LucasKanadeParameters.WarpFunctionType.TRANSLATION;
 
 	@Override
 	public Void call() throws Exception
@@ -176,13 +154,8 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			return null;
 		}
 
-		// setup parameters
-		final boolean doSubpixel = !disableSubpixelResolution;
-		final int numPeaks = this.peaksToCheck;
-		final ActionType channelCombine = this.channelCombine;
-		final ActionType illumCombine = this.illumCombine;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkPairwiseStitching");
+		final SparkConf conf = new SparkConf().setAppName("SparkLucasKanadePairwiseStitching");
 
 		if (localSparkBindAddress)
 		{
@@ -196,22 +169,21 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 		final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ), Math.min( Spark.maxPartitions, groupedPairs.size() ) );
 
-		final JavaRDD<Tuple2<int[][][], Spark.SerializablePairwiseStitchingResult>> rddResults = rdd.map( serializedGroupPair ->
+		final JavaRDD<Tuple2<int[][][], SerializablePairwiseStitchingResult>> rddResults = rdd.map( serializedGroupPair ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
 			final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
 			final ViewRegistrations vrs = data.getViewRegistrations();
 
-			final PairwiseStitchingParameters params = new PairwiseStitchingParameters();
-			params.doSubpixel = doSubpixel;
-			params.peaksToCheck = numPeaks;
+			final LucasKanadeParameters params = new LucasKanadeParameters(
+					modelType,
+					maxIterations,
+					minParameterChange,
+					false,
+					false,
+					0);
 
 			final GroupedViewAggregator gva = new GroupedViewAggregator();
-			//gva.addAction( ActionType.PICK_SPECIFIC, Illumination.class, new Illumination( 0 ) );
-			//gva.addAction( ActionType.PICK_SPECIFIC, Illumination.class, new Illumination( 1 ) );
-			gva.addAction( illumCombine, Illumination.class, null );
-			gva.addAction( channelCombine, Channel.class, null );
-
 			final ExecutorService serviceLocal = Executors.newFixedThreadPool( 1 );
 
 			// TODO: do non-equal transformation registration when views within a group have differing transformations
@@ -247,9 +219,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 			if (nonTranslationsEqual)
 			{
-				if ( PairwiseStitching.debug )
-					System.out.println( "non translations equal" );
-				result = TransformationTools.computeStitching(
+				result = TransformationTools.computeStitchingLucasKanade(
 						pair.getA(),
 						pair.getB(),
 						vrs,
@@ -261,7 +231,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			}
 			else
 			{
-				result = TransformationTools.computeStitchingNonEqualTransformations( 
+				result = TransformationTools.computeStitchingNonEqualTransformationsLucasKanade(
 						pair.getA(),
 						pair.getB(),
 						vrs,
@@ -270,8 +240,6 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 						gva,
 						ds,
 						serviceLocal );
-				if ( PairwiseStitching.debug )
-					System.out.println( "non translations NOT equal, using virtually fused views for stitching" );
 			}
 
 			serviceLocal.shutdown();
@@ -303,7 +271,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 								result.getA().getB(),
 								oldTransformHash );
 
-				return new Tuple2<>( serializedGroupPair, new Spark.SerializablePairwiseStitchingResult( pairwiseStitchingResult ) );
+				return new Tuple2<>( serializedGroupPair, new SerializablePairwiseStitchingResult( pairwiseStitchingResult ) );
 			}
 		});
 
@@ -352,41 +320,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			dataGlobal.getStitchingResults().setPairwiseResultForPair(psr.pair(), psr );
 		}
 
-		//
-		// now filter the results
-		//
-		final boolean doCorrelationFilter = true;
-		final double minR = this.minR;
-		final double maxR = this.maxR;
-
-		final boolean doAbsoluteShiftFilter = maxShiftX != null || maxShiftY != null || maxShiftZ != null;
-		final double[] maxShift = new double[] { 
-				maxShiftX == null ? Double.MAX_VALUE : maxShiftX,
-				maxShiftY == null ? Double.MAX_VALUE : maxShiftY,
-				maxShiftZ == null ? Double.MAX_VALUE : maxShiftZ };
-
-		final boolean doMagnitudeFilter = maxShiftTotal != null;
-		final double maxMag = maxShiftTotal == null ? Double.MAX_VALUE : maxShiftTotal;
-
-		System.out.println( new Date( System.currentTimeMillis() ) + ": Applying filter minR=" + minR );
-		System.out.println( new Date( System.currentTimeMillis() ) + ": Applying filter maxR=" + maxR );
-
-		if ( doAbsoluteShiftFilter )
-			System.out.println( new Date( System.currentTimeMillis() ) + ": Applying filter shift in X/Y/Z=" + Util.printCoordinates( maxShift ) );
-
-		if ( doMagnitudeFilter )
-			System.out.println( new Date( System.currentTimeMillis() ) + ": Applying filter total max shift=" + maxMag );
-
 		final FilteredStitchingResults fsr = new FilteredStitchingResults( dataGlobal.getStitchingResults(), null );
-
-		if (doCorrelationFilter)
-			fsr.addFilter(new FilteredStitchingResults.CorrelationFilter(minR, maxR));
-
-		if (doAbsoluteShiftFilter)
-			fsr.addFilter(new FilteredStitchingResults.AbsoluteShiftFilter(maxShift));
-
-		if (doMagnitudeFilter)
-			fsr.addFilter(new FilteredStitchingResults.ShiftMagnitudeFilter(maxMag));
 
 		fsr.applyToWrappedAll();
 
@@ -406,6 +340,6 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 	public static void main(final String... args) throws SpimDataException
 	{
 		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new SparkPairwiseStitching()).execute(args));
+		System.exit(new CommandLine(new SparkLucasKanadePairwiseStitching()).execute(args));
 	}
 }
