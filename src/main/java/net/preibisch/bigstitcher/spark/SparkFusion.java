@@ -100,73 +100,72 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private static final long serialVersionUID = -6103761116219617153L;
 
 	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
-	private String outputPathURIString = null;
+	String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
-	private StorageFormat storageType = null;
+	StorageFormat storageType = null;
 
 	@Option(names = "--blockScale", description = "how many blocks to use for a single processing step, e.g. 4,4,1 means for blockSize a 128,128,64 that each spark thread writes 512,512,64 (default: 4,4,1; NOT compatible with sharded containers)")
-	private String blockScaleString = null;
+	String blockScaleString = null;
 
 	@Option(names = { "--masks" }, description = "save only the masks (this will not fuse the images, currently only works for FusionMethod.AFFINE)")
-	private boolean masks = false;
+	boolean masks = false;
 
 	@Option(names = "--maskOffset", description = "allows to make masks larger (+, the mask will include some background) or smaller (-, some fused content will be cut off), warning: in the non-isotropic coordinate space of the raw input images (default: 0.0,0.0,0.0)")
-	private String maskOffset = "0.0,0.0,0.0";
+	String maskOffset = "0.0,0.0,0.0";
 
 	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, "/*AVG_CONTENT, AVG_BLEND_CONTENT*/+", MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
-	private FusionType fusionType = FusionType.AVG_BLEND;
+	FusionType fusionType = FusionType.AVG_BLEND;
 
 	@Option(names = {"-fm", "--fusionMethod"}, description = "The transformation models used for fusion, AFFINE or THIN_PLATE_SPLINE. TPS requires a split dataset with at least 2x2x2 split views (default: AFFINE).")
-	private FusionMethod fusionMethod = FusionMethod.AFFINE;
+	FusionMethod fusionMethod = FusionMethod.AFFINE;
 
 	@Option(names = { "-oe", "--overlapExpansion" }, description = "Number of pixels by which intervals are expanded when testing for overlap (default: 2 for FusionMethod.AFFINE; 50 for FusionMethod.THIN_PLATE_SPLINE).")
-	private Integer overlapExpansion = null;
+	Integer overlapExpansion = null;
 
 	@Option(names = { "-t", "--timepointIndex" }, description = "specify a specific timepoint index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
-	private Integer timepointIndex = null;
+	Integer timepointIndex = null;
 
 	@Option(names = { "-c", "--channelIndex" }, description = "specify a specific channel index of the output container that should be fused, usually you would also specify what --angleId, --tileId, ... or ViewIds -vi are being fused.")
-	private Integer channelIndex = null;
-
+	Integer channelIndex = null;
 
 	// To specify what goes into the current 3D volume
 	@Option(names = { "--angleId" }, description = "list the angle ids that should be processed, you can find them in the XML, e.g. --angleId '0,1,2' (default: all angles)")
-	protected String angleIds = null;
+	String angleIds = null;
 
 	@Option(names = { "--tileId" }, description = "list the tile ids that should be processed, you can find them in the XML, e.g. --tileId '0,1,2' (default: all tiles)")
-	protected String tileIds = null;
+	String tileIds = null;
 
 	@Option(names = { "--illuminationId" }, description = "list the illumination ids that should be processed, you can find them in the XML, e.g. --illuminationId '0,1,2' (default: all illuminations)")
-	protected String illuminationIds = null;
+	String illuminationIds = null;
 
 	@Option(names = { "--channelId" }, description = "list the channel ids that should be processed, you can find them in the XML (usually just one when fusing), e.g. --channelId '0,1,2' (default: all channels)")
-	protected String channelIds = null;
+	String channelIds = null;
 
 	@Option(names = { "--timepointId" }, description = "list the timepoint ids that should be processed, you can find them in the XML (usually just one when fusing), e.g. --timepointId '0,1,2' (default: all time points)")
-	protected String timepointIds = null;
+	String timepointIds = null;
 
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
-	protected String[] vi = null;
+	String[] vi = null;
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
-	protected boolean prefetch = false;
+	boolean prefetch = false;
 
 	// TODO: add support for loading coefficients during fusion
 	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
-	private String intensityN5PathURIString = null;
+	String intensityN5PathURIString = null;
 
 	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
-	private StorageFormat intensityN5StorageType = null;
+	StorageFormat intensityN5StorageType = null;
 
 	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
-	private String intensityN5Group = "";
+	String intensityN5Group = "";
 
 	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
-	private String intensityN5Dataset = "intensity";
+	String intensityN5Dataset = "intensity";
 
 	@Option(names = { "--group" }, description = "Container group path")
-	private String groupPath = "";
+	String groupPath = "";
 
 	URI outPathURI = null;
 	/**
@@ -220,6 +219,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		{
 			if ( outputPathURIString.toLowerCase().endsWith( ".zarr" ) )
 				storageType = StorageFormat.ZARR;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".zarr2" ) )
+				storageType = StorageFormat.ZARR2;
 			else if ( outputPathURIString.toLowerCase().endsWith( ".n5" ) )
 				storageType = StorageFormat.N5;
 			else if ( outputPathURIString.toLowerCase().endsWith( ".h5" ) || outPathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
@@ -446,6 +447,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			{
 				if ( intensityN5PathURIString.toLowerCase().endsWith( ".zarr" ) )
 					intensityN5StorageType = StorageFormat.ZARR;
+				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".zarr2" ) )
+					intensityN5StorageType = StorageFormat.ZARR2;
 				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".n5" ) )
 					intensityN5StorageType = StorageFormat.N5;
 				else if ( intensityN5PathURIString.toLowerCase().endsWith( ".h5" ) || intensityN5PathURI.toString().toLowerCase().endsWith( ".hdf5" ) )

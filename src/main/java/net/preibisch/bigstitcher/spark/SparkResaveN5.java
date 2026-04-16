@@ -459,7 +459,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			);
 
 			dataGlobal.getSequenceDescription().setImgLoader(
-					new AllenOMEZarrLoader( n5PathURI, StorageFormat.ZARR, dataGlobal.getSequenceDescription(), viewIdToPath )); // null is OK because the instance is not used now
+					new AllenOMEZarrLoader( n5PathURI, storageFormat, dataGlobal.getSequenceDescription(), viewIdToPath )); // null is OK because the instance is not used now
 		}
 
 		new XmlIoSpimData2().save( dataGlobal, xmlOutURI );

@@ -112,10 +112,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
 	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
 
-
 	@Option(names = { "--interestPointMergeDistance" }, description = "when grouping of views is selected, merge interest points within that radius in px (default: 5.0)")
 	protected Double interestPointMergeDistance = 5.0;
-
 
 	@Option(names = { "--groupIllums" }, description = "group all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to stitch illums as one (default: false)")
 	protected boolean groupIllums = false;
@@ -128,7 +126,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, e.g. for stabilization across time (default: false)")
 	protected boolean splitTimepoints = false;
-
 
 	@Option(names = { "-rit", "--ransacIterations" }, description = "max number of ransac iterations (default: 10,000 for descriptors, 200 for ICP)")
 	protected Integer ransacIterations = null;
@@ -146,7 +143,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "ransac perform multiconsensus matching (default: false)")
 	protected boolean ransacMultiConsensus = false;
 
-
 	@Option(names = { "-ime", "--icpMaxError" }, description = "ICP max error in pixels (default: 5.0)")
 	protected Double icpMaxError = 5.0;
 
@@ -155,7 +151,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "--icpUseRANSAC" }, description = "ICP uses RANSAC at every iteration to filter correspondences (default: false)")
 	protected boolean icpUseRANSAC = false;
-	
+
 	//@Option(names = { "-p", "--pairsPerSparkJob" }, description = "how many pairs of views are processed per spark job (default: 1)")
 	//protected Integer pairsPerSparkJob = 1;
 

@@ -72,7 +72,7 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	protected TransformationModel transformationModel = TransformationModel.AFFINE;
 
 	@Option(names = { "-rm", "--regularizationModel" }, description = "which regularization model to use; NONE, IDENTITY, TRANSLATION, RIGID or AFFINE (default: RIGID)")
-	protected RegularizationModel regularizationModel = RegularizationModel.RIGID;
+	protected RegularizationModel regularizationModel = RegularizationModel.NONE;
 
 	@Option(names = { "--lambda" }, description = "lamdba to use for regularization model (default: 0.1)")
 	protected Double regularizationLambda = 0.1;

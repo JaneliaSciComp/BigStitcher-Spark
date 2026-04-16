@@ -71,19 +71,19 @@ import scala.Tuple2;
 
 public class SparkLucasKanadePairwiseStitching extends AbstractSelectableViews
 {
-	private static final long serialVersionUID = 2745578960909812636L;
+	private static final long serialVersionUID = -1;
 
 	@Option(names = { "-ds", "--downsampling" }, required = false, description = "Define the downsampling at which the stitching should be performed, e.g. -ds 4,4,1 (default: 2,2,1)")
-	private String downsampling = "2,2,1";
+	String downsampling = "2,2,1";
 
 	@Option(names = { "--maxIterations" }, description = "Maximum number of Lucas-Kanade iterations (default: 100)")
-	private int maxIterations = 100;
+	int maxIterations = 100;
 
 	@Option(names = { "--minParameterChange" }, description = "Convergence threshold: minimum L2 norm of parameter update to continue iterating (default: 0.01)")
-	private double minParameterChange = 0.01;
+	double minParameterChange = 0.01;
 
 	@Option(names = { "--modelType" }, description = "Warp function / transformation model type: TRANSLATION, RIGID, or AFFINE (default: TRANSLATION)")
-	protected LucasKanadeParameters.WarpFunctionType modelType = LucasKanadeParameters.WarpFunctionType.TRANSLATION;
+	LucasKanadeParameters.WarpFunctionType modelType = LucasKanadeParameters.WarpFunctionType.TRANSLATION;
 
 	@Override
 	public Void call() throws Exception
@@ -111,7 +111,7 @@ public class SparkLucasKanadePairwiseStitching extends AbstractSelectableViews
 			System.out.println( "ViewSetup.getAttributes().size()=" + vd.getViewSetup().getAttributes().size() );
 		}
 
-		final long[] ds = Arrays.stream(downsampling.split(",")).map( st -> st.trim() ).mapToLong(Long::parseLong).toArray();
+		final long[] ds = Arrays.stream(downsampling.split(",")).map(String::trim).mapToLong(Long::parseLong).toArray();
 
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Downsampling used for stitching: " + Util.printCoordinates( ds ) );
 

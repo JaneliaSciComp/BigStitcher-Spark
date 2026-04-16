@@ -75,37 +75,37 @@ public class SparkPhaseCorrelationPairwiseStitching extends AbstractSelectableVi
 	private static final long serialVersionUID = 2745578960909812636L;
 
 	@Option(names = { "-ds", "--downsampling" }, required = false, description = "Define the downsampling at which the stitching should be performed, e.g. -ds 4,4,1 (default: 2,2,1)")
-	private String downsampling = "2,2,1";
+	String downsampling = "2,2,1";
 
 	@Option(names = { "-p", "--peaksToCheck" }, description = "number of peaks in phase correlation image to check with cross-correlation (default: 5)")
-	protected int peaksToCheck = 5;
+	int peaksToCheck = 5;
 
 	@Option(names = { "--disableSubpixelResolution" }, description = "do not use subpixel-accurate pairwise stitching")
-	protected boolean disableSubpixelResolution = false;
+	boolean disableSubpixelResolution = false;
 
 	@Option(names = { "--minR" }, description = "minimum required cross correlation between two images (default: 0.3)")
-	protected double minR = 0.3;
+	double minR = 0.3;
 
 	@Option(names = { "--maxR" }, description = "maximum cross correlation between two images for a pair to be valid; a typical example is that correlations of 1.0 should be omitted (default: 1.0 / nothing omitted)")
-	protected double maxR = 1.0;
+	double maxR = 1.0;
 
 	@Option(names = { "--maxShiftX" }, description = "maximum shift in X (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftX = null;
+	Double maxShiftX = null;
 
 	@Option(names = { "--maxShiftY" }, description = "maximum shift in Y (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftY = null;
+	Double maxShiftY = null;
 
 	@Option(names = { "--maxShiftZ" }, description = "maximum shift in Z (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftZ = null;
+	Double maxShiftZ = null;
 
 	@Option(names = { "--maxShiftTotal" }, description = "maximum shift (in pixels) between two images (total distance) that is allowed during pairwise comparison (default: any)")
-	protected Double maxShiftTotal = null;
+	Double maxShiftTotal = null;
 
 	@Option(names = { "--channelCombine" }, description = "defines how images of different channels of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: AVERAGE)")
-	protected ActionType channelCombine = ActionType.AVERAGE;
+	ActionType channelCombine = ActionType.AVERAGE;
 
 	@Option(names = { "--illumCombine" }, description = "defines how images of different illuminations of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: PICK_BRIGHTEST)")
-	protected ActionType illumCombine = ActionType.PICK_BRIGHTEST;
+	ActionType illumCombine = ActionType.PICK_BRIGHTEST;
 
 	@Override
 	public Void call() throws Exception
