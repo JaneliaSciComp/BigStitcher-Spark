@@ -108,10 +108,12 @@
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.0-alpha-10</n5.version>
-		<n5-imglib2.version>7.1.0-alpha-7</n5-imglib2.version>
-		<n5-universe.version>2.4.0-alpha-6</n5-universe.version>
-		<n5-zarr.version>2.0.0-alpha-7</n5-zarr.version>
+		<n5.version>4.0.0-alpha-12</n5.version>
+        <n5-aws-s3.version>4.4.0-alpha-9</n5-aws-s3.version>
+        <n5-hdf5.version>2.3.0-alpha-7</n5-hdf5.version>
+		<n5-imglib2.version>7.1.0-alpha-8</n5-imglib2.version>
+		<n5-universe.version>2.4.0-alpha-9</n5-universe.version>
+		<n5-zarr.version>2.0.0-alpha-8</n5-zarr.version>
 		<n5-zstandard.version>2.0.0-alpha-4</n5-zstandard.version>
 		<n5-blosc.version>2.0.0-alpha-4</n5-blosc.version>
 
@@ -184,7 +186,13 @@
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
-            <!-- <version>4.0.0</version> -->
+            <exclusions>
+                <!-- netty-all already provides all io.netty classes; exclude individual modules to avoid duplicate class conflicts -->
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- Scala is sensitive to fasterxml version -->
         <dependency>
