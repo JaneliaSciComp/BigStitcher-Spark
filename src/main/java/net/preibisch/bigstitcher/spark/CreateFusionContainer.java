@@ -19,6 +19,9 @@ import mpicbg.spim.data.registration.ViewRegistrations;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -473,8 +476,11 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
 					levelToMipmapTransform );
 
-			// save metadata
-			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
+			// save metadata - pre-serialize with null-excluding Gson so axes without a unit
+			// (e.g. channel) don't produce {"unit": null} in the .zattrs output
+			final Gson gsonNoNulls = new GsonBuilder().create();
+			final JsonElement metaJson = gsonNoNulls.toJsonTree( meta );
+			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", metaJson );
 		}
 
 		if ( bdv )
