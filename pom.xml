@@ -505,6 +505,11 @@
                                     <pattern>com.google.gson</pattern>
                                     <shadedPattern>org.janelia.saalfeldlab.com.google.gson</shadedPattern>
                                 </relocation>
+                                <!-- Protect newer commons-io from the old version (2.11.0) bundled with Spark -->
+                                <relocation>
+                                    <pattern>org.apache.commons.io</pattern>
+                                    <shadedPattern>net.preibisch.shaded.org.apache.commons.io</shadedPattern>
+                                </relocation>
                             </relocations>
                         </configuration>
                         <!-- binds by default to package phase -->

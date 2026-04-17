@@ -21,11 +21,17 @@
  */
 package net.preibisch.bigstitcher.spark.abstractcmdline;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 
 import mpicbg.models.AffineModel3D;
 import mpicbg.models.IdentityModel;
@@ -79,6 +85,9 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 
 	@Option(names = { "--lambda" }, description = "lamdba to use for regularization model (default: 0.1)")
 	protected Double regularizationLambda = 0.1;
+
+	@Option(names = { "--vsComparisonsFile" }, description = "path to a text file listing allowed view setup ID pairs (one pair per line, comma-separated), e.g. '0,1\\n1,2\\n2,3' (default: all-to-all)")
+	protected String vsComparisonsFile = null;
 
 	@Option(names = { "--maxPerPairLog" }, description = "max number of per-pair 'Connecting … <-> …' log lines printed by global registration before per-pair output is suppressed (the per-(labelA,labelB) summary is always emitted). Default: 1000")
 	protected int maxPerPairLog = InterestPointMatchCreator.maxPerPairLog;
@@ -193,6 +202,40 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			return new AllAgainstAllOverlap<>( 3 );
 		else
 			return new SimpleBoundingBoxOverlap<>( spimData );
+	}
+
+	public static HashSet< Pair< Integer, Integer > > parseVsComparisonsFile( final String filePath )
+	{
+		if ( filePath == null )
+			return null;
+
+		final HashSet< Pair< Integer, Integer > > pairs = new HashSet<>();
+
+		try ( final BufferedReader reader = new BufferedReader( new FileReader( filePath ) ) )
+		{
+			String line;
+			int lineNum = 0;
+			while ( (line = reader.readLine()) != null )
+			{
+				++lineNum;
+				line = line.trim();
+				if ( line.isEmpty() || line.startsWith( "#" ) )
+					continue;
+				final String[] parts = line.split( "," );
+				if ( parts.length != 2 )
+					throw new IllegalArgumentException( "vsComparisonsFile line " + lineNum + " must be 'vsIdA,vsIdB', got: '" + line + "'" );
+				final int a = Integer.parseInt( parts[0].trim() );
+				final int b = Integer.parseInt( parts[1].trim() );
+				pairs.add( new ValuePair<>( Math.min( a, b ), Math.max( a, b ) ) );
+			}
+		}
+		catch ( final IOException e )
+		{
+			throw new RuntimeException( "Could not read vsComparisonsFile '" + filePath + "': " + e.getMessage(), e );
+		}
+
+		System.out.println( "Loaded " + pairs.size() + " view setup ID comparison pairs from '" + filePath + "'." );
+		return pairs;
 	}
 
 }
