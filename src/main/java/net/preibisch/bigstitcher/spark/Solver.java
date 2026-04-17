@@ -21,6 +21,9 @@
  */
 package net.preibisch.bigstitcher.spark;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -151,6 +154,9 @@ public class Solver extends AbstractRegistration
 
 	@Option(names = { "-fv", "--fixedViews" }, description = "define a list of (or a single) fixed view ids (time point, view setup), e.g. -fv '0,0' -fv '0,1' (default: first view id)")
 	protected String[] fixedViews = null;
+
+	@Option(names = { "--vsComparisonsFile" }, description = "path to a text file listing allowed view setup ID pairs (one pair per line, comma-separated), e.g. '0,1\\n1,2\\n2,3' (default: all-to-all)")
+	protected String vsComparisonsFile = null;
 
 	//@Option(names = { "--enableMapbackViews" }, description = "enable mapping back of views (see --mapbackViews and --mapbackModel), requires --disableFixedViews.")
 	//protected boolean enableMapbackViews = false;
@@ -292,13 +298,16 @@ public class Solver extends AbstractRegistration
 		else // for grouping all we need here is the set of groups
 			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
 
+		// parse view setup ID comparison pairs from file (null = all-to-all)
+		final HashSet< Pair< Integer, Integer > > vsComparisonPairs = parseVsComparisonsFile( vsComparisonsFile );
+
 		final PointMatchCreator pmc;
 
 		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
-			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds );//new InterestPointMatchCreator( pairs );
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
 		else
-			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal);
+			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal, vsComparisonPairs);
 
 		if ( pmc == null )
 		{
@@ -408,9 +417,22 @@ public class Solver extends AbstractRegistration
 
 	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
-			final ArrayList< ViewId > viewIdsGlobal )
+			final ArrayList< ViewId > viewIdsGlobal,
+			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
+
+		if ( vsComparisonPairs != null )
+		{
+			final int before = results.size();
+			results = results.stream().filter( psr ->
+			{
+				final int vsA = psr.pair().getA().getViews().iterator().next().getViewSetupId();
+				final int vsB = psr.pair().getB().getViews().iterator().next().getViewSetupId();
+				return vsComparisonPairs.contains( new ValuePair<>( Math.min(vsA,vsB), Math.max(vsA,vsB) ) );
+			}).collect( Collectors.toList() );
+			System.out.println( "vsComparisons filter: kept " + results.size() + " of " + before + " stitching pairs." );
+		}
 
 		// filter bad hashes here
 		final int numLinksBefore = results.size();
@@ -447,7 +469,8 @@ public class Solver extends AbstractRegistration
 			final ArrayList< ViewId > viewIdsGlobal,
 			final Map< ViewId, ? extends Map< String, Double > > labelMap,
 			final Collection< Group< ViewId > > groups,
-			final HashSet< ViewId > fixedViewIds )
+			final HashSet< ViewId > fixedViewIds,
+			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		// load all interest points and correspondences
 		System.out.println( "Loading all relevant interest points (in parallel) ... ");
@@ -476,10 +499,20 @@ public class Solver extends AbstractRegistration
 			System.out.println( "\nSetting up all corresponding interest points (in parallel) ... ");
 
 			final ArrayList< Pair< ViewId, ViewId > > tasks = new ArrayList<>();
-	
+
 			for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
 				for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
-					tasks.add( new ValuePair<>( viewIdsGlobal.get( i ), viewIdsGlobal.get( j ) ) ); // order doesn't matter, saved symmetrically
+				{
+					final ViewId vA = viewIdsGlobal.get( i );
+					final ViewId vB = viewIdsGlobal.get( j );
+					if ( vsComparisonPairs != null )
+					{
+						final Pair< Integer, Integer > key = new ValuePair<>( Math.min( vA.getViewSetupId(), vB.getViewSetupId() ), Math.max( vA.getViewSetupId(), vB.getViewSetupId() ) );
+						if ( !vsComparisonPairs.contains( key ) )
+							continue;
+					}
+					tasks.add( new ValuePair<>( vA, vB ) ); // order doesn't matter, saved symmetrically
+				}
 
 			progress.set( 0 );
 
@@ -764,6 +797,40 @@ public class Solver extends AbstractRegistration
 		}
 
 		return true;
+	}
+
+	public static HashSet< Pair< Integer, Integer > > parseVsComparisonsFile( final String filePath )
+	{
+		if ( filePath == null )
+			return null;
+
+		final HashSet< Pair< Integer, Integer > > pairs = new HashSet<>();
+
+		try ( final BufferedReader reader = new BufferedReader( new FileReader( filePath ) ) )
+		{
+			String line;
+			int lineNum = 0;
+			while ( (line = reader.readLine()) != null )
+			{
+				++lineNum;
+				line = line.trim();
+				if ( line.isEmpty() || line.startsWith( "#" ) )
+					continue;
+				final String[] parts = line.split( "," );
+				if ( parts.length != 2 )
+					throw new IllegalArgumentException( "vsComparisonsFile line " + lineNum + " must be 'vsIdA,vsIdB', got: '" + line + "'" );
+				final int a = Integer.parseInt( parts[0].trim() );
+				final int b = Integer.parseInt( parts[1].trim() );
+				pairs.add( new ValuePair<>( Math.min( a, b ), Math.max( a, b ) ) );
+			}
+		}
+		catch ( final IOException e )
+		{
+			throw new RuntimeException( "Could not read vsComparisonsFile '" + filePath + "': " + e.getMessage(), e );
+		}
+
+		System.out.println( "Loaded " + pairs.size() + " view setup ID comparison pairs from '" + filePath + "'." );
+		return pairs;
 	}
 
 	public static void main(final String... args) throws SpimDataException
