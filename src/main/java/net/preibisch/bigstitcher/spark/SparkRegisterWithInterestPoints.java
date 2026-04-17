@@ -34,26 +34,23 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaRDD;
-import org.apache.spark.api.java.JavaSparkContext;
-
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
+import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.multithreading.SimpleMultiThreading;
+import net.imglib2.Dimensions;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching.Method;
 import net.preibisch.bigstitcher.spark.Solver.PreAlign;
-import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching.Method;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
+import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -61,6 +58,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.Global
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.GroupParameters.InterestpointGroupingType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -74,18 +72,22 @@ import net.preibisch.mvrecon.process.interestpointregistration.global.convergenc
 import net.preibisch.mvrecon.process.interestpointregistration.global.convergence.SimpleIterativeConvergenceStrategy;
 import net.preibisch.mvrecon.process.interestpointregistration.global.linkremoval.MaxErrorLinkRemoval;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
+import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools.MatchingTask;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
-import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
@@ -94,12 +96,17 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 {
 	private static final long serialVersionUID = -6719789753171652020L;
 
+	public enum MapBackModel { NONE, TRANSLATION, RIGID }
+
 	// -----------------------------------------------------------------------
 	// Interest point label(s)
 	// -----------------------------------------------------------------------
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
+
+	@Option(names = { "--labelWeight", "-lw" }, description = "weight per label for global optimization, e.g. -lw beads=1.0 -lw nuclei=0.001 (default: 1.0 for all)")
+	protected Map<String, Double> labelWeights = null;
 
 	// -----------------------------------------------------------------------
 	// Matching method and descriptor parameters
@@ -175,7 +182,7 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 	// -----------------------------------------------------------------------
 
 	@Option(names = { "-ime", "--icpMaxError" }, description = "ICP max error in pixels (default: 5.0)")
-	protected Double icpMaxError = 5.0;
+protected Double icpMaxError = 5.0;
 
 	@Option(names = { "-iit", "--icpIterations" }, description = "max number of ICP iterations (default: 200)")
 	protected Integer icpIterations = 200;
@@ -214,6 +221,23 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 	@Option(names = { "-fv", "--fixedViews" }, description = "define a list of fixed view ids (timepoint, viewSetup), e.g. -fv '0,0' -fv '0,1' (default: first view id per subset)")
 	protected String[] fixedViews = null;
 
+	// -----------------------------------------------------------------------
+	// Map-back parameters
+	// -----------------------------------------------------------------------
+
+	@Option(names = { "--mapBackModel" }, description = "map back transformations to a reference view; NONE, TRANSLATION or RIGID (default: NONE)")
+	protected MapBackModel mapBackModel = MapBackModel.NONE;
+
+	@Option(names = { "--mapBackView" }, description = "view to map back to as 'timepoint,setupId' e.g. '0,0' (default: first view per subset)")
+	protected String mapBackViewString = null;
+
+	// -----------------------------------------------------------------------
+	// Interest point grouping
+	// -----------------------------------------------------------------------
+
+	@Option(names = { "--interestpointGrouping" }, description = "interest point grouping when views are grouped; DO_NOT_GROUP or ADD_ALL (default: ADD_ALL)")
+	protected InterestpointGroupingType interestpointGrouping = InterestpointGroupingType.ADD_ALL;
+
 	@Override
 	public Void call() throws Exception
 	{
@@ -249,11 +273,14 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 		System.out.println( "Pairwise model = " + createModelInstance( transformationModel, regularizationModel, regularizationLambda ).getClass().getSimpleName() );
 		System.out.println( "globalOptType = " + globalOptType );
 		System.out.println( "preAlign = " + preAlign );
+		System.out.println( "registrationType = " + registrationTP );
+		System.out.println( "mapBackModel = " + mapBackModel );
+		System.out.println( "interestpointGrouping = " + interestpointGrouping );
 
-		// Build label map (one entry per label, weight 1.0 for matching phase)
+		// Build label map (one entry per label, with user-specified or default 1.0 weight)
 		final HashMap< String, Double > labelWeightMap = new HashMap<>();
 		for ( final String label : labels )
-			labelWeightMap.put( label, 1.0 );
+			labelWeightMap.put( label, labelWeights != null && labelWeights.containsKey( label ) ? labelWeights.get( label ) : 1.0 );
 
 		System.out.println( "labels & weights: " + labelWeightMap );
 
@@ -320,9 +347,14 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 
 		final JavaRDD< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, MatchingTask< ViewId > > > > rddResults;
 
-		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
+		final boolean hasGroups = groupTiles || groupIllums || groupChannels || splitTimepoints;
+
+		if ( !hasGroups || interestpointGrouping == InterestpointGroupingType.DO_NOT_GROUP )
 		{
-			System.out.println( "NO grouping." );
+			if ( hasGroups )
+				System.out.println( "Groups defined but interestpoint grouping is DO_NOT_GROUP, using ungrouped pairwise matching." );
+			else
+				System.out.println( "NO grouping." );
 
 			final ArrayList< MatchingTask< ViewId > > tasksList =
 					MatcherPairwiseTools.getTasksList( Spark.toViewIds( setup.getPairs() ), labelMapGlobal, matchAcrossLabels );
@@ -542,9 +574,6 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 			} );
 		}
 
-		rddResults.cache();
-		rddResults.count();
-
 		final List< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, MatchingTask< ViewId > > > > results = rddResults.collect();
 
 		sc.close();
@@ -555,23 +584,23 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 
 		System.out.println( "Adding corresponding interest points ..." );
 
-		for ( final ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, MatchingTask< ViewId > > > tupleList : results )
-			for ( final Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, MatchingTask< ViewId > > tuple : tupleList )
-			{
+		for ( final ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, MatchingTask< ViewId > > > tupleList : results ) {
+			for (final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>> tuple : tupleList) {
 				final ViewId vA = tuple._2().vA;
 				final ViewId vB = tuple._2().vB;
 				final String labelA = tuple._2().labelA;
 				final String labelB = tuple._2().labelB;
 
-				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelA );
-				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelB );
+				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get(vA).getInterestPointList(labelA);
+				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get(vB).getInterestPointList(labelB);
 
-				MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelA, labelB, listA, listB );
+				MatcherPairwiseTools.addCorrespondences(tuple._1(), vA, vB, labelA, labelB, listA, listB);
 			}
+		}
 
 		if ( !dryRun )
 		{
-			System.out.println( "Saving corresponding interest points (in parallel) ..." );
+			System.out.println( "Saving corresponding interest points ..." );
 
 			final ArrayList< Pair< ViewId, String > > allIps = new ArrayList<>();
 			for ( final ViewId v : viewIdsGlobal )
@@ -579,7 +608,7 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 					allIps.add( new ValuePair<>( v, l ) );
 
 			final Map< ViewId, ViewInterestPointLists > ip = dataGlobal.getViewInterestPoints().getViewInterestPoints();
-			allIps.parallelStream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( true ) );
+			allIps.stream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( false ) );
 		}
 
 		// -----------------------------------------------------------------------
@@ -656,9 +685,8 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 					fixedViewIds,
 					groups );
 		}
-		else
+		else if (globalOptType == GlobalOptType.TWO_ROUND_SIMPLE || globalOptType == GlobalOptType.TWO_ROUND_ITERATIVE)
 		{
-			// TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE
 			final double relThresh = ( globalOptType == GlobalOptType.TWO_ROUND_SIMPLE ) ? Double.MAX_VALUE : relativeThreshold;
 			final double absThresh = ( globalOptType == GlobalOptType.TWO_ROUND_SIMPLE ) ? Double.MAX_VALUE : absoluteThreshold;
 			Collection< Pair< Group< ViewId >, Group< ViewId > > > removedInconsistentPairs = new ArrayList<>();
@@ -678,6 +706,10 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 					new ConvergenceStrategy( Double.MAX_VALUE ),
 					fixedViewIds,
 					groups );
+		} else {
+			// NO_OPTIMIZATION
+			System.out.println( "No optimization was selected." );
+			return null;
 		}
 
 		if ( models == null || models.isEmpty() )
@@ -686,9 +718,34 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 			return null;
 		}
 
-		SimpleMultiThreading.threadWait( 100 );
-
 		System.out.println( "\nFinal models: " + models.size() );
+
+		// compute map-back transform if requested
+		AffineTransform3D mapBack = null;
+		if ( mapBackModel != MapBackModel.NONE )
+		{
+			final Model< ? > mbModel = ( mapBackModel == MapBackModel.TRANSLATION )
+					? new TranslationModel3D() : new RigidModel3D();
+
+			final ViewId mapBackViewId;
+			if ( mapBackViewString != null )
+				mapBackViewId = Import.getViewIds( new String[] { mapBackViewString } ).get( 0 );
+			else
+				mapBackViewId = viewIdsGlobal.get( 0 );
+
+			final Dimensions dims = dataGlobal.getSequenceDescription()
+					.getViewDescription( mapBackViewId ).getViewSetup().getSize();
+			final AffineTransform3D origReg = dataGlobal.getViewRegistrations()
+					.getViewRegistration( mapBackViewId ).getModel();
+
+			mapBack = TransformationTools.computeMapBackModel(
+					dims, origReg, (AbstractModel< ? >) models.get( mapBackViewId ).getModel(), mbModel );
+
+			if ( mapBack != null )
+				System.out.println( "Map-back model (" + mapBackModel + " to " + Group.pvid( mapBackViewId ) + "): " + mapBack );
+			else
+				System.out.println( "WARNING: Could not compute map-back model." );
+		}
 
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
@@ -696,7 +753,7 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
 			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
 
-			TransformationTools.storeTransformation( vr, viewId, tile, null, model.getClass().getSimpleName() );
+			TransformationTools.storeTransformation( vr, viewId, tile, mapBack, model.getClass().getSimpleName() );
 
 			final String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D< ? >) tile.getModel() );
 

@@ -55,6 +55,7 @@ The `install` script:
 - n5-blosc: 2.0.0-alpha-4
 
 **Core Libraries**:
+- Java: 8
 - multiview-reconstruction: 9.0.0-SNAPSHOT (must be installed locally)
 - Apache Spark: 3.3.2
 - Scala: 2.12.15
