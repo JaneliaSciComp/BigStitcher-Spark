@@ -268,12 +268,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
 
-		if ( dataGlobal == null )
-		{
-			System.out.println( "Could not load XML from:" + xmlURI );
-			return null;
-		}
-
 		if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 		{
 			if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND )
@@ -646,7 +640,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						final List< ViewId > overlappingViews =
 								OverlappingViews.findOverlappingViews( dataLocal, viewIds, registrations, fusedBlock, overlapExpansion );
 
-						if ( overlappingViews.size() == 0 )
+						if ( overlappingViews.isEmpty() )
 							return gridBlock.clone();
 
 						// load intensity correction coefficients for all overlapping views
@@ -726,7 +720,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										1, // linear interpolation
 										coefficients, // intensity correction
 										new BoundingBox( interval ),
-                                        type,
+										(RealType & NativeType)type,
 										blockSize );
 							}
 							else
@@ -743,7 +737,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										null, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
 										coefficients, // intensity correction
 										new BoundingBox( interval ), // already adjusted for anisotropy???
-                                        type,
+										(RealType & NativeType)type,
 										blockSize );
 							}
 						}
