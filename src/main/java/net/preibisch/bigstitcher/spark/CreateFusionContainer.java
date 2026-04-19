@@ -531,8 +531,8 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			{
 				viewIdToPath = new HashMap<>();
 
-				for ( int c = 0; c < numChannels; ++c )
-					for ( int t = 0; t < numTimepoints; ++t )
+				for ( int t = 0; t < numTimepoints; ++t )
+					for ( int c = 0; c < numChannels; ++c )
 					{
 						final OMEZARREntry omeZarrEntry = new OMEZARREntry(
 								mrInfos[ t ][ c ].dataset.substring(0, mrInfos[ t ][ c ].dataset.lastIndexOf( "/" ) ),
