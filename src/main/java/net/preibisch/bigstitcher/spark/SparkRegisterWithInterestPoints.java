@@ -48,6 +48,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.Solver.PreAlign;
+import net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching.CenterOfMassType;
 import net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching.Method;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -112,8 +113,11 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 	// Matching method and descriptor parameters
 	// -----------------------------------------------------------------------
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP or CENTER_OF_MASS")
 	protected Method registrationMethod = null;
+
+	@Option(names = { "--centerOfMassType" }, description = "type of center of mass computation; AVERAGE or MEDIAN (default: AVERAGE, only used with CENTER_OF_MASS method)")
+	protected CenterOfMassType centerOfMassType = CenterOfMassType.AVERAGE;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compared to the second best one (default: 3.0)")
 	protected Double significance = 3.0;
@@ -155,7 +159,7 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 	@Option(names = { "--groupTiles" }, description = "group all tiles that belong to the same angle/channel/illumination/timepoint together as one view (default: false)")
 	protected boolean groupTiles = false;
 
-	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View (default: false)")
+	@Option(names = { "--splitTimepoints", "--groupTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, i.e. consider each timepoint as rigid unit (default: false)")
 	protected boolean splitTimepoints = false;
 
 	// -----------------------------------------------------------------------
@@ -194,7 +198,7 @@ protected Double icpMaxError = 5.0;
 	// Global optimization parameters
 	// -----------------------------------------------------------------------
 
-	@Option(names = { "--globalOptType" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE (default: ONE_ROUND_ITERATIVE)")
+	@Option(names = { "--globalOptType" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE, TWO_ROUND_ITERATIVE or NO_OPTIMIZATION (default: ONE_ROUND_ITERATIVE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_ITERATIVE;
 
 	@Option(names = { "-pa", "--preAlign" }, description = "whether to pre-align before solving (PREALIGN) or initialize with current transformations (NO_PREALIGN) (default: PREALIGN)")
@@ -257,8 +261,19 @@ protected Double icpMaxError = 5.0;
 			return null;
 		}
 
+		if ( registrationMethod == Method.CENTER_OF_MASS && ( redundancy != 1 || significance != 3.0 || numNeighbors != 3 ) )
+		{
+			System.out.println( "CENTER_OF_MASS does not support parameters redundancy, significance and numNeighbors." );
+			return null;
+		}
+
 		// Set RANSAC defaults based on method
-		if ( ransacIterations == null && registrationMethod == Method.ICP )
+		if ( ransacIterations == null && registrationMethod == Method.CENTER_OF_MASS )
+		{
+			ransacIterations = 0;
+			ransacMaxError = 0.0;
+		}
+		else if ( ransacIterations == null && registrationMethod == Method.ICP )
 		{
 			ransacIterations = 200;
 			ransacMaxError = 2.5;
@@ -325,6 +340,7 @@ protected Double icpMaxError = 5.0;
 		final int redundancy = this.redundancy;
 		final int numNeighbors = this.numNeighbors;
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
+		final int centerOfMassTypeInt = this.centerOfMassType.ordinal();
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel = this.regularizationModel;
 		final double lambda = this.regularizationLambda;
@@ -412,7 +428,8 @@ protected Double icpMaxError = 5.0;
 						rp, registrationMethod, model,
 						numNeighbors, redundancy, ratioOfDistance,
 						limitSearchRadius, searchRadius,
-						icpMaxError, icpMaxIterations, icpUseRANSAC );
+						icpMaxError, icpMaxIterations, icpUseRANSAC,
+						centerOfMassTypeInt );
 
 				final PairwiseResult< InterestPoint > result =
 						MatcherPairwiseTools.getCallables(Collections.singletonList(task), interestpoints, matcher ).get( 0 ).call().getB();
@@ -515,7 +532,8 @@ protected Double icpMaxError = 5.0;
 						rp, registrationMethod, model,
 						numNeighbors, redundancy, ratioOfDistance,
 						limitSearchRadius, searchRadius,
-						icpMaxError, icpMaxIterations, icpUseRANSAC );
+						icpMaxError, icpMaxIterations, icpUseRANSAC,
+						centerOfMassTypeInt );
 
 				final PairwiseResult< GroupedInterestPoint< ViewId > > result =
 						MatcherPairwiseTools.getCallables( Arrays.asList( task ), groupedInterestpoints, matcher ).get( 0 ).call().getB();
@@ -707,60 +725,62 @@ protected Double icpMaxError = 5.0;
 					fixedViewIds,
 					groups );
 		} else {
-			// NO_OPTIMIZATION
-			System.out.println( "No optimization was selected." );
-			return null;
+			// NO_OPTIMIZATION - skip global opt but still save correspondences and XML
+			System.out.println( "No optimization was selected, correspondences saved." );
+			models = null;
 		}
 
-		if ( models == null || models.isEmpty() )
+		if ( models != null && !models.isEmpty() )
+		{
+			System.out.println( "\nFinal models: " + models.size() );
+
+			// compute map-back transform if requested
+			AffineTransform3D mapBack = null;
+			if ( mapBackModel != MapBackModel.NONE )
+			{
+				final Model< ? > mbModel = ( mapBackModel == MapBackModel.TRANSLATION )
+						? new TranslationModel3D() : new RigidModel3D();
+
+				final ViewId mapBackViewId;
+				if ( mapBackViewString != null )
+					mapBackViewId = Import.getViewIds( new String[] { mapBackViewString } ).get( 0 );
+				else
+					mapBackViewId = viewIdsGlobal.get( 0 );
+
+				final Dimensions dims = dataGlobal.getSequenceDescription()
+						.getViewDescription( mapBackViewId ).getViewSetup().getSize();
+				final AffineTransform3D origReg = dataGlobal.getViewRegistrations()
+						.getViewRegistration( mapBackViewId ).getModel();
+
+				mapBack = TransformationTools.computeMapBackModel(
+						dims, origReg, (AbstractModel< ? >) models.get( mapBackViewId ).getModel(), mbModel );
+
+				if ( mapBack != null )
+					System.out.println( "Map-back model (" + mapBackModel + " to " + Group.pvid( mapBackViewId ) + "): " + mapBack );
+				else
+					System.out.println( "WARNING: Could not compute map-back model." );
+			}
+
+			for ( final ViewId viewId : viewIdsGlobal )
+			{
+				System.out.println( Group.pvid( viewId ) );
+				final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
+				final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
+
+				TransformationTools.storeTransformation( vr, viewId, tile, mapBack, model.getClass().getSimpleName() );
+
+				final String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D< ? >) tile.getModel() );
+
+				if ( tile.getModel() instanceof RigidModel3D )
+					System.out.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D) tile.getModel() ) );
+				else
+					System.out.println( output + ", " + TransformationTools.getScaling( (Affine3D< ? >) tile.getModel() ) );
+			}
+		}
+		else if ( globalOptType != GlobalOptType.NO_OPTIMIZATION )
 		{
 			System.out.println( "No transformations could be found, stopping." );
 			return null;
-		}
-
-		System.out.println( "\nFinal models: " + models.size() );
-
-		// compute map-back transform if requested
-		AffineTransform3D mapBack = null;
-		if ( mapBackModel != MapBackModel.NONE )
-		{
-			final Model< ? > mbModel = ( mapBackModel == MapBackModel.TRANSLATION )
-					? new TranslationModel3D() : new RigidModel3D();
-
-			final ViewId mapBackViewId;
-			if ( mapBackViewString != null )
-				mapBackViewId = Import.getViewIds( new String[] { mapBackViewString } ).get( 0 );
-			else
-				mapBackViewId = viewIdsGlobal.get( 0 );
-
-			final Dimensions dims = dataGlobal.getSequenceDescription()
-					.getViewDescription( mapBackViewId ).getViewSetup().getSize();
-			final AffineTransform3D origReg = dataGlobal.getViewRegistrations()
-					.getViewRegistration( mapBackViewId ).getModel();
-
-			mapBack = TransformationTools.computeMapBackModel(
-					dims, origReg, (AbstractModel< ? >) models.get( mapBackViewId ).getModel(), mbModel );
-
-			if ( mapBack != null )
-				System.out.println( "Map-back model (" + mapBackModel + " to " + Group.pvid( mapBackViewId ) + "): " + mapBack );
-			else
-				System.out.println( "WARNING: Could not compute map-back model." );
-		}
-
-		for ( final ViewId viewId : viewIdsGlobal )
-		{
-			System.out.println( Group.pvid( viewId ) );
-			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
-			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
-
-			TransformationTools.storeTransformation( vr, viewId, tile, mapBack, model.getClass().getSimpleName() );
-
-			final String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D< ? >) tile.getModel() );
-
-			if ( tile.getModel() instanceof RigidModel3D )
-				System.out.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D) tile.getModel() ) );
-			else
-				System.out.println( output + ", " + TransformationTools.getScaling( (Affine3D< ? >) tile.getModel() ) );
 		}
 
 		if ( !dryRun )

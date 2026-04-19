@@ -63,6 +63,8 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.centerofmass.CenterOfMassPairwise;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.centerofmass.CenterOfMassParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
@@ -80,13 +82,17 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
-	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP };
+	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP, CENTER_OF_MASS };
+	public enum CenterOfMassType { AVERAGE, MEDIAN };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP or CENTER_OF_MASS")
 	protected Method registrationMethod = null;
+
+	@Option(names = { "--centerOfMassType" }, description = "type of center of mass computation; AVERAGE or MEDIAN (default: AVERAGE, only used with CENTER_OF_MASS method)")
+	protected CenterOfMassType centerOfMassType = CenterOfMassType.AVERAGE;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
 	protected Double significance = 3.0;
@@ -174,7 +180,18 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			return null;
 		}
 
-		if ( ransacIterations == null && registrationMethod == Method.ICP )
+		if ( registrationMethod == Method.CENTER_OF_MASS && ( redundancy != 1 || significance != 3.0 || numNeighbors != 3 ))
+		{
+			System.out.println( "CENTER_OF_MASS does not support parameters redundancy, significance and numNeighbors" );
+			return null;
+		}
+
+		if ( ransacIterations == null && registrationMethod == Method.CENTER_OF_MASS )
+		{
+			ransacIterations = 0;
+			ransacMaxError = 0.0;
+		}
+		else if ( ransacIterations == null && registrationMethod == Method.ICP )
 		{
 			ransacIterations = 200;
 			ransacMaxError = 2.5;
@@ -232,6 +249,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final int redundancy = this.redundancy;
 		final int numNeighbors = this.numNeighbors;
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
+		final int centerOfMassTypeInt = this.centerOfMassType.ordinal();
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel = this.regularizationModel;
 		final double lambda = this.regularizationLambda;
@@ -319,7 +337,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						searchRadius,
 						icpMaxError,
 						icpMaxIterations,
-						icpUseRANSAC);
+						icpUseRANSAC,
+						centerOfMassTypeInt);
 
 				// compute single pairwise match
 				final PairwiseResult<InterestPoint> result =
@@ -443,7 +462,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						searchRadius,
 						icpMaxError,
 						icpMaxIterations,
-						icpUseRANSAC);
+						icpUseRANSAC,
+						centerOfMassTypeInt);
 
 				// compute single pairwise match
 				final PairwiseResult<GroupedInterestPoint<ViewId>> result =
@@ -573,7 +593,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final double searchRadius,
 			final double icpMaxDistance,
 			final int icpMaxIterations,
-			final boolean icpUseRANSAC )
+			final boolean icpUseRANSAC,
+			final int centerOfMassType )
 	{
 		MatcherPairwise< I > matcher;
 
@@ -603,6 +624,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					numNeighbors,
 					redundancy);
 			matcher = new RGLDMPairwise<>( rp, dp );
+		}
+		else if ( registrationMethod == Method.CENTER_OF_MASS )
+		{
+			matcher = new CenterOfMassPairwise<>( new CenterOfMassParameters( centerOfMassType ) );
 		}
 		else
 		{
