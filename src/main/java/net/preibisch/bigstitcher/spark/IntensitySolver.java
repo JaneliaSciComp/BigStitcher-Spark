@@ -27,25 +27,25 @@ import util.URITools;
 public class IntensitySolver extends AbstractSelectableViews {
 
 	@CommandLine.Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
-	private String numCoefficientsString = "8,8,8";
+	String numCoefficientsString = "8,8,8";
 
 	@CommandLine.Option(names = { "--matchesPath" }, required = true, description = "path (URI) for loading pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
-	private String matchesPathURIString = null;
+	String matchesPathURIString = null;
 
 	@CommandLine.Option(names = { "--maxIterations" }, description = "max number of iterations for solve (default: 1000)")
-	private Integer maxIterations = 1000;
+	Integer maxIterations = 1000;
 
 	@CommandLine.Option(names = { "-o", "--intensityN5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving coefficients (e.g. s3://myBucket/coefficients.n5)")
-	private String outputPathURIString = null;
+	String outputPathURIString = null;
 
 	@CommandLine.Option(names = {"-s", "--intensityN5Storage"}, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending)")
-	private StorageFormat storageType = null;
+	StorageFormat storageType = null;
 
 	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
-	private String outputGroup = "";
+	String outputGroup = "";
 
 	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
-	private String outputDataset = "intensity";
+	String outputDataset = "intensity";
 
 	@Override
 	public Void call() throws Exception
