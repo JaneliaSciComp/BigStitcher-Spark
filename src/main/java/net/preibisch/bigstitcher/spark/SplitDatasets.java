@@ -101,6 +101,12 @@ public class SplitDatasets extends AbstractBasic
 	@Option(names = "--maxCorrespondences", description = "split threshold for oct-tree (default: 20)")
 	private int maxCorrespondences = 20;
 
+	@Option(names = "--tolerance", description = "tolerance mode for consensus criterion: NONE, PERCENTAGE, or COUNT (default: PERCENTAGE)")
+	private ConsensusSetCriterion.ToleranceMode tolerance = ConsensusSetCriterion.ToleranceMode.PERCENTAGE;
+
+	@Option(names = "--toleranceValue", description = "tolerance value: percentage (e.g. 10.0 for 10%%) or absolute count depending on --tolerance (default: 10.0)")
+	private double toleranceValue = 10.0;
+
 	@Option(names = "--minSizeMultiplier", description = "min tile size multiplier for oct-tree (default: 4)")
 	private int minSizeMultiplier = 4;
 
@@ -724,7 +730,7 @@ public class SplitDatasets extends AbstractBasic
 		{
 			criterion = new ConsensusSetCriterion(
 					data, trimmedLabels, maxCorrespondences,
-					ConsensusSetCriterion.TOLERANCE_PERCENTAGE, 10.0 );
+					tolerance, toleranceValue );
 		}
 		else
 		{
