@@ -65,6 +65,7 @@ import net.preibisch.mvrecon.process.splitting.SplitResult;
 import net.preibisch.mvrecon.process.splitting.SplitView;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import net.preibisch.stitcher.gui.StitchingExplorer;
+import scala.Tuple2;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -171,8 +172,11 @@ public class SplitDatasets extends AbstractBasic
 		for ( final String size : imgSizes.getA().keySet() )
 			IOFunctions.println( imgSizes.getA().get( size ) + "x: " + size );
 
-		// Create splitter based on method
-		final SplitView splitting = createSplitView( dataGlobal, minStepSize );
+		// Create splitter on driver (for maxIntervalSpread and description)
+		final SplitView splitting = createSplitView( xmlURI, minStepSize, splitMethod,
+				targetImageSizeString, targetOverlapString, !disableOptimization,
+				labelsString, criterionType, maxCorrespondences, tolerance, toleranceValue,
+				minSizeMultiplier, minSplitLevels );
 		if ( splitting == null )
 			return null;
 
@@ -194,26 +198,77 @@ public class SplitDatasets extends AbstractBasic
 		final ImgLoader underlyingImgLoader = dataGlobal.getSequenceDescription().getImgLoader();
 		dataGlobal.getSequenceDescription().setImgLoader( null ); // not needed during processing
 
-		// ==================== 2. Phase 1: Splitting ====================
+		// ==================== Create Spark context ====================
+		final SparkConf conf = new SparkConf().setAppName( "SplitDatasets" );
+		if ( localSparkBindAddress )
+		{
+			conf.set( "spark.driver.bindAddress", "127.0.0.1" );
+			conf.set( "spark.driver.host", "localhost" );
+			org.apache.spark.util.Utils.setCustomHostname( "localhost" );
+		}
+
+		final JavaSparkContext sc = new JavaSparkContext( conf );
+		sc.setLogLevel( "ERROR" );
+
+		try
+		{
+
+		// ==================== 2. Phase 1: Splitting (via Spark) ====================
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 1 - Computing split intervals..." );
 
 		final Map< Integer, ArrayList< Interval > > splitResults = new HashMap<>();
-		final TimePoint firstTP = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 );
+		final int firstTPId = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 ).getId();
 
+		// Capture config for executor-side SplitView creation
+		final URI finalXmlURI = xmlURI;
+		final long[] finalMinStepSize = minStepSize.clone();
+		final String finalSplitMethod = splitMethod;
+		final String finalCriterionType = criterionType;
+		final String finalLabelsString = labelsString;
+		final int finalMaxCorrespondences = maxCorrespondences;
+		final ConsensusSetCriterion.ToleranceMode finalTolerance = tolerance;
+		final double finalToleranceValue = toleranceValue;
+		final int finalMinSizeMultiplier = minSizeMultiplier;
+		final int finalMinSplitLevels = minSplitLevels;
+		final String finalTargetImageSizeString = targetImageSizeString;
+		final String finalTargetOverlapString = targetOverlapString;
+		final boolean finalOptimize = !disableOptimization;
+
+		// Build jobs: [setupId, timepointId]
+		final ArrayList< int[] > phase1Jobs = new ArrayList<>();
 		for ( final ViewSetup oldSetup : oldSetups )
+			phase1Jobs.add( new int[]{ oldSetup.getId(), firstTPId } );
+
+		final JavaRDD< int[] > phase1RDD = sc.parallelize(
+				phase1Jobs, Math.min( Spark.maxPartitions, phase1Jobs.size() ) );
+
+		final JavaRDD< Tuple2< Integer, SplitResult > > phase1Results = phase1RDD.map( job ->
 		{
-			final ViewId viewId = new ViewId( firstTP.getId(), oldSetup.getId() );
-			final SplitResult result = splitting.split( viewId );
+			final int setupId = job[ 0 ];
+			final int tpId = job[ 1 ];
+
+			final SplitView localSplitting = createSplitView( finalXmlURI, finalMinStepSize, finalSplitMethod,
+					finalTargetImageSizeString, finalTargetOverlapString, finalOptimize,
+					finalLabelsString, finalCriterionType, finalMaxCorrespondences, finalTolerance, finalToleranceValue,
+					finalMinSizeMultiplier, finalMinSplitLevels );
+
+			final SplitResult result = localSplitting.split( new ViewId( tpId, setupId ) );
 
 			if ( result == null )
-			{
-				IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + oldSetup.getId() );
-				return null;
-			}
+				throw new RuntimeException( "Splitting failed for ViewSetup " + setupId );
 
-			IOFunctions.println( "ViewId " + oldSetup.getId() + ": " + result.numIntervals + " tiles" );
-			splitResults.put( oldSetup.getId(), result.intervals );
+			System.out.println( "ViewId " + setupId + ": " + result.numIntervals + " tiles" );
+			return new Tuple2<>( setupId, result );
+		});
+
+		// Collect results on driver
+		for ( final Tuple2< Integer, SplitResult > entry : phase1Results.collect() )
+		{
+			IOFunctions.println( "ViewId " + entry._1() + ": " + entry._2().numIntervals + " tiles" );
+			splitResults.put( entry._1(), entry._2().getIntervals() );
 		}
+
+		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 1 complete. " + splitResults.size() + " setups split." );
 
 		// ==================== 3. Pre-compute ID ranges on driver ====================
 		final Map< Integer, Integer > setupIdStart = new LinkedHashMap<>();
@@ -228,20 +283,6 @@ public class SplitDatasets extends AbstractBasic
 
 		// ==================== 4. Phase 2: Post-processing via Spark ====================
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 2 - Processing interest points via Spark..." );
-
-		final SparkConf conf = new SparkConf().setAppName( "SplitDatasets" );
-		if ( localSparkBindAddress )
-		{
-			conf.set( "spark.driver.bindAddress", "127.0.0.1" );
-			conf.set( "spark.driver.host", "localhost" );
-			org.apache.spark.util.Utils.setCustomHostname( "localhost" );
-		}
-
-		final JavaSparkContext sc = new JavaSparkContext( conf );
-		sc.setLogLevel( "ERROR" );
-
-		try
-		{
 			// Serialize job list for Phase 2: one job per setup
 			// Each job is: [oldSetupId, idRangeStart]
 			final ArrayList< int[] > phase2Jobs = new ArrayList<>();
@@ -260,7 +301,6 @@ public class SplitDatasets extends AbstractBasic
 			}
 
 			// Capture final variables for lambda serialization
-			final URI finalXmlURI = xmlURI;
 			final int finalMaxIntervalSpread = maxIntervalSpread;
 			final boolean finalAssignIlluminations = assignIlluminations;
 			final InterestPointAdding finalIpAdding = fakeInterestPoints;
@@ -646,103 +686,90 @@ public class SplitDatasets extends AbstractBasic
 	}
 
 	/**
-	 * Create the appropriate SplitView based on the --splitMethod option.
+	 * Create a SplitView from a URI and configuration parameters.
+	 * Can be called on both the driver and Spark executors.
 	 */
-	protected SplitView createSplitView( final SpimData2 data, final long[] minStepSize )
+	public static SplitView createSplitView(
+			final URI xmlURI,
+			final long[] minStepSize,
+			final String splitMethod,
+			// uniform params
+			final String targetImageSizeString,
+			final String targetOverlapString,
+			final boolean optimize,
+			// oct-tree params
+			final String labelsString,
+			final String criterionType,
+			final int maxCorrespondences,
+			final ConsensusSetCriterion.ToleranceMode tolerance,
+			final double toleranceValue,
+			final int minSizeMultiplier,
+			final int minSplitLevels ) throws SpimDataException
 	{
+		final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+
 		if ( "octtree".equalsIgnoreCase( splitMethod ) )
 		{
-			return createOctTreeSplitter( data, minStepSize );
-		}
-		else
-		{
-			return createUniformSplitter( data, minStepSize );
-		}
-	}
-
-	/**
-	 * Create a SplitDistributeEvenly for uniform splitting.
-	 */
-	protected SplitView createUniformSplitter( final SpimData2 data, final long[] minStepSize )
-	{
-		if ( targetImageSizeString == null || targetOverlapString == null )
-		{
-			IOFunctions.printErr( "ERROR: --targetImageSize and --targetOverlap are required for uniform splitting." );
-			return null;
-		}
-
-		final int[] targetImageSize = Import.csvStringToIntArray( targetImageSizeString );
-		final int[] targetOverlap = Import.csvStringToIntArray( targetOverlapString );
-
-		// Adjust to be divisible by minStepSize
-		final long[] adjustedSize = new long[ 3 ];
-		final long[] adjustedOverlap = new long[ 3 ];
-		for ( int d = 0; d < 3; d++ )
-		{
-			adjustedSize[ d ] = SplitDistributeEvenly.closestLargerLongDivisableBy( targetImageSize[ d ], minStepSize[ d ] );
-			adjustedOverlap[ d ] = SplitDistributeEvenly.closestLargerLongDivisableBy( targetOverlap[ d ], minStepSize[ d ] );
-		}
-
-		System.out.println( "Target image sizes and overlaps need be adjusted to be divisible by " + Arrays.toString( minStepSize ) );
-		System.out.println( "Adjusted target image size: " + Arrays.toString( adjustedSize ) );
-		System.out.println( "Adjusted target overlap: " + Arrays.toString( adjustedOverlap ) );
-
-		for ( int d = 0; d < 3; d++ )
-		{
-			if ( adjustedOverlap[ d ] > adjustedSize[ d ] )
+			if ( labelsString == null )
 			{
-				System.out.println( "overlap cannot be bigger than size." );
+				IOFunctions.printErr( "ERROR: --labels is required for oct-tree splitting." );
 				return null;
 			}
-		}
 
-		return new SplitDistributeEvenly( data, adjustedOverlap, adjustedSize, minStepSize, !disableOptimization );
-	}
+			final Set< String > trimmedLabels = new HashSet<>();
+			for ( final String l : labelsString.split( "," ) )
+				trimmedLabels.add( l.trim() );
 
-	/**
-	 * Create a SplitOctTree for oct-tree splitting.
-	 */
-	protected SplitView createOctTreeSplitter( final SpimData2 data, final long[] minStepSize )
-	{
-		if ( labelsString == null )
-		{
-			IOFunctions.printErr( "ERROR: --labels is required for oct-tree splitting." );
-			return null;
-		}
+			final OctTreeSplitCriterion criterion;
+			if ( "consensus".equalsIgnoreCase( criterionType ) )
+				criterion = new ConsensusSetCriterion( data, trimmedLabels, maxCorrespondences, tolerance, toleranceValue );
+			else
+				criterion = new CrossViewCorrespondenceCriterion( data, trimmedLabels, maxCorrespondences );
 
-		final Set< String > labels = new HashSet<>( Arrays.asList( labelsString.split( "," ) ) );
-		for ( String label : labels )
-			label = label.trim();
+			final List< ViewId > allViewIds = new ArrayList<>();
+			for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
+				if ( vd.isPresent() )
+					allViewIds.add( vd );
 
-		// Trim labels properly
-		final Set< String > trimmedLabels = new HashSet<>();
-		for ( final String label : labels )
-			trimmedLabels.add( label.trim() );
+			final double avgAnisoF = net.preibisch.mvrecon.process.interestpointregistration.TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
+			final double[] anisotropy = new double[] { 1, 1, avgAnisoF };
+			IOFunctions.println( "Using anisotropy factor: " + Arrays.toString( anisotropy ) );
 
-		// Create criterion
-		final OctTreeSplitCriterion criterion;
-		if ( "consensus".equalsIgnoreCase( criterionType ) )
-		{
-			criterion = new ConsensusSetCriterion(
-					data, trimmedLabels, maxCorrespondences,
-					tolerance, toleranceValue );
+			return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, minSplitLevels, anisotropy );
 		}
 		else
 		{
-			criterion = new CrossViewCorrespondenceCriterion( data, trimmedLabels, maxCorrespondences );
+			if ( targetImageSizeString == null || targetOverlapString == null )
+			{
+				IOFunctions.printErr( "ERROR: --targetImageSize and --targetOverlap are required for uniform splitting." );
+				return null;
+			}
+
+			final int[] targetImageSize = Import.csvStringToIntArray( targetImageSizeString );
+			final int[] targetOverlap = Import.csvStringToIntArray( targetOverlapString );
+
+			final long[] adjustedSize = new long[ 3 ];
+			final long[] adjustedOverlap = new long[ 3 ];
+			for ( int d = 0; d < 3; d++ )
+			{
+				adjustedSize[ d ] = SplitDistributeEvenly.closestLargerLongDivisableBy( targetImageSize[ d ], minStepSize[ d ] );
+				adjustedOverlap[ d ] = SplitDistributeEvenly.closestLargerLongDivisableBy( targetOverlap[ d ], minStepSize[ d ] );
+			}
+
+			IOFunctions.println( "Adjusted target image size: " + Arrays.toString( adjustedSize ) );
+			IOFunctions.println( "Adjusted target overlap: " + Arrays.toString( adjustedOverlap ) );
+
+			for ( int d = 0; d < 3; d++ )
+			{
+				if ( adjustedOverlap[ d ] > adjustedSize[ d ] )
+				{
+					IOFunctions.printErr( "overlap cannot be bigger than size." );
+					return null;
+				}
+			}
+
+			return new SplitDistributeEvenly( data, adjustedOverlap, adjustedSize, minStepSize, optimize );
 		}
-
-		// Compute anisotropy from registrations
-		final List< ViewId > allViewIds = new ArrayList<>();
-		for ( final mpicbg.spim.data.sequence.ViewDescription vd : data.getSequenceDescription().getViewDescriptions().values() )
-			if ( vd.isPresent() )
-				allViewIds.add( vd );
-
-		final double avgAnisoF = net.preibisch.mvrecon.process.interestpointregistration.TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
-		final double[] anisotropy = new double[] { 1, 1, avgAnisoF };
-		IOFunctions.println( "Using anisotropy factor: " + Arrays.toString( anisotropy ) );
-
-		return new SplitOctTree( minStepSize, minSizeMultiplier, criterion, minSplitLevels, anisotropy );
 	}
 
 	public static void main( final String... args ) throws SpimDataException
