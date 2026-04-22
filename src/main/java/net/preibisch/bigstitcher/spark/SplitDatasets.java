@@ -217,7 +217,6 @@ public class SplitDatasets extends AbstractBasic
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 1 - Computing split intervals..." );
 
 		final Map< Integer, ArrayList< Interval > > splitResults = new HashMap<>();
-		final int firstTPId = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 ).getId();
 
 		// Capture config for executor-side SplitView creation
 		final URI finalXmlURI = xmlURI;
@@ -234,10 +233,13 @@ public class SplitDatasets extends AbstractBasic
 		final String finalTargetOverlapString = targetOverlapString;
 		final boolean finalOptimize = !disableOptimization;
 
-		// Build jobs: [setupId, timepointId]
+		// Build jobs: [setupId, timepointId] — pick the first present timepoint per setup
 		final ArrayList< int[] > phase1Jobs = new ArrayList<>();
 		for ( final ViewSetup oldSetup : oldSetups )
-			phase1Jobs.add( new int[]{ oldSetup.getId(), firstTPId } );
+		{
+			final ViewId firstPresent = SplittingTools.findFirstPresentViewId( dataGlobal, oldSetup.getId() );
+			phase1Jobs.add( new int[]{ firstPresent.getViewSetupId(), firstPresent.getTimePointId() } );
+		}
 
 		final JavaRDD< int[] > phase1RDD = sc.parallelize(
 				phase1Jobs, Math.min( Spark.maxPartitions, phase1Jobs.size() ) );
