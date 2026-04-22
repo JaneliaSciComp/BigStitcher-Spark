@@ -16,13 +16,14 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
+import bdv.ViewerImgLoader;
 import ij.ImageJ;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicViewDescription;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
-import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.registration.ViewTransform;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MissingViews;
@@ -35,11 +36,9 @@ import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalDimensions;
-import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
-import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -48,24 +47,24 @@ import net.preibisch.mvrecon.fiji.plugin.Split_Views.InterestPointAdding;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.SelectedViewDescriptionListener;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
-import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
-import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitMultiResolutionImgLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
-import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
-import net.preibisch.mvrecon.process.splitting.SplitInterval;
-import net.preibisch.mvrecon.process.splitting.SplitOctTree;
-import net.preibisch.mvrecon.process.splitting.SplittingTools;
-import net.preibisch.mvrecon.process.splitting.CrossViewCorrespondenceCriterion;
+import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
+import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.process.splitting.ConsensusSetCriterion;
+import net.preibisch.mvrecon.process.splitting.CrossViewCorrespondenceCriterion;
 import net.preibisch.mvrecon.process.splitting.OctTreeSplitCriterion;
+import net.preibisch.mvrecon.process.splitting.SplitDistributeEvenly;
+import net.preibisch.mvrecon.process.splitting.SplitOctTree;
+import net.preibisch.mvrecon.process.splitting.SplitResult;
+import net.preibisch.mvrecon.process.splitting.SplitView;
+import net.preibisch.mvrecon.process.splitting.SplittingTools;
 import net.preibisch.stitcher.gui.StitchingExplorer;
-import bdv.ViewerImgLoader;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -172,8 +171,8 @@ public class SplitDatasets extends AbstractBasic
 		for ( final String size : imgSizes.getA().keySet() )
 			IOFunctions.println( imgSizes.getA().get( size ) + "x: " + size );
 
-		// Create SplitInterval based on method
-		final SplitInterval splitting = createSplitInterval( dataGlobal, minStepSize );
+		// Create splitter based on method
+		final SplitView splitting = createSplitView( dataGlobal, minStepSize );
 		if ( splitting == null )
 			return null;
 
@@ -199,25 +198,21 @@ public class SplitDatasets extends AbstractBasic
 		IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 1 - Computing split intervals..." );
 
 		final Map< Integer, ArrayList< Interval > > splitResults = new HashMap<>();
+		final TimePoint firstTP = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().get( 0 );
 
-		// Uniform splitting is fast — run on driver.
-		// Oct-tree could benefit from Spark but also runs fast enough on driver
-		// (the expensive part is interest point processing in Phase 2).
 		for ( final ViewSetup oldSetup : oldSetups )
 		{
-			final Interval input = new FinalInterval( oldSetup.getSize() );
-			final ArrayList< Interval > intervals = splitting.split( input );
+			final ViewId viewId = new ViewId( firstTP.getId(), oldSetup.getId() );
+			final SplitResult result = splitting.split( viewId );
 
-			if ( intervals == null )
+			if ( result == null )
 			{
 				IOFunctions.printErr( "ERROR: Splitting failed for ViewSetup " + oldSetup.getId() );
 				return null;
 			}
 
-			IOFunctions.println( "ViewId " + oldSetup.getId() + " with interval " + Util.printInterval( input ) +
-					": " + intervals.size() + " tiles" );
-
-			splitResults.put( oldSetup.getId(), intervals );
+			IOFunctions.println( "ViewId " + oldSetup.getId() + ": " + result.numIntervals + " tiles" );
+			splitResults.put( oldSetup.getId(), result.intervals );
 		}
 
 		// ==================== 3. Pre-compute ID ranges on driver ====================
@@ -651,9 +646,9 @@ public class SplitDatasets extends AbstractBasic
 	}
 
 	/**
-	 * Create the appropriate SplitInterval based on the --splitMethod option.
+	 * Create the appropriate SplitView based on the --splitMethod option.
 	 */
-	protected SplitInterval createSplitInterval( final SpimData2 data, final long[] minStepSize )
+	protected SplitView createSplitView( final SpimData2 data, final long[] minStepSize )
 	{
 		if ( "octtree".equalsIgnoreCase( splitMethod ) )
 		{
@@ -661,14 +656,14 @@ public class SplitDatasets extends AbstractBasic
 		}
 		else
 		{
-			return createUniformSplitter( minStepSize );
+			return createUniformSplitter( data, minStepSize );
 		}
 	}
 
 	/**
 	 * Create a SplitDistributeEvenly for uniform splitting.
 	 */
-	protected SplitInterval createUniformSplitter( final long[] minStepSize )
+	protected SplitView createUniformSplitter( final SpimData2 data, final long[] minStepSize )
 	{
 		if ( targetImageSizeString == null || targetOverlapString == null )
 		{
@@ -701,13 +696,13 @@ public class SplitDatasets extends AbstractBasic
 			}
 		}
 
-		return new SplitDistributeEvenly( adjustedOverlap, adjustedSize, minStepSize, !disableOptimization );
+		return new SplitDistributeEvenly( data, adjustedOverlap, adjustedSize, minStepSize, !disableOptimization );
 	}
 
 	/**
 	 * Create a SplitOctTree for oct-tree splitting.
 	 */
-	protected SplitInterval createOctTreeSplitter( final SpimData2 data, final long[] minStepSize )
+	protected SplitView createOctTreeSplitter( final SpimData2 data, final long[] minStepSize )
 	{
 		if ( labelsString == null )
 		{
