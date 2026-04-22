@@ -240,7 +240,7 @@ protected Double icpMaxError = 5.0;
 	// -----------------------------------------------------------------------
 
 	@Option(names = { "--interestpointGrouping" }, description = "interest point grouping when views are grouped; DO_NOT_GROUP or ADD_ALL (default: ADD_ALL)")
-	protected InterestpointGroupingType interestpointGrouping = InterestpointGroupingType.ADD_ALL;
+	protected InterestpointGroupingType interestpointGrouping = InterestpointGroupingType.DO_NOT_GROUP;
 
 	@Override
 	public Void call() throws Exception
