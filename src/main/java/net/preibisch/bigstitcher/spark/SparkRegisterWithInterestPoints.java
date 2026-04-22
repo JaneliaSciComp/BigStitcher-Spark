@@ -114,7 +114,7 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 	// -----------------------------------------------------------------------
 
 	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP or CENTER_OF_MASS")
-	protected Method registrationMethod = null;
+	protected Method registrationMethod = Method.PRECISE_TRANSLATION;
 
 	@Option(names = { "--centerOfMassType" }, description = "type of center of mass computation; AVERAGE or MEDIAN (default: AVERAGE, only used with CENTER_OF_MASS method)")
 	protected CenterOfMassType centerOfMassType = CenterOfMassType.AVERAGE;
@@ -138,7 +138,7 @@ public class SparkRegisterWithInterestPoints extends AbstractRegistration
 	protected boolean matchAcrossLabels = false;
 
 	@Option(names = { "-ipfr", "--interestpointsForReg" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY or ALL points (default: ALL)")
-	protected InterestPointOverlapType interestpointsForReg = InterestPointOverlapType.ALL;
+	protected InterestPointOverlapType interestpointsForReg = InterestPointOverlapType.OVERLAPPING_ONLY;
 
 	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
 	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
