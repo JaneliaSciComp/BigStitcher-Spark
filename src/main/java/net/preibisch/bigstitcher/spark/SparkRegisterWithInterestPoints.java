@@ -202,7 +202,7 @@ protected Double icpMaxError = 5.0;
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_ITERATIVE;
 
 	@Option(names = { "-pa", "--preAlign" }, description = "whether to pre-align before solving (PREALIGN) or initialize with current transformations (NO_PREALIGN) (default: PREALIGN)")
-	protected PreAlign preAlign = PreAlign.PREALIGN;
+	protected PreAlign preAlign = PreAlign.NO_PREALIGN;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers (default: 3.5)")
 	protected double relativeThreshold = 3.5;
