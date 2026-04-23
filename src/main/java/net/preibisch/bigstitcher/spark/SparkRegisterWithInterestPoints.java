@@ -202,7 +202,7 @@ protected Double icpMaxError = 5.0;
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_ITERATIVE;
 
 	@Option(names = { "-pa", "--preAlign" }, description = "whether to pre-align before solving (PREALIGN) or initialize with current transformations (NO_PREALIGN) (default: PREALIGN)")
-	protected PreAlign preAlign = PreAlign.NO_PREALIGN;
+	protected PreAlign preAlign = PreAlign.PREALIGN;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers (default: 3.5)")
 	protected double relativeThreshold = 3.5;
@@ -618,7 +618,7 @@ protected Double icpMaxError = 5.0;
 
 		if ( !dryRun )
 		{
-			System.out.println( "Saving corresponding interest points ..." );
+			System.out.println( "Saving corresponding interest points (in parallel) ...");
 
 			final ArrayList< Pair< ViewId, String > > allIps = new ArrayList<>();
 			for ( final ViewId v : viewIdsGlobal )
@@ -626,7 +626,7 @@ protected Double icpMaxError = 5.0;
 					allIps.add( new ValuePair<>( v, l ) );
 
 			final Map< ViewId, ViewInterestPointLists > ip = dataGlobal.getViewInterestPoints().getViewInterestPoints();
-			allIps.stream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( false ) );
+			allIps.parallelStream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( true ) );
 		}
 
 		// -----------------------------------------------------------------------
