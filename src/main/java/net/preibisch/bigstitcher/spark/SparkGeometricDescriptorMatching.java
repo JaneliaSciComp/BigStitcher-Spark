@@ -668,7 +668,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			{
 				if ( ipl.getInterestPointList( label ) == null )
 				{
-					System.out.println( "Error, label '" + label + "' does for exist for ViewId " + Group.pvid( viewId ) );
+					System.out.println( "Error, label '" + label + "' does not exist for ViewId " + Group.pvid( viewId ) );
 					System.exit( 1 );
 				}
 			});
