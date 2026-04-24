@@ -40,41 +40,41 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	}
 
 	@Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
-	String numCoefficientsString = "8,8,8";
+	private String numCoefficientsString = "8,8,8";
 
 	@Option(names = { "--renderScale" }, description = "at which scale to sample images (default: 0.25, which meaning using 4x downsampled images)")
-	double renderScale = 0.25;
+	private double renderScale = 0.25;
 
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "path (URI) for saving pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
-	String outputPathURIString = null;
+	private String outputPathURIString = null;
 
 	@Option(names = { "--minThreshold" }, description = "min threshold for intensities to consider for matching, anything below this value will be discarded (default: 1)")
-	double minIntensityThreshold = 1;
+	private double minIntensityThreshold = 1;
 
 	@Option(names = { "--maxThreshold" }, description = "max threshold for intensities to consider for matching, anything above this value will be discarded (default: none)")
-	double maxIntensityThreshold = Double.NaN;
+	private double maxIntensityThreshold = Double.NaN;
 
 	@Option(names = { "--minNumCandidates" }, description = "minimum number of (non-discarded) overlapping pixels required to match overlapping coefficient regions (default: 1000)")
-	int minNumCandidates = 1000;
+	private int minNumCandidates = 1000;
 
 	@Option(names = {"--method"}, defaultValue = "RANSAC", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Method to match intensities between overlapping views: RANSAC or HISTOGRAM")
-	IntensityMatchingMethod intensityMatchingMethod = IntensityMatchingMethod.RANSAC;
+	private IntensityMatchingMethod intensityMatchingMethod;
 
 	@CommandLine.Option(names = { "--numIterations" }, description = "number of RANSAC iterations (default: 1000)")
-	int iterations = 1000;
+	private int iterations = 1000;
 
 	@CommandLine.Option(names = { "--maxEpsilon" }, description = "maximal allowed transfer error (default: 5.1, only for RANSAC method)")
-	double maxEpsilon = 0.02 * 255;
+	private double maxEpsilon = 0.02 * 255;
 
 	@CommandLine.Option(names = { "--minInlierRatio" }, description = "minimal ratio of of inliers to number of candidates (default: 0.1, only for RANSAC method)")
-	double minInlierRatio = 0.1;
+	private double minInlierRatio = 0.1;
 
 	@CommandLine.Option(names = { "--minNumInliers" }, description = "minimally required absolute number of inliers (default: 10, only for RANSAC method)")
-	int minNumInliers = 10;
+	private int minNumInliers = 10;
 
 	@CommandLine.Option(names = { "--maxTrust" }, description = "reject candidates with a cost larger than maxTrust * median cost (default: 3, only for RANSAC method)")
-	double maxTrust = 3.0;
+	private double maxTrust = 3.0;
 
 	private SpimData2 dataGlobal;
 

@@ -119,7 +119,6 @@ echo 'Installing workflow tools ...'
 install_command resave "net.preibisch.bigstitcher.spark.SparkResaveN5"
 install_command detect-interestpoints "net.preibisch.bigstitcher.spark.SparkInterestPointDetection"
 install_command match-interestpoints "net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching"
-install_command register-interestpoints "net.preibisch.bigstitcher.spark.SparkRegisterWithInterestPoints"
 install_command stitching "net.preibisch.bigstitcher.spark.SparkPairwiseStitching"
 install_command solver "net.preibisch.bigstitcher.spark.Solver"
 install_command match-intensities "net.preibisch.bigstitcher.spark.SparkIntensityMatching"
@@ -128,7 +127,6 @@ install_command create-fusion-container "net.preibisch.bigstitcher.spark.CreateF
 install_command fusion "net.preibisch.bigstitcher.spark.SparkFusion"
 install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFusion"
 install_command create-dataset "net.preibisch.bigstitcher.spark.CreateDataset"
-install_command chain-commands "net.preibisch.bigstitcher.spark.ChainCommands"
 
 echo 'Installing utils ...'
 
@@ -145,7 +143,7 @@ if [ $(pwd) == "$INSTALL_DIR" ]; then
 else
 	echo "Creating directory $INSTALL_DIR and moving files..."
     mkdir -p $INSTALL_DIR
-    mv affine-fusion $INSTALL_DIR/
+    mv fusion $INSTALL_DIR/
 fi
 
 rm cp.txt

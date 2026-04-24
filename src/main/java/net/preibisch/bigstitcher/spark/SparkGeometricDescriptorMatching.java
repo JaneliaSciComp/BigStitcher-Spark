@@ -524,9 +524,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			});
 		}
 
-		rddResults.cache();
-		rddResults.count();
-
 		final List<ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>>>> results = rddResults.collect();
 
 		// add the corresponding detections and output result
@@ -627,6 +624,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 		else if ( registrationMethod == Method.CENTER_OF_MASS )
 		{
+			// added to match the "Center of mass" registration algorithm from the GUI
 			matcher = new CenterOfMassPairwise<>( new CenterOfMassParameters( centerOfMassType ) );
 		}
 		else

@@ -104,7 +104,6 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "-s", "--sourcePoints" }, required = true, description = "which source to use for the solve, IP (interest points) or STITCHING")
 	protected SolverSource sourcePoints = null;
 
-
 	@Option(names = { "--groupIllums" }, description = "group all illumination directions that belong to the same angle/channel/tile/timepoint together as one view, e.g. to stitch illums as one (default: false for IP, true for stitching)")
 	protected Boolean groupIllums = null;
 
@@ -117,13 +116,11 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, e.g. for stabilization across time (default: false)")
 	protected Boolean splitTimepoints = null;
 
-
 	@Option(names = { "-l", "--label" }, required = false, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
 	@Option(names = { "-lw", "--labelweights" }, required = false, description = "weights of label(s) of the interest points used for registration (e.g. -l 1.0 -l 0.1, default: 1.0)")
 	protected ArrayList<Double> labelweights = null;
-
 
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
@@ -143,7 +140,7 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "--maxIterations" }, description = "max number of iterations for solve (default: 10,000)")
 	protected Integer maxIterations = 10000;
 
-	@Option(names = { "--maxPlateauwidth" }, description = "max plateau witdth for solve (default: 200)")
+	@Option(names = { "--maxPlateauwidth" }, description = "max plateau width for solve (default: 200)")
 	protected Integer maxPlateauwidth = 200;
 
 	@Option(names = { "--disableFixedViews" }, description = "disable fixing of views (see --fixedViews)")

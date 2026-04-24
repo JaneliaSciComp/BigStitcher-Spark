@@ -30,7 +30,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
-import mpicbg.spim.data.registration.ViewTransformAffine;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -70,42 +69,42 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
-public class SparkPhaseCorrelationPairwiseStitching extends AbstractSelectableViews
+public class SparkPairwiseStitching extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = 2745578960909812636L;
 
 	@Option(names = { "-ds", "--downsampling" }, required = false, description = "Define the downsampling at which the stitching should be performed, e.g. -ds 4,4,1 (default: 2,2,1)")
-	String downsampling = "2,2,1";
+	private String downsampling = "2,2,1";
 
 	@Option(names = { "-p", "--peaksToCheck" }, description = "number of peaks in phase correlation image to check with cross-correlation (default: 5)")
-	int peaksToCheck = 5;
+	protected int peaksToCheck = 5;
 
 	@Option(names = { "--disableSubpixelResolution" }, description = "do not use subpixel-accurate pairwise stitching")
-	boolean disableSubpixelResolution = false;
+	protected boolean disableSubpixelResolution = false;
 
 	@Option(names = { "--minR" }, description = "minimum required cross correlation between two images (default: 0.3)")
-	double minR = 0.3;
+	protected double minR = 0.3;
 
 	@Option(names = { "--maxR" }, description = "maximum cross correlation between two images for a pair to be valid; a typical example is that correlations of 1.0 should be omitted (default: 1.0 / nothing omitted)")
-	double maxR = 1.0;
+	protected double maxR = 1.0;
 
 	@Option(names = { "--maxShiftX" }, description = "maximum shift in X (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	Double maxShiftX = null;
+	protected Double maxShiftX = null;
 
 	@Option(names = { "--maxShiftY" }, description = "maximum shift in Y (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	Double maxShiftY = null;
+	protected Double maxShiftY = null;
 
 	@Option(names = { "--maxShiftZ" }, description = "maximum shift in Z (in pixels) between two images that is allowed during pairwise comparison (default: any)")
-	Double maxShiftZ = null;
+	protected Double maxShiftZ = null;
 
 	@Option(names = { "--maxShiftTotal" }, description = "maximum shift (in pixels) between two images (total distance) that is allowed during pairwise comparison (default: any)")
-	Double maxShiftTotal = null;
+	protected Double maxShiftTotal = null;
 
 	@Option(names = { "--channelCombine" }, description = "defines how images of different channels of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: AVERAGE)")
-	ActionType channelCombine = ActionType.AVERAGE;
+	protected ActionType channelCombine = ActionType.AVERAGE;
 
 	@Option(names = { "--illumCombine" }, description = "defines how images of different illuminations of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: PICK_BRIGHTEST)")
-	ActionType illumCombine = ActionType.PICK_BRIGHTEST;
+	protected ActionType illumCombine = ActionType.PICK_BRIGHTEST;
 
 	@Override
 	public Void call() throws Exception
@@ -182,7 +181,7 @@ public class SparkPhaseCorrelationPairwiseStitching extends AbstractSelectableVi
 		final ActionType channelCombine = this.channelCombine;
 		final ActionType illumCombine = this.illumCombine;
 
-		final SparkConf conf = new SparkConf().setAppName("SparkPhaseCorrelationPairwiseStitching");
+		final SparkConf conf = new SparkConf().setAppName("SparkPairwiseStitching");
 
 		if (localSparkBindAddress)
 		{
@@ -245,7 +244,8 @@ public class SparkPhaseCorrelationPairwiseStitching extends AbstractSelectableVi
 
 			if (nonTranslationsEqual)
 			{
-				if ( PairwiseStitching.debug ) System.out.println( "non translations equal" );
+				if ( PairwiseStitching.debug )
+					System.out.println( "non translations equal" );
 				result = TransformationTools.computeStitching(
 						pair.getA(),
 						pair.getB(),
@@ -339,13 +339,6 @@ public class SparkPhaseCorrelationPairwiseStitching extends AbstractSelectableVi
 			if (psr == null)
 				continue;
 
-			// update the registrations transformations
-			psr.pair().getA().getViews().forEach( viewId -> {
-				dataGlobal.getViewRegistrations().getViewRegistration(viewId)
-						.preconcatenateTransform(new ViewTransformAffine(
-								"Stitching Transform",
-								new AffineTransform3D().concatenate(psr.getInverseTransform())));
-			});
 			dataGlobal.getStitchingResults().setPairwiseResultForPair(psr.pair(), psr );
 		}
 
@@ -403,6 +396,6 @@ public class SparkPhaseCorrelationPairwiseStitching extends AbstractSelectableVi
 	public static void main(final String... args) throws SpimDataException
 	{
 		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new SparkPhaseCorrelationPairwiseStitching()).execute(args));
+		System.exit(new CommandLine(new SparkPairwiseStitching()).execute(args));
 	}
 }
