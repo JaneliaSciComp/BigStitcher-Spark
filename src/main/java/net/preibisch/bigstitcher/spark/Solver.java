@@ -172,13 +172,13 @@ public class Solver extends AbstractRegistration
 		// setup specific things for Interestpoints or Stitching as a source
 		if ( sourcePoints == SolverSource.IP )
 		{
-			if ( labels == null || labels.size() == 0 )
+			if ( labels == null || labels.isEmpty() )
 			{
 				System.out.println( "No labels specified. Stopping." );
 				return null;
 			}
 
-			if ( labelweights == null || labelweights.size() == 0 )
+			if ( labelweights == null || labelweights.isEmpty() )
 			{
 				labelweights = new ArrayList<>();
 				labels.forEach( label -> labelweights.add( 1.0 ));
@@ -247,12 +247,12 @@ public class Solver extends AbstractRegistration
 		System.out.println("maxPlateauwidth: " + maxPlateauwidth );
 		System.out.println("disableFixedViews: " + disableFixedViews );
 		System.out.println("fixedViews: " + ( fixedViews == null ? "null" : Arrays.toString( fixedViews ) ) );
-		System.out.println("labels: " + Arrays.toString( labels.toArray() ));
-		System.out.println("labelweights: " + Arrays.toString( labelweights.toArray() ));
+		System.out.println("labels: " + labels );
+		System.out.println("labelweights: " + labelweights );
 
 		// assemble fixed views
 		final HashSet< ViewId > fixedViewIds;
-		
+
 		if ( this.disableFixedViews )
 		{
 			fixedViewIds = new HashSet<>();
