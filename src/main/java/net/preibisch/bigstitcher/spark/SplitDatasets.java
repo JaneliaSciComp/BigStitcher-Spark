@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ForkJoinPool;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -66,9 +65,9 @@ import net.preibisch.mvrecon.process.splitting.SplitOctTree;
 import net.preibisch.mvrecon.process.splitting.SplitResult;
 import net.preibisch.mvrecon.process.splitting.SplitView;
 import net.preibisch.mvrecon.process.splitting.SplittingTools;
-import scala.Tuple2;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
+import scala.Tuple2;
 import util.URITools;
 
 public class SplitDatasets extends AbstractBasic
@@ -147,7 +146,8 @@ public class SplitDatasets extends AbstractBasic
 
 	// ==================== Output / display options ====================
 
-	@Option(names = { "-xo", "--xmlout" }, description = "path to the output BigStitcher xml, e.g. /home/project-n5.xml or s3://myBucket/dataset.xml (default: overwrite input)")
+	@Option(names = { "-xo", "--xmlout" }, description = "path to the output BigStitcher xml, e.g. /home/project-n5.xml or s3://myBucket/dataset.xml "
+			+ "(default: input path with .xml replaced by .split.xml, or .split.xml appended if the input does not end in .xml)")
 	private String xmlOutURIString = null;
 
 	@Option(names = { "--assignIlluminations" }, description = "assign old tile id's as illumination id's, this can be great for visualization")
@@ -165,7 +165,7 @@ public class SplitDatasets extends AbstractBasic
 		if ( dataGlobal == null )
 			throw new IllegalArgumentException( "Couldn't load SpimData XML project." );
 
-		final URI xmlOutURI = xmlOutURIString != null ? URITools.toURI( xmlOutURIString ) : xmlURI;
+		final URI xmlOutURI = xmlOutURIString != null ? URITools.toURI( xmlOutURIString ) : defaultSplitXmlOut( xmlURI );
 		System.out.println( "xmlout: " + xmlOutURI );
 
 		// Compute min step size from multi-resolution pyramid
@@ -915,6 +915,20 @@ public class SplitDatasets extends AbstractBasic
 		for ( int d = 0; d < multiplier.length; d++ )
 			tile[ d ] = ( long ) multiplier[ d ] * minStepSize[ d ];
 		return tile;
+	}
+
+	/**
+	 * Derive the default output XML path: replace a trailing ".xml" (case-insensitive) with
+	 * ".split.xml", or append ".split.xml" if the input URI doesn't end in ".xml".
+	 * Keeps the URI scheme/host intact — we only manipulate the trailing filename.
+	 */
+	private static URI defaultSplitXmlOut( final URI xmlURI )
+	{
+		final String in = xmlURI.toString();
+		final String out = in.toLowerCase().endsWith( ".xml" )
+				? in.substring( 0, in.length() - ".xml".length() ) + ".split.xml"
+				: in + ".split.xml";
+		return URITools.toURI( out );
 	}
 
 	public static void main( final String... args ) throws SpimDataException
