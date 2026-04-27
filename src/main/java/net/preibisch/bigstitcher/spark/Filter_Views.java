@@ -72,8 +72,7 @@ public class Filter_Views extends AbstractBasic
 {
 	private static final long serialVersionUID = 1L;
 
-	@Option(names = { "-xo", "--xmlout" }, description = "path to the output BigStitcher xml. "
-			+ "Default: input path with .xml replaced by .filtered.xml, or .filtered.xml appended if the input does not end in .xml.")
+	@Option(names = { "-xo", "--xmlout" }, description = "path to the output BigStitcher xml (default: overwrite input and keep a backup ~1).")
 	private String xmlOutURIString = null;
 
 	@Option(names = "--channels", description = "Channel IDs to keep, comma-separated; ranges with '-' allowed (e.g. '0', '0,2', '0-3'). AND-intersected with other attribute / view filters.")
@@ -113,9 +112,7 @@ public class Filter_Views extends AbstractBasic
 		if ( dataGlobal == null )
 			return null;
 
-		final URI xmlOutURI = ( xmlOutURIString != null )
-				? URITools.toURI( xmlOutURIString )
-				: defaultFilteredXmlOut( xmlURI );
+		final URI xmlOutURI = ( xmlOutURIString != null ) ? URITools.toURI( xmlOutURIString ) : xmlURI;
 		System.out.println( "xmlout: " + xmlOutURI );
 
 		final SequenceDescription oldSeq = dataGlobal.getSequenceDescription();
@@ -322,20 +319,6 @@ public class Filter_Views extends AbstractBasic
 			if ( !keepView( v, keepSetupIds, keepTimepointIds ) )
 				return false;
 		return true;
-	}
-
-	/**
-	 * Derive the default output XML path: replace a trailing ".xml" (case-insensitive) with
-	 * ".filtered.xml", or append ".filtered.xml" if the input URI doesn't end in ".xml".
-	 * Mirrors {@code SplitDatasets.defaultSplitXmlOut}.
-	 */
-	private static URI defaultFilteredXmlOut( final URI xmlURI )
-	{
-		final String in = xmlURI.toString();
-		final String out = in.toLowerCase().endsWith( ".xml" )
-				? in.substring( 0, in.length() - ".xml".length() ) + ".filtered.xml"
-				: in + ".filtered.xml";
-		return URITools.toURI( out );
 	}
 
 	public static void main( final String... args )
