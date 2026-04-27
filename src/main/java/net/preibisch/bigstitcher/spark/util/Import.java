@@ -221,6 +221,47 @@ public class Import {
 		return hash;
 	}
 
+	/**
+	 * Like {@link #parseIdList} but also accepts inclusive range tokens of the form {@code "lo-hi"}.
+	 * Tokens are comma-separated; each token is either a single integer ({@code "5"}) or a range
+	 * ({@code "0-99"}). Returns {@code null} when the input is null or empty (matches the
+	 * {@code parseIdList} convention).
+	 */
+	public static HashSet< Integer > parseIdRangeSet( String spec )
+	{
+		if ( spec == null )
+			return null;
+
+		spec = spec.trim();
+		if ( spec.length() == 0 )
+			return null;
+
+		final HashSet< Integer > result = new HashSet<>();
+		for ( final String raw : spec.split( "," ) )
+		{
+			final String token = raw.trim();
+			if ( token.isEmpty() )
+				continue;
+
+			// "lo-hi" range, but only when the dash is internal (a leading dash means a negative number).
+			final int dash = token.indexOf( '-', 1 );
+			if ( dash > 0 )
+			{
+				final int lo = Integer.parseInt( token.substring( 0, dash ).trim() );
+				final int hi = Integer.parseInt( token.substring( dash + 1 ).trim() );
+				if ( hi < lo )
+					throw new IllegalArgumentException( "Invalid range '" + token + "': end < start" );
+				for ( int i = lo; i <= hi; i++ )
+					result.add( i );
+			}
+			else
+			{
+				result.add( Integer.parseInt( token ) );
+			}
+		}
+		return result;
+	}
+
 	public static ArrayList<ViewId> getViewIds( final String[] s )
 	{
 		final ArrayList<ViewId> viewIds = new ArrayList<>();
