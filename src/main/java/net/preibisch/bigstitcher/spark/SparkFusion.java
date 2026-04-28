@@ -80,7 +80,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
-import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
@@ -273,7 +273,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				return null;
 			}
 
-			if ( BlkThinPlateSplineFusion.getUnderlyingImageLoader( dataGlobal ) == null )
+			if ( SplitImgLoaderThinPlateSplineFusion.getUnderlyingImageLoader( dataGlobal ) == null )
 			{
 				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: ImageLoader is not a SplitViewerImgLoader, this is required for thin plate spline fusion. Please split the dataset first." );
 				return null;
@@ -716,7 +716,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							}
 							else
 							{
-								blockSupplier = BlkThinPlateSplineFusion.init(
+								blockSupplier = SplitImgLoaderThinPlateSplineFusion.init(
 										conv,
 										(SplitViewerImgLoader)dataLocal.getSequenceDescription().getImgLoader(),
                                         overlappingViews,
@@ -725,6 +725,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										fusionType,
 										overlapExpansion,
 										Double.NaN,
+										1, // linear interpolation
 										null, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
 										coefficients, // intensity correction
 										new BoundingBox( interval ), // already adjusted for anisotropy???
