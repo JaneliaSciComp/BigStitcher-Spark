@@ -40,6 +40,9 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAll;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAllRange;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.IndividualTimepoints;
@@ -77,11 +80,25 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	@Option(names = { "--lambda" }, description = "lamdba to use for regularization model (default: 0.1)")
 	protected Double regularizationLambda = 0.1;
 
+	@Option(names = { "--maxPerPairLog" }, description = "max number of per-pair 'Connecting … <-> …' log lines printed by global registration before per-pair output is suppressed (the per-(labelA,labelB) summary is always emitted). Default: 1000")
+	protected int maxPerPairLog = InterestPointMatchCreator.maxPerPairLog;
+
+	@Option(names = { "--maxPerPairCorrLog" }, description = "max number of per-pair '[…] >>> […]: Loaded N corresponding…' / 'Not enough…' log lines printed during pairwise correspondence loading before per-pair output is suppressed (the per-(labelA,labelB) summary is always emitted). Default: 1000")
+	protected int maxPerPairCorrLog = PairwiseResult.maxPerPairCorrLog;
+
+	@Option(names = { "--maxPerViewTransformLog" }, description = "max number of per-view 'Transformation Models:' lines printed after each global optimization round before output is suppressed (the identity-vs-non-identity summary is always emitted). Default: 1000")
+	protected int maxPerViewTransformLog = TransformationTools.maxPerViewTransformLog;
+
 	protected SpimData2 dataGlobal;
 	protected ArrayList< ViewId > viewIdsGlobal;
 
 	public void initRegistrationParameters() throws SpimDataException
 	{
+		// propagate log-cap knobs into their mvr static homes before any registration code runs
+		InterestPointMatchCreator.maxPerPairLog = maxPerPairLog;
+		PairwiseResult.maxPerPairCorrLog = maxPerPairCorrLog;
+		TransformationTools.maxPerViewTransformLog = maxPerViewTransformLog;
+
 		this.dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
