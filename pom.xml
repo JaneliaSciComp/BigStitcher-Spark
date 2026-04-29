@@ -113,7 +113,7 @@
 		<n5-hdf5.version>2.3.0-alpha-7</n5-hdf5.version>
 		<n5-imglib2.version>7.1.0-alpha-8</n5-imglib2.version>
 		<n5-universe.version>2.4.0-alpha-9</n5-universe.version>
-		<n5-zarr.version>2.0.0-alpha-9-SNAPSHOT</n5-zarr.version>
+		<n5-zarr.version>2.0.0-alpha-8</n5-zarr.version>
 		<n5-zstandard.version>2.0.0-alpha-4</n5-zstandard.version>
 		<n5-blosc.version>2.0.0-alpha-4</n5-blosc.version>
 
@@ -515,6 +515,28 @@
                         </executions>
                     </plugin>
                     <!-- Maven shade end -->
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>with-deps</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-dependencies</id>
+                                <phase>package</phase>
+                                <goals><goal>copy-dependencies</goal></goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.directory}/deps</outputDirectory>
+                                    <includeScope>runtime</includeScope>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
