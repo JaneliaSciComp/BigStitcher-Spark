@@ -50,14 +50,27 @@ public abstract class AbstractBasic extends AbstractInfrastructure implements Ca
 	{
 		System.out.println( "'" + xmlURIString + "'" );
 		System.out.println( "xml: " + (xmlURI = URITools.toURI(xmlURIString)) );
-		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2( xmlURI );
-
-		return dataGlobal;
+		try
+		{
+			return Spark.getSparkJobSpimData2( xmlURI );
+		}
+		catch ( final SpimDataException e )
+		{
+			// Print a one-line friendly message for common failures (file not found,
+			// malformed XML, ...) instead of dumping a full stack trace on the user.
+			// Callers already check for null and exit cleanly.
+			final Throwable cause = ( e.getCause() != null ) ? e.getCause() : e;
+			final String detail = ( cause.getMessage() != null ) ? cause.getMessage() : cause.getClass().getSimpleName();
+			System.err.println( "ERROR: failed to load BigStitcher XML '" + xmlURIString + "': " + detail );
+			return null;
+		}
 	}
 
 	public SpimData2 loadSpimData2( final int numFetcherThreads ) throws SpimDataException
 	{
 		final SpimData2 data = loadSpimData2();
+		if ( data == null )
+			return null;
 
 		final SequenceDescription sequenceDescription = data.getSequenceDescription();
 

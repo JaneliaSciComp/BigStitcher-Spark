@@ -367,23 +367,14 @@ public class Solver extends AbstractRegistration
 
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
-			System.out.println( Group.pvid( viewId ) );
 			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
 			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
-
-			System.out.println( "tile=" + tile );
-			System.out.println( "vr=" + vr );
-
 			TransformationTools.storeTransformation( vr, viewId, tile, null /*mapback*/, model.getClass().getSimpleName() );
-
-			// TODO: We assume it is Affine3D here
-			String output = Group.pvid( viewId ) + ": " + TransformationTools.printAffine3D( (Affine3D<?>)tile.getModel() );
-
-			if ( tile.getModel() instanceof RigidModel3D )
-				System.out.println( output + ", " + TransformationTools.getRotationAxis( (RigidModel3D)tile.getModel() ) );
-			else
-				System.out.println( output + ", " + TransformationTools.getScaling( (Affine3D<?>)tile.getModel() ) );
 		}
+
+		// print per-view transformations + identity-vs-non-identity summary,
+		// gated by TransformationTools.maxPerViewTransformLog
+		TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, models );
 
 		
 		// get all timepoints
