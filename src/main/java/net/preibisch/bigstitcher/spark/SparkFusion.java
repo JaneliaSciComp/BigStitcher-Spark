@@ -421,9 +421,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final int[] blocksPerJob;
 		if (shardSize != null) {
-			blocksPerJob = shardSize;
+			blocksPerJob = null; // blocks per job is not used when sharding, shardsize will be used for computeBlockSize
 			System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
-					" with shardsize " + Util.printCoordinates( shardSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job/shard" );
+					" with shardsize " + Util.printCoordinates( shardSize ) + " and blocksize " + Util.printCoordinates( blockSize ) );
 		} else {
 			blocksPerJob = Import.csvStringToIntArray(blockScaleString);
 			System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
