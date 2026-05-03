@@ -19,6 +19,7 @@ import mpicbg.spim.data.registration.ViewRegistrations;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
+import org.apache.commons.lang.StringUtils;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -58,6 +59,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v05.OmeNgffV05Metadata;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -464,16 +466,31 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + calUnit );
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
-					5, // int n
-					getContainerGroupPath(), // String name, I also saw "/"
-					resolutionS0, // double[] resolutionS0,
-					calUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
-					mrInfos[ 0 ].length, // int numResolutionLevels,
-					(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
-					levelToMipmapTransform );
+			if (storageType == StorageFormat.ZARR2) {
+				final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+						5, // int n
+						getContainerGroupPath(), // String name, I also saw "/"
+						resolutionS0, // double[] resolutionS0,
+						calUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+						mrInfos[ 0 ].length, // int numResolutionLevels,
+						(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
+						levelToMipmapTransform );
 
-			driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
+			} else {
+				// ZARRv3
+				final OmeNgffV05Metadata meta = OMEZarrAttributes.createOMEv05ZarrMetadata(
+						5, // int n
+						StringUtils.removeEnd(getContainerGroupPath(), "/"), // String name
+						resolutionS0, // double[] resolutionS0,
+						calUnit, // vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
+						mrInfos[ 0 ].length, // int numResolutionLevels,
+						(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
+						levelToMipmapTransform );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "ome", meta );
+				// this is hacky until OmeNgffV05Metadata gets fixed to output version
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "ome/version", "0.5" );
+			}
 		}
 
 		if ( bdv )
