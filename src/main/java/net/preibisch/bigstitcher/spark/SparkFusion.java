@@ -320,6 +320,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final int[] blockSize = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/BlockSize", int[].class );
 
 		final DataType dataType = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/DataType", DataType.class );
+		final boolean useSharding = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/UseSharding", boolean.class );
 
 		System.out.println( "FusionFormat: " + fusionFormat );
 		System.out.println( "FusionMethod: " + fusionMethod );
@@ -333,6 +334,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		System.out.println( "preserveAnisotropy: " + preserveAnisotropy );
 		System.out.println( "anisotropyFactor: " + anisotropyFactor );
 		System.out.println( "blockSize: " + Arrays.toString( blockSize ) );
+		System.out.println( "useSharding: " + useSharding );
 		System.out.println( "dataType: " + dataType );
 
 		double minI = Double.NaN, maxI = Double.NaN;
@@ -357,13 +359,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
 
-		// Load sharding metadata
-		final boolean useSharding = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/UseSharding", boolean.class );
 		final int[] shardSize;
 		final int[] shardSizeFactor;
 
 		if ( useSharding )
 		{
+			// Load sharding metadata
 			shardSize = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/ShardSize", int[].class );
 			shardSizeFactor = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/ShardSizeFactor", int[].class );
 			System.out.println( "Sharding enabled. Shard size: " + Util.printCoordinates( shardSize ) + " (factor: " + Util.printCoordinates( shardSizeFactor ) + ")" );
@@ -418,9 +419,16 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			viewIdsGlobal = Import.getViewIds( dataGlobal );
 		}
 
-		final int[] blocksPerJob = Import.csvStringToIntArray(blockScaleString);
-		System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
-				" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job/shard" );
+		final int[] blocksPerJob;
+		if (shardSize != null) {
+			blocksPerJob = shardSize;
+			System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
+					" with shardsize " + Util.printCoordinates( shardSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job/shard" );
+		} else {
+			blocksPerJob = Import.csvStringToIntArray(blockScaleString);
+			System.out.println( "Fusing: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) +
+					" with blocksize " + Util.printCoordinates( blockSize ) + " and " + Util.printCoordinates( blocksPerJob ) + " blocks per job/shard" );
+		}
 
 		if ( dataType == DataType.UINT8 )
 			System.out.println( "Fusing to UINT8, min intensity = " + minIntensity + ", max intensity = " + maxIntensity );
