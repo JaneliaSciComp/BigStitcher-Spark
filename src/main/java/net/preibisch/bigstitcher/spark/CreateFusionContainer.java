@@ -356,7 +356,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// set up container and metadata
 		//
 		final N5Writer driverVolumeWriter;
-		//MultiResolutionLevelInfo[] mrInfo;
 
 		System.out.println();
 		System.out.println( "Setting up container and metadata in '" + outPathURI + "' ... " );
