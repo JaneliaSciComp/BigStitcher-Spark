@@ -290,19 +290,22 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				// TODO: this is now multi-threaded, add parameter to avoid it if necessary, but it's just two point clouds to load
 				// load & transform all interest points
 				final Map< ViewId, HashMap< String, Collection< InterestPoint > > > interestpoints =
-						TransformationTools.getAllTransformedInterestPoints(
+						TransformationTools.getAllInterestPoints(
 							views,
 							data.getViewRegistrations().getViewRegistrations(),
 							data.getViewInterestPoints().getViewInterestPoints(),
-							labelMap );
+							labelMap,
+							true,
+							1 /*numThreads*/ );
 
 				// only keep those interestpoints that currently overlap with a view to register against
 				if ( interestpointsForReg == InterestPointOverlapType.OVERLAPPING_ONLY )
 				{
 					final Set< Group< ViewId > > groups = new HashSet<>();
 
+					// TODO: this is now multi-threaded, add parameter to avoid it if necessary
 					TransformationTools.filterForOverlappingInterestPoints(
-							interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions() );
+							interestpoints, groups, data.getViewRegistrations().getViewRegistrations(), data.getSequenceDescription().getViewDescriptions(), 1 /*numThreads*/ );
 
 					System.out.println( Group.pvid( task.vA ) + " (" + task.labelA + ") <=> " + Group.pvid( task.vB ) + " (" + task.labelB + "): Remaining interest points for alignment: " );
 					for ( final Entry< ViewId, HashMap< String, Collection< InterestPoint > > > element: interestpoints.entrySet() )
