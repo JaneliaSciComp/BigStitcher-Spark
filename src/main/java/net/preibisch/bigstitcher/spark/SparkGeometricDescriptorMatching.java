@@ -287,6 +287,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						labelMap.get( task.vB ).put( label , weight );
 				} );
 
+				// TODO: this is now multi-threaded, add parameter to avoid it if necessary, but it's just two point clouds to load
 				// load & transform all interest points
 				final Map< ViewId, HashMap< String, Collection< InterestPoint > > > interestpoints =
 						TransformationTools.getAllTransformedInterestPoints(
