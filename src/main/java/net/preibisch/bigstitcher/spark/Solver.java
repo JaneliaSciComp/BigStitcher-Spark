@@ -28,7 +28,9 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -250,8 +252,8 @@ public class Solver extends AbstractRegistration
 		System.out.println("maxPlateauwidth: " + maxPlateauwidth );
 		System.out.println("disableFixedViews: " + disableFixedViews );
 		System.out.println("fixedViews: " + ( fixedViews == null ? "null" : Arrays.toString( fixedViews ) ) );
-		System.out.println("labels: " + Arrays.toString( labels.toArray() ));
-		System.out.println("labelweights: " + Arrays.toString( labelweights.toArray() ));
+		System.out.println("labels: " + ( labels == null ? "null" : Arrays.toString( labels.toArray() ) ));
+		System.out.println("labelweights: " + ( labelweights == null ? "null" : Arrays.toString( labelweights.toArray() ) ));
 
 		// assemble fixed views
 		final HashSet< ViewId > fixedViewIds;
@@ -472,8 +474,8 @@ public class Solver extends AbstractRegistration
 		final ArrayList< Pair< ViewId, String > > ipsToLoad = new ArrayList<>();
 		viewIdsGlobal.forEach( viewId -> labelMap.get( viewId ).forEach( (label, weight) -> ipsToLoad.add( new ValuePair<>( viewId, label ) ) ));
 
-		final ArrayList< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
-		final HashSet< ViewId > connectedViews = new HashSet<>();
+		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = Collections.synchronizedList( new ArrayList<>() );
+		final Set< ViewId > connectedViews = Collections.synchronizedSet( new HashSet<>() );
 
 		final ForkJoinPool pool = new ForkJoinPool( Math.max( 32, Runtime.getRuntime().availableProcessors() ) );
 
