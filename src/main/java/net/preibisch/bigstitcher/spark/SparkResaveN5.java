@@ -360,8 +360,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					viewIdsGlobal.stream().map( viewId ->
 							N5ApiTools.assembleJobs(
 									viewId,
-									viewIdToMrInfo.get(viewId)[s],
-									computeBlockSize) ).flatMap(List::stream).collect( Collectors.toList() );
+									viewIdToMrInfo.get(viewId)[s]) ).flatMap(List::stream).collect( Collectors.toList() );
 
 			System.out.println( "Downsampling level " + (storageFormat == StorageFormat.N5 ? "s" : "") + s + "... " );
 			System.out.println( "Number of compute blocks: " + allBlocks.size() );
