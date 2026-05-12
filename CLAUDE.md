@@ -82,10 +82,22 @@ The `install` script runs `mvn install`, then generates per-command shell wrappe
 
 Currently pinned (top of `pom.xml`):
 - `multiview-reconstruction.version` = `9.0.0-SNAPSHOT`
-- `n5.version` = `4.0.0-alpha-10` (alpha series for Zarr v3 sharding)
+- `imglib2.version` = `8.0.1`
+- `imglib2-cache.version` = `1.0.0-beta-20`
+- `imglib2-algorithm.version` = `0.18.3` (provides `algorithm.blocks.dfield.PositionFieldFunction`, required by mvr's `SplitImgLoaderThinPlateSplineFusion`)
+- `imglib2-realtransform.version` = `4.0.5`
+- `n5.version` = `4.0.0-alpha-12` (alpha series for Zarr v3 sharding; `DatasetAttributes.getChunkSize()` signature changed between alpha-10 and alpha-12 — must match mvr's pin)
+- `n5-hdf5.version` = `2.3.0-alpha-6`
+- `n5-imglib2.version` = `7.1.0-alpha-8`
+- `n5-universe.version` = `2.4.0-alpha-6`
+- `n5-zarr.version` = `2.0.0-alpha-8`
+- `n5-zstandard.version` = `2.0.0-alpha-4`
+- `n5-blosc.version` = `2.0.0-alpha-4`
 - `spim_data.version` = `2.3.5`
 - Apache Spark 3.3.2 (Scala 2.12.15) — Java 8 required, **Java ≥21 not yet compatible**
 - BigStitcher 2.6.0
+
+These imglib2/n5 versions must stay in lock-step with mvr's `pom.xml`. A divergence produces silent `NoSuchMethodError`/`NoClassDefFoundError` at runtime (the parallel-save path in mvr's `XmlIoSpimData2` is particularly prone to swallowing the cause).
 
 ## Two-Phase Container Workflow
 
