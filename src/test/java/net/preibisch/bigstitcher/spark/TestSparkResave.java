@@ -9,7 +9,7 @@ import picocli.CommandLine;
 
 public class TestSparkResave
 {
-	public static enum CloudProvider { S3, GC };
+	public enum CloudProvider { S3, GC };
 
 	public static String copyCloudDataset( final boolean deleteAfter, final CloudProvider cp )
 	{
@@ -45,7 +45,7 @@ public class TestSparkResave
 		}
 	}
 
-	public static final void main(final String... args)
+	public static void main(final String... args)
 	{
 		copyCloudDataset( true, CloudProvider.S3 );
 	}

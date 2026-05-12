@@ -23,7 +23,6 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -128,9 +127,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "xmlout: " + xmlOutURI );
 
 		// process all views
-		final ArrayList< ViewId > viewIdsGlobal = Import.getViewIds( dataGlobal );
+		List< ViewId > viewIdsGlobal = Import.getViewIds( dataGlobal );
 
-		if ( viewIdsGlobal.size() == 0 )
+		if ( viewIdsGlobal.isEmpty() )
 		{
 			throw new IllegalArgumentException( "No views to resave." );
 		}
@@ -183,7 +182,6 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			shardSize = null;
 			System.out.println( "Sharding disabled." );
 		}
-		//final N5Writer n5 = new N5FSWriter(n5Path);
 		final N5Writer n5Writer = URITools.instantiateN5Writer( storageFormat, n5PathURI );
 
 		System.out.println( "Compression: " + this.compressionType );
@@ -360,7 +358,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					viewIdsGlobal.stream().map( viewId ->
 							N5ApiTools.assembleJobs(
 									viewId,
-									viewIdToMrInfo.get(viewId)[s]) ).flatMap(List::stream).collect( Collectors.toList() );
+									viewIdToMrInfo.get( viewId )[s]) ).flatMap(List::stream).collect( Collectors.toList() );
 
 			System.out.println( "Downsampling level " + (storageFormat == StorageFormat.N5 ? "s" : "") + s + "... " );
 			System.out.println( "Number of compute blocks: " + allBlocks.size() );
