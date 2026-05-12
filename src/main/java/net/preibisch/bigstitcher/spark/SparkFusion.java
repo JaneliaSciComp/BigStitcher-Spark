@@ -99,7 +99,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 	private static final long serialVersionUID = -6103761116219617153L;
 
-	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path for saving (must be combined with the option '-d' or '--bdv'), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
+	@Option(names = { "-o", "--n5Path" }, required = true, description = "N5/ZARR/HDF5 base path of the output container, which must already have been created with create-fusion-container "
+			+ "(data type, BDV/plain format, sharding etc. are read from its metadata), e.g. -o /home/fused.n5 or e.g. s3://myBucket/data.n5")
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, description = "Dataset storage type, can be used to override guessed format (default: guess from file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
@@ -157,13 +158,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
 	private String intensityN5PathURIString = null;
 
-	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
+	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "storage type of the intensity coefficients container, can be used to override guessed format (default: guess from --intensityN5Path file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
 	private StorageFormat intensityN5StorageType = null;
 
 	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
 	private String intensityN5Group = "";
 
-	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
+	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{--intensityN5Group}/setup{s}/timepoint{t}/{--intensityN5Dataset}\"")
 	private String intensityN5Dataset = "intensity";
 
 	URI outPathURI = null;

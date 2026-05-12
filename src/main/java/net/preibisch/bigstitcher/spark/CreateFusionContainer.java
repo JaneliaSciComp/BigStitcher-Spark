@@ -65,7 +65,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type, currently supported OME-ZARR, N5, and ONLY for local, multithreaded Spark HDF5 (default: OME-ZARR)")
+			description = "Dataset storage type: ZARR (=OME-ZARR v3, supports sharding), ZARR2 (=OME-ZARR v2, no sharding), N5, "
+					+ "or HDF5 (ONLY for local, multithreaded Spark). Note: with the default ZARR (v3), sharding is auto-enabled "
+					+ "unless --useSharding=false is set. Use ZARR2 for OME-ZARR v2 (no sharding). (default: ZARR / OME-ZARR v3)")
 	private StorageFormat storageType = null;
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
