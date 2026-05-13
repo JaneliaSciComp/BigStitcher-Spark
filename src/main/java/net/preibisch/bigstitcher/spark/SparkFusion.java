@@ -560,7 +560,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				// === Phase 1.5: materialize per-underlying-view dfields if needed (TPS only) ===
 				if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 				{
-					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType );
+					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor );
 				}
 
 				final MultiResolutionLevelInfo[] mrInfo;
@@ -788,7 +788,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										rawDfields,
 										fusionType,
 										overlapExpansion,
-										Double.NaN,
+										anisotropyFactor,
 										1, // linear interpolation
 										null, // fusion order — only for FIRST_LOW / FIRST_HIGH
 										coefficients,
@@ -1030,7 +1030,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final List< ViewId > splitViewIds,
 			final URI xmlURIFinal,
 			final URI outPathURIFinal,
-			final StorageFormat storageTypeFinal )
+			final StorageFormat storageTypeFinal,
+			final double anisotropyFactor )
 	{
 		final int[] dfieldSpacingInt = Import.csvStringToIntArray( dfieldSpacingString );
 		if ( dfieldSpacingInt.length != 3 )
@@ -1062,7 +1063,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			{
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
 				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
-						splitImgLoader, old2newSetupId, splitRegMap, uvid, Double.NaN, Double.NaN );
+						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN );
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
 				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
 				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
