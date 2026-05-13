@@ -326,7 +326,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 			// extract all blocks that failed
 			final Set<long[][]> failedBlocksSet =
-					retryTracker.processWithSpark( rdds0Result, gridS0 );
+					retryTracker.processResults( rdds0Result.collect(), gridS0 );
 
 			// Use RetryTracker to handle retry counting and removal
 			if (!retryTracker.processFailures(failedBlocksSet))
@@ -378,7 +378,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 				final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
 
-				final JavaRDD<long[][]> rdds0Result = rddsN.map( gridBlock ->
+				final JavaRDD<long[][]> rddsNResult = rddsN.map( gridBlock ->
 				{
 					final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
 
@@ -406,12 +406,9 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					return gridBlock.clone();
 				});
 
-				rdds0Result.cache();
-				rdds0Result.count();
-
 				// extract all blocks that failed
 				final Set<long[][]> failedBlocksSet =
-						retryTrackerDS.processWithSpark( rdds0Result, allBlocks );
+						retryTrackerDS.processResults( rddsNResult.collect(), allBlocks );
 
 				// Use RetryTracker to handle retry counting and removal
 				if (!retryTrackerDS.processFailures(failedBlocksSet))

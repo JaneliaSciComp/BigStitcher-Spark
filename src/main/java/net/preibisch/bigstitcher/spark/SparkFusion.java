@@ -589,9 +589,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						System.exit( 1 );
 					}
 
-					final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
+					final JavaRDD<long[][]> rddS0 = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
 
-					final JavaRDD<long[][]> rddResult = rdd.map( gridBlock ->
+					final JavaRDD<long[][]> rddS0Result = rddS0.map( gridBlock ->
 					{
 						final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
 
@@ -798,12 +798,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						return gridBlock.clone();
 					});
 
-					rddResult.cache();
-					rddResult.count();
-
 					// extract all blocks that failed
 					final Set<long[][]> failedBlocksSet =
-							retryTracker.processWithSpark( rddResult, grid );
+							retryTracker.processResults( rddS0Result.collect(), grid );
 
 					// Use RetryTracker to handle retry counting and removal
 					if (!retryTracker.processFailures(failedBlocksSet))
@@ -881,12 +878,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							return gridBlock.clone();
 						});
 						
-						rddDSResult.cache();
-						rddDSResult.count();
-
 						// extract all blocks that failed
 						final Set<long[][]> failedBlocksSet =
-								retryTrackerDS.processWithSpark( rddDSResult, grid );
+								retryTrackerDS.processResults( rddDSResult.collect(), grid );
 
 						// Use RetryTracker to handle retry counting and removal
 						if (!retryTrackerDS.processFailures(failedBlocksSet))

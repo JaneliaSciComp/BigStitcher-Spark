@@ -7,8 +7,6 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Function;
 
-import org.apache.spark.api.java.JavaRDD;
-
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.process.export.RetryTracker;
 
@@ -31,19 +29,21 @@ public class RetryTrackerSpark<T> extends RetryTracker<T>
 	}
 
 	/**
-	 * Method to process all results when running with a service that returns futures. When running with Spark,
-	 * this method needs to be adjusted.
+	 * Compare the results produced by a Spark job against the grid of submitted blocks and
+	 * return the set of blocks that did not yield a successful result. Callers should pass
+	 * already-collected results (e.g. {@code rdd.collect()}) so the underlying RDD is
+	 * materialized exactly once and its side effects (block writes) are not re-executed.
 	 *
-	 * @param rddResults - list of RDD's with results
-	 * @param grid - list blocks that were processed
+	 * @param results - results returned by the Spark job (one per processed block)
+	 * @param grid - blocks that were submitted for processing
 	 * @return set of failed blocks
 	 */
-	public Set< T > processWithSpark( final JavaRDD<T> rddResults, final Collection< T > grid )
+	public Set< T > processResults( final Collection< T > results, final Collection< T > grid )
 	{
 		// we add all blocks to the failedBlocksSet, and remove the ones that succeeded
 		final HashMap< String, T > failedBlocksMap = createFailedBlocksMap( grid );
 
-		for ( final T result : rddResults.collect() )
+		for ( final T result : results )
 		{
 			try
 			{
@@ -56,7 +56,6 @@ public class RetryTrackerSpark<T> extends RetryTracker<T>
 			}
 		}
 
-		// Convert to Set<long[][]> for RetryTracker
 		return new HashSet<>( failedBlocksMap.values() );
 	}
 
