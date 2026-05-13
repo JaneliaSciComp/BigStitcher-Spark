@@ -37,7 +37,9 @@ import java.util.concurrent.Executors;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.GzipCompression;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -45,11 +47,14 @@ import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
+import net.imglib2.algorithm.blocks.dfield.DisplacementFields.TransformedDisplacementField;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.blocks.BlockAlgoUtils;
 import net.imglib2.algorithm.blocks.BlockSupplier;
@@ -62,6 +67,7 @@ import net.imglib2.type.Type;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
+import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
@@ -79,8 +85,12 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
+import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.DisplacementFieldN5Tools;
 import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
@@ -152,6 +162,22 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required for fusion in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
+
+	// === Thin-Plate-Spline displacement-field cache (only used with -fm THIN_PLATE_SPLINE) ===
+
+	public enum DfieldType { FLOAT32, FLOAT64 }
+
+	@Option(names = { "--dfieldSpacing" }, description = "TPS only: dfield grid spacing per dim (default: 8,8,8). Larger = less memory but more interpolation error.")
+	private String dfieldSpacingString = "8,8,8";
+
+	@Option(names = { "--dfieldType" }, description = "TPS only: dfield component type, FLOAT32 or FLOAT64 (default: FLOAT64, matching the pre-cache behavior). FLOAT32 halves on-disk and in-RAM size at the cost of some precision.")
+	private DfieldType dfieldType = DfieldType.FLOAT64;
+
+	@Option(names = { "--reuseDfieldCache" }, description = "TPS only: skip recomputing per-view dfields if already present in the output container with matching parameters (default: true).")
+	private boolean reuseDfieldCache = true;
+
+	@Option(names = { "--dfieldBlockSize" }, description = "TPS only: N5 block size of the cached dfield datasets (default: 128,128,128).")
+	private String dfieldBlockSizeString = "128,128,128";
 
 
 	// TODO: add support for loading coefficients during fusion
@@ -530,6 +556,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					System.out.println( "Fusing " + viewIds.size() + " views for this 3D volume ... " );
 
 				viewIds.forEach( vd -> System.out.println( Group.pvid( vd ) ) );
+
+				// === Phase 1.5: materialize per-underlying-view dfields if needed (TPS only) ===
+				if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
+				{
+					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType );
+				}
+
 				final MultiResolutionLevelInfo[] mrInfo;
 
 				if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
@@ -717,21 +750,52 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							}
 							else
 							{
-								blockSupplier = SplitImgLoaderThinPlateSplineFusion.init(
+								// THIN_PLATE_SPLINE: load per-underlying-view dfields from the cache
+								// materialized in Phase 1.5, then call initWithLoadedDfields.
+								// Loading as a full ArrayImg (not lazy) is required by Tobias's
+								// perf-tuned per-block evaluation in BlkThinPlateSplineFusion.
+								final SplitViewerImgLoader splitImgLoaderLambda =
+										( SplitViewerImgLoader ) dataLocal.getSequenceDescription().getImgLoader();
+								final List< ViewId > overlappingUnderlying =
+										SplitImgLoaderThinPlateSplineFusion.underlyingViewIds(
+												overlappingViews, splitImgLoaderLambda.new2oldSetupId() );
+
+								final Map< ViewId, Interval > viewBoundsLoaded = new HashMap<>();
+								@SuppressWarnings( { "unchecked", "rawtypes" } )
+								final Map rawDfields = new HashMap<>();
+								try ( final N5Reader r = URITools.instantiateN5Reader( storageType, outPathURI ) )
+								{
+									for ( final ViewId uvid : overlappingUnderlying )
+									{
+										final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
+										viewBoundsLoaded.put( uvid, DisplacementFieldN5Tools.readBbox( r, dsPath ) );
+										final TransformedDisplacementField< ? > df =
+												( dfieldType == DfieldType.FLOAT32 )
+														? DisplacementFieldN5Tools.readDisplacementFieldAsCellImg( r, dsPath, new FloatType() )
+														: DisplacementFieldN5Tools.readDisplacementFieldAsCellImg( r, dsPath, new DoubleType() );
+										rawDfields.put( uvid, df );
+									}
+								}
+
+								@SuppressWarnings( { "unchecked", "rawtypes" } )
+								final BlockSupplier rawSupplier = SplitImgLoaderThinPlateSplineFusion.initWithLoadedDfields(
 										conv,
-										(SplitViewerImgLoader)dataLocal.getSequenceDescription().getImgLoader(),
-                                        overlappingViews,
-										dataLocal.getViewRegistrations().getViewRegistrations(), // already adjusted for anisotropy
+										splitImgLoaderLambda,
+										overlappingViews,
+										dataLocal.getViewRegistrations().getViewRegistrations(),
 										dataLocal.getSequenceDescription().getViewDescriptions(),
+										viewBoundsLoaded,
+										rawDfields,
 										fusionType,
 										overlapExpansion,
 										Double.NaN,
 										1, // linear interpolation
-										null, // old setupId > new setupId for fusion order, only makes sense with FusionType.FIRST_LOW or FusionType.FIRST_HIGH
-										coefficients, // intensity correction
-										new BoundingBox( interval ), // already adjusted for anisotropy???
-										(RealType & NativeType)type,
+										null, // fusion order — only for FIRST_LOW / FIRST_HIGH
+										coefficients,
+										new BoundingBox( interval ),
+										(RealType & NativeType) type,
 										blockSize );
+								blockSupplier = rawSupplier;
 							}
 						}
 
@@ -904,6 +968,171 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		sc.close();
 
 		return null;
+	}
+
+	/**
+	 * Phase 1.5 of TPS fusion: for each underlying view of the current (channel,
+	 * timepoint), build the TPS displacement field once and persist it under
+	 * the output container at {@code _displacement_field_cache/...}. Subsequent
+	 * Spark block-fusion tasks load these dfields directly instead of
+	 * rebuilding them per task. Skips views whose cache entries already match.
+	 */
+	/**
+	 * Serializable description of one dfield block-task: which underlying view,
+	 * which N5 chunk position, and the per-view inputs needed to rebuild the
+	 * TPS on the executor (landmarks + bbox). One {@code DfieldBlockSpec} per
+	 * N5 chunk per view; many of these get parallelized across Spark slots so
+	 * the dfield rasterization scales beyond the small number of views.
+	 *
+	 * Landmarks and bbox are duplicated per spec (one view contributes many
+	 * specs), but the data is small (a few hundred bytes per view) so the
+	 * extra closure size is negligible compared to a broadcast.
+	 */
+	private static final class DfieldBlockSpec implements Serializable
+	{
+		private static final long serialVersionUID = 1L;
+		final int viewSetupId;
+		final int timepointId;
+		final long[] blockGridPos3d;
+		final long[] bboxMin;
+		final long[] bboxMax;
+		final double[][] sourcePoints;
+		final double[][] targetPoints;
+		final String datasetPath;
+
+		DfieldBlockSpec(
+				final ViewId v,
+				final long[] blockGridPos3d,
+				final Interval bbox,
+				final Landmarks landmarks,
+				final String datasetPath )
+		{
+			this.viewSetupId = v.getViewSetupId();
+			this.timepointId = v.getTimePointId();
+			this.blockGridPos3d = blockGridPos3d;
+			this.bboxMin = bbox.minAsLongArray();
+			this.bboxMax = bbox.maxAsLongArray();
+			this.sourcePoints = landmarks.getSourcePoints();
+			this.targetPoints = landmarks.getTargetPoints();
+			this.datasetPath = datasetPath;
+		}
+	}
+
+	/**
+	 * Phase 1.5: materialize per-underlying-view displacement fields under the
+	 * output container. Parallelized at the N5-chunk level: one Spark task per
+	 * dfield block. Driver pre-creates the empty datasets so executors don't
+	 * race on dataset creation. Skips views whose cache entry already matches.
+	 */
+	private void materializeDisplacementFields(
+			final JavaSparkContext sc,
+			final SpimData2 dataGlobal,
+			final List< ViewId > splitViewIds,
+			final URI xmlURIFinal,
+			final URI outPathURIFinal,
+			final StorageFormat storageTypeFinal )
+	{
+		final int[] dfieldSpacingInt = Import.csvStringToIntArray( dfieldSpacingString );
+		if ( dfieldSpacingInt.length != 3 )
+			throw new IllegalArgumentException( "--dfieldSpacing must have 3 values (got " + dfieldSpacingInt.length + ")" );
+		final double[] dfieldSpacing = new double[] { dfieldSpacingInt[ 0 ], dfieldSpacingInt[ 1 ], dfieldSpacingInt[ 2 ] };
+		final int[] dfieldBlockSize = Import.csvStringToIntArray( dfieldBlockSizeString );
+		if ( dfieldBlockSize.length != 3 )
+			throw new IllegalArgumentException( "--dfieldBlockSize must have 3 values (got " + dfieldBlockSize.length + ")" );
+
+		if ( !( dataGlobal.getSequenceDescription().getImgLoader() instanceof SplitViewerImgLoader ) )
+			throw new IllegalStateException( "THIN_PLATE_SPLINE requires SplitViewerImgLoader." );
+		final SplitViewerImgLoader splitImgLoader = ( SplitViewerImgLoader ) dataGlobal.getSequenceDescription().getImgLoader();
+		final Map< Integer, java.util.List< Integer > > old2newSetupId =
+				SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
+		final List< ViewId > underlyingViewIds =
+				SplitImgLoaderThinPlateSplineFusion.underlyingViewIds( splitViewIds, splitImgLoader.new2oldSetupId() );
+		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
+		final Map< ViewId, ViewRegistration > splitRegMap = dataGlobal.getViewRegistrations().getViewRegistrations();
+
+		// Pass 1 (driver): compute landmarks + bbox per view, check cache, pre-create N5 datasets.
+		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
+		int viewsToCompute = 0;
+		final Compression compression = new GzipCompression( 1 );
+
+		try ( final N5Reader r = URITools.instantiateN5Reader( storageTypeFinal, outPathURIFinal );
+		      final N5Writer w = URITools.instantiateN5Writer( storageTypeFinal, outPathURIFinal ) )
+		{
+			for ( final ViewId uvid : underlyingViewIds )
+			{
+				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
+				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
+						splitImgLoader, old2newSetupId, splitRegMap, uvid, Double.NaN, Double.NaN );
+				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
+				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
+				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
+
+				if ( reuseDfieldCache && DisplacementFieldN5Tools.datasetMatches( r, dsPath, bbox, dfieldSpacing ) )
+				{
+					System.out.println( "Phase 1.5: reusing cached dfield for " + Group.pvid( uvid ) + " (" + dsPath + ")" );
+					continue;
+				}
+
+				// Pre-create the empty 4D dataset on the driver, including all attrs.
+				if ( dfieldType == DfieldType.FLOAT32 )
+					DisplacementFieldN5Tools.createEmptyDataset(
+							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression );
+				else
+					DisplacementFieldN5Tools.createEmptyDataset(
+							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression );
+
+				// Enumerate every block of this view's dfield grid into the flat spec list.
+				final long[] numBlocks = DisplacementFieldN5Tools.gridBlockCount( bbox, dfieldSpacing, dfieldBlockSize );
+				long viewBlockCount = 0;
+				for ( long bz = 0; bz < numBlocks[ 2 ]; ++bz )
+					for ( long by = 0; by < numBlocks[ 1 ]; ++by )
+						for ( long bx = 0; bx < numBlocks[ 0 ]; ++bx )
+						{
+							allSpecs.add( new DfieldBlockSpec( uvid, new long[] { bx, by, bz }, bbox, lm, dsPath ) );
+							++viewBlockCount;
+						}
+
+				System.out.println( "Phase 1.5: " + Group.pvid( uvid )
+						+ " bbox=" + Util.printInterval( bbox )
+						+ " gridBlocks=" + Arrays.toString( numBlocks )
+						+ " (" + viewBlockCount + " tasks) -> " + dsPath );
+				++viewsToCompute;
+			}
+		}
+
+		if ( allSpecs.isEmpty() )
+		{
+			System.out.println( "Phase 1.5: all " + underlyingViewIds.size() + " underlying-view dfield(s) already cached, skipping." );
+			return;
+		}
+
+		System.out.println( "Phase 1.5: dispatching " + allSpecs.size() + " block task(s) across "
+				+ viewsToCompute + " of " + underlyingViewIds.size() + " underlying view(s)." );
+
+		// Pass 2 (executors): rebuild TPS, sample one block, saveBlock.
+		final double[] dfieldSpacingFinal = dfieldSpacing;
+		final int[] dfieldBlockSizeFinal = dfieldBlockSize;
+		final DfieldType dfieldTypeFinal = dfieldType;
+		final long phase15Start = System.currentTimeMillis();
+
+		sc.parallelize( allSpecs, allSpecs.size() ).foreach( spec ->
+		{
+			final ThinplateSplineTransform tps = new ThinplateSplineTransform( spec.targetPoints, spec.sourcePoints );
+			final Interval bbox = new FinalInterval( spec.bboxMin, spec.bboxMax );
+			try ( final N5Writer ww = URITools.instantiateN5Writer( storageTypeFinal, outPathURIFinal ) )
+			{
+				if ( dfieldTypeFinal == DfieldType.FLOAT32 )
+					DisplacementFieldN5Tools.writeDisplacementFieldBlock(
+							tps, bbox, dfieldSpacingFinal, dfieldBlockSizeFinal, spec.blockGridPos3d,
+							ww, spec.datasetPath, new FloatType() );
+				else
+					DisplacementFieldN5Tools.writeDisplacementFieldBlock(
+							tps, bbox, dfieldSpacingFinal, dfieldBlockSizeFinal, spec.blockGridPos3d,
+							ww, spec.datasetPath, new DoubleType() );
+			}
+		} );
+
+		System.out.println( "Phase 1.5 complete in " + ( System.currentTimeMillis() - phase15Start ) + " ms." );
 	}
 
 	public static void main(final String... args) throws SpimDataException {
