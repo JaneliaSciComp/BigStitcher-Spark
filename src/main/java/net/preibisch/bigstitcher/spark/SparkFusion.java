@@ -85,6 +85,7 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
@@ -178,6 +179,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 	@Option(names = { "--dfieldBlockSize" }, description = "TPS only: N5 block size of the cached dfield datasets (default: 128,128,128).")
 	private String dfieldBlockSizeString = "128,128,128";
+
+	@Option(names = { "--tpsCorrespondenceLabel" }, description = "TPS only: interest-point label whose cross-split correspondences are used to add cross-view 'tie' landmarks to each underlying view's TPS. Typically the splitting-suffixed label, e.g. 'beads_split'. Default: null (no tie landmarks, behave as pure split-center TPS).")
+	private String tpsCorrespondenceLabel = null;
+
+	@Option(names = { "--tpsMinNumCorrespondences" }, description = "TPS only: minimum number of corresponding interest points required per overlapping split-pair before adding a tie landmark (default: 4). Only used when --tpsCorrespondenceLabel is set.")
+	private int tpsMinNumCorrespondences = 4;
 
 
 	// TODO: add support for loading coefficients during fusion
@@ -560,7 +567,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				// === Phase 1.5: materialize per-underlying-view dfields if needed (TPS only) ===
 				if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 				{
-					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor );
+					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor,
+							tpsCorrespondenceLabel, tpsMinNumCorrespondences );
 				}
 
 				final MultiResolutionLevelInfo[] mrInfo;
@@ -777,6 +785,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 									}
 								}
 
+								final ViewInterestPoints vipLambda =
+										( tpsCorrespondenceLabel != null ) ? dataLocal.getViewInterestPoints() : null;
+
 								@SuppressWarnings( { "unchecked", "rawtypes" } )
 								final BlockSupplier rawSupplier = SplitImgLoaderThinPlateSplineFusion.initWithLoadedDfields(
 										conv,
@@ -794,7 +805,10 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										coefficients,
 										new BoundingBox( interval ),
 										(RealType & NativeType) type,
-										blockSize );
+										blockSize,
+										vipLambda,
+										tpsCorrespondenceLabel,
+										tpsMinNumCorrespondences );
 								blockSupplier = rawSupplier;
 							}
 						}
@@ -1031,7 +1045,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final URI xmlURIFinal,
 			final URI outPathURIFinal,
 			final StorageFormat storageTypeFinal,
-			final double anisotropyFactor )
+			final double anisotropyFactor,
+			final String correspondenceLabel,
+			final int minNumCorrespondences )
 	{
 		final int[] dfieldSpacingInt = Import.csvStringToIntArray( dfieldSpacingString );
 		if ( dfieldSpacingInt.length != 3 )
@@ -1050,6 +1066,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				SplitImgLoaderThinPlateSplineFusion.underlyingViewIds( splitViewIds, splitImgLoader.new2oldSetupId() );
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 		final Map< ViewId, ViewRegistration > splitRegMap = dataGlobal.getViewRegistrations().getViewRegistrations();
+		final net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints viewInterestPoints =
+				( correspondenceLabel != null ) ? dataGlobal.getViewInterestPoints() : null;
 
 		// Pass 1 (driver): compute landmarks + bbox per view, check cache, pre-create N5 datasets.
 		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
@@ -1063,12 +1081,14 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			{
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
 				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
-						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN );
+						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN,
+						viewInterestPoints, correspondenceLabel, minNumCorrespondences );
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
 				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
 				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
 
-				if ( reuseDfieldCache && DisplacementFieldN5Tools.datasetMatches( r, dsPath, bbox, dfieldSpacing ) )
+				if ( reuseDfieldCache && DisplacementFieldN5Tools.datasetMatches(
+						r, dsPath, bbox, dfieldSpacing, correspondenceLabel, minNumCorrespondences ) )
 				{
 					System.out.println( "Phase 1.5: reusing cached dfield for " + Group.pvid( uvid ) + " (" + dsPath + ")" );
 					continue;
@@ -1077,10 +1097,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				// Pre-create the empty 4D dataset on the driver, including all attrs.
 				if ( dfieldType == DfieldType.FLOAT32 )
 					DisplacementFieldN5Tools.createEmptyDataset(
-							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression );
+							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression,
+							correspondenceLabel, minNumCorrespondences );
 				else
 					DisplacementFieldN5Tools.createEmptyDataset(
-							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression );
+							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression,
+							correspondenceLabel, minNumCorrespondences );
 
 				// Enumerate every block of this view's dfield grid into the flat spec list.
 				final long[] numBlocks = DisplacementFieldN5Tools.gridBlockCount( bbox, dfieldSpacing, dfieldBlockSize );
