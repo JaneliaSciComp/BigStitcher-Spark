@@ -29,11 +29,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+import java.util.function.IntUnaryOperator;
 import java.util.stream.Collectors;
 
 import bdv.img.n5.N5ImageLoader;
+import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.sequence.ViewId;
 import mpicbg.spim.data.sequence.VoxelDimensions;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
@@ -46,6 +51,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import org.apache.spark.SparkConf;
@@ -54,8 +60,14 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.bigdataviewer.n5.N5CloudImageLoader;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
+import org.janelia.saalfeldlab.n5.shard.ShardCodecInfo;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -103,8 +115,11 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Option(names = { "-o", "--n5Path" }, description = "N5/OME-ZARR path for saving, (default: 'folder of the xml'/dataset.n5 or e.g. s3://myBucket/data.n5)")
 	private String n5PathURIString = null;
 
+	@Option(names = { "--downsampleS0" }, description = "Skip writing the s0/full-resolution level and only generate downsampling pyramid levels; requires existing s0 datasets for all selected views (default: false)")
+	private boolean downsampleS0 = false;
+
 	@Option(names = { "--useSharding" },
-		description = "Enable Zarr v3 sharding using blockScale as shard size factor (default: enabled for ZARR v3, disabled for N5/ZARR v2)")
+			description = "Enable Zarr v3 sharding using blockScale as shard size factor (default: enabled for ZARR v3, disabled for N5/ZARR v2)")
 	private Boolean useSharding = null; // null = auto-detect
 
 	@Override
@@ -227,10 +242,22 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			return null;
 		}
 
+		if (downsampleS0)
+		{
+			validateExistingS0Datasets(
+					n5Writer,
+					storageFormat,
+					viewIdsGlobal,
+					dimensions,
+					dataTypes,
+					blockSize,
+					compression );
+			System.out.println( "Skipping s0/full-resolution write; existing s0 datasets will be used to generate the downsampling pyramid." );
+		}
+
 		// create all datasets and write BDV metadata for all ViewIds (including downsampling) in parallel
 		long time = System.currentTimeMillis();
 
-		// TODO: is this map serializable?
 		final Map< ViewId, MultiResolutionLevelInfo[] > viewIdToMrInfo =
 				viewIdsGlobal.parallelStream().map( viewId ->
 				{
@@ -238,31 +265,62 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 					if ( storageFormat == StorageFormat.N5 )
 					{
-						mrInfo = N5ApiTools.setupBdvDatasetsN5(
-								n5Writer,
-								viewId,
-								dataTypes.get( viewId.getViewSetupId() ),
-								dimensions.get( viewId.getViewSetupId() ),
-								compression,
-								blockSize,
-								downsamplings );
+						if (downsampleS0)
+						{
+							mrInfo = setupBdvDatasetsN5SkippingS0(
+									n5Writer,
+									viewId,
+									dataTypes.get(viewId.getViewSetupId()),
+									dimensions.get(viewId.getViewSetupId()),
+									compression,
+									blockSize,
+									downsamplings);
+						}
+						else
+						{
+							mrInfo = N5ApiTools.setupBdvDatasetsN5(
+									n5Writer,
+									viewId,
+									dataTypes.get(viewId.getViewSetupId()),
+									dimensions.get(viewId.getViewSetupId()),
+									compression,
+									blockSize,
+									downsamplings);
+						}
 					}
 					else
 					{
 						System.out.println( Arrays.toString( blockSize ) );
 						VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize();
-						mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR_ResaveRaw(
-								n5Writer,
-								viewId,
-								dataTypes.get( viewId.getViewSetupId() ),
-								dimensions.get( viewId.getViewSetupId() ),
-								vx.dimensionsAsDoubleArray(),
-								vx.unit(),
-								compression,
-								blockSize,
-								downsamplings,
-								useSharding,
-								shardSize );
+						if (downsampleS0)
+						{
+							System.out.println( "Save view setups downsampling" );
+							mrInfo = setupBdvDatasetsOMEZARRResaveRawSkippingS0(
+									n5Writer,
+									viewId,
+									dataTypes.get(viewId.getViewSetupId()),
+									dimensions.get(viewId.getViewSetupId()),
+									vx.dimensionsAsDoubleArray(),
+									vx.unit(),
+									compression,
+									blockSize,
+									downsamplings,
+									useSharding,
+									shardSize);
+						}
+						else
+							mrInfo = N5ApiTools.setupBdvDatasetsOMEZARR_ResaveRaw(
+									n5Writer,
+									viewId,
+									dataTypes.get( viewId.getViewSetupId() ),
+									dimensions.get( viewId.getViewSetupId() ),
+									vx.dimensionsAsDoubleArray(),
+									vx.unit(),
+									compression,
+									blockSize,
+									downsamplings,
+									useSharding,
+									shardSize );
 					}
 
 					return new ValuePair<>(
@@ -288,143 +346,41 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		// Save s0 level
 		//
-		time = System.currentTimeMillis();
+		if ( !downsampleS0 )
+			time = processSNBlocks(
+					sc,
+					gridS0,
+					blockCount -> Math.min( Math.max( sc.defaultParallelism(), 1 ), blockCount ),
+					"s0 n5-api dataset resaving",
+					"Resaved " + (storageFormat == StorageFormat.N5 ? "N5 s0" : "OME-ZARR 0") + "-level, took: ",
+					true,
+					true,
+					gridBlock ->
+					{
+						final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
+						final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
 
-		final RetryTrackerSpark<long[][]> retryTracker =
-				RetryTrackerSpark.forGridBlocks("s0 n5-api dataset resaving", gridS0.size());
+						N5ApiTools.resaveS0Block(
+								dataLocal,
+								n5Lcl,
+								storageFormat,
+								dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
+								N5ApiTools.gridToDatasetBdv( 0, storageFormat ), // a function mapping the gridblock to the dataset name for level 0 and N5
+								gridBlock );
 
-		do
-		{
-			if (!retryTracker.beginAttempt())
-			{
-				System.out.println( "Stopping." );
-				System.exit( 1 );
-			}
-
-			int nPartitions = Math.min(Math.max(sc.defaultParallelism(), 1), gridS0.size());
-			System.out.printf("Use %d partitions to process %d blocks\n", nPartitions, gridS0.size());
-
-			final JavaRDD<long[][]> rdds0 = sc.parallelize( gridS0, nPartitions );
-
-			final JavaRDD<long[][]> rdds0Result = rdds0.map( gridBlock ->
-			{
-				final SpimData2 dataLocal = Spark.getSparkJobSpimData2(xmlURI);
-				final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
-
-				N5ApiTools.resaveS0Block(
-						dataLocal,
-						n5Lcl,
-						storageFormat,
-						dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
-						N5ApiTools.gridToDatasetBdv( 0, storageFormat ), // a function mapping the gridblock to the dataset name for level 0 and N5
-						gridBlock );
-
-				n5Lcl.close();
-
-				return gridBlock.clone();
-			});
-
-			// extract all blocks that failed
-			final Set<long[][]> failedBlocksSet =
-					retryTracker.processResults( rdds0Result.collect(), gridS0 );
-
-			// Use RetryTracker to handle retry counting and removal
-			if (!retryTracker.processFailures(failedBlocksSet))
-			{
-				System.out.println( "Stopping." );
-				System.exit( 1 );
-			}
-
-			// Update grid for next iteration with remaining failed blocks
-			gridS0.clear();
-			if (! failedBlocksSet.isEmpty() ) {
-				System.out.printf("Retry %d failed blocks\n", failedBlocksSet.size());
-				gridS0.addAll(failedBlocksSet);
-			}
-		}
-		while ( gridS0.size() > 0 );
-
-		System.out.println( "Resaved " + (storageFormat == StorageFormat.N5 ? "N5 s0" : "OME-ZARR 0") + "-level, took: " + (System.currentTimeMillis() - time ) + " ms." );
+						n5Lcl.close();
+					} );
 
 		//
 		// Save remaining downsampling levels (s1 ... sN)
 		//
-		for ( int level = 1; level < downsamplings.length; ++level )
-		{
-			final int s = level;
-
-			//mrInfo.dimensions, mrInfo.blockSize, mrInfo.blockSize
-			final List<long[][]> allBlocks =
-					viewIdsGlobal.stream().map( viewId ->
-							N5ApiTools.assembleJobs(
-									viewId,
-									viewIdToMrInfo.get( viewId )[s]) ).flatMap(List::stream).collect( Collectors.toList() );
-
-			System.out.println( "Downsampling level " + (storageFormat == StorageFormat.N5 ? "s" : "") + s + "... " );
-			System.out.println( "Number of compute blocks: " + allBlocks.size() );
-
-			final RetryTrackerSpark<long[][]> retryTrackerDS =
-					RetryTrackerSpark.forGridBlocks( "s" + s +" n5-api dataset resaving", allBlocks.size());
-
-			final long timeS = System.currentTimeMillis();
-
-			do
-			{
-				if (!retryTrackerDS.beginAttempt())
-				{
-					System.out.println( "Stopping." );
-					System.exit( 1 );
-				}
-
-				final JavaRDD<long[][]> rddsN = sc.parallelize(allBlocks, Math.min( Spark.maxPartitions, allBlocks.size() ) );
-
-				final JavaRDD<long[][]> rddsNResult = rddsN.map( gridBlock ->
-				{
-					final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
-
-					if ( storageFormat == StorageFormat.N5 )
-					{
-						N5ApiTools.writeDownsampledBlock(
-								n5Lcl,
-								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
-								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
-								gridBlock );
-					}
-					else
-					{
-						N5ApiTools.writeDownsampledBlock5dOMEZARR(
-								n5Lcl,
-								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
-								viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
-								gridBlock,
-								0,
-								0 );
-					}
-	
-					n5Lcl.close();
-
-					return gridBlock.clone();
-				});
-
-				// extract all blocks that failed
-				final Set<long[][]> failedBlocksSet =
-						retryTrackerDS.processResults( rddsNResult.collect(), allBlocks );
-
-				// Use RetryTracker to handle retry counting and removal
-				if (!retryTrackerDS.processFailures(failedBlocksSet))
-				{
-					System.out.println( "Stopping." );
-					System.exit( 1 );
-				}
-
-				// Update grid for next iteration with remaining failed blocks
-				allBlocks.clear();
-				allBlocks.addAll(failedBlocksSet);
-
-			} while ( allBlocks.size() > 0 );
-
-			System.out.println( "Resaved " + (storageFormat == StorageFormat.N5 ? "N5 s" : "OME-ZARR ") + s + " level, took: " + (System.currentTimeMillis() - timeS ) + " ms." );
-		}
+		processDownsampledViews(
+				sc,
+				downsamplings,
+				viewIdsGlobal,
+				viewIdToMrInfo,
+				storageFormat,
+				n5PathURI );
 
 		sc.close();
 
@@ -466,6 +422,439 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "done." );
 
 		return null;
+	}
+
+	@FunctionalInterface
+	private interface GridBlockProcessor extends Serializable
+	{
+		void process( long[][] gridBlock ) throws Exception;
+	}
+
+	private static long processSNBlocks(
+			final JavaSparkContext sc,
+			final List<long[][]> blocks,
+			final IntUnaryOperator partitionCount,
+			final String retryDescription,
+			final String completedMessage,
+			final boolean printPartitionCount,
+			final boolean printRetryCount,
+			final GridBlockProcessor processBlock )
+	{
+		final long time = System.currentTimeMillis();
+
+		final RetryTrackerSpark<long[][]> retryTracker =
+				RetryTrackerSpark.forGridBlocks(retryDescription, blocks.size());
+
+		do
+		{
+			if (!retryTracker.beginAttempt())
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
+
+			final int nPartitions = partitionCount.applyAsInt( blocks.size() );
+
+			if ( printPartitionCount )
+				System.out.printf("Use %d partitions to process %d blocks\n", nPartitions, blocks.size());
+
+			final JavaRDD<long[][]> rdds = sc.parallelize( blocks, nPartitions );
+
+			final JavaRDD<long[][]> rddsResult = rdds.map( gridBlock ->
+			{
+				processBlock.process( gridBlock );
+				return gridBlock.clone();
+			});
+
+			// extract all blocks that failed
+			final Set<long[][]> failedBlocksSet =
+					retryTracker.processResults( rddsResult.collect(), blocks );
+
+			// Use RetryTracker to handle retry counting and removal
+			if (!retryTracker.processFailures(failedBlocksSet))
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
+
+			// Update grid for next iteration with remaining failed blocks
+			blocks.clear();
+			if ( printRetryCount && !failedBlocksSet.isEmpty() )
+				System.out.printf("Retry %d failed blocks\n", failedBlocksSet.size());
+			blocks.addAll(failedBlocksSet);
+		}
+		while (!blocks.isEmpty());
+
+		System.out.println( completedMessage + (System.currentTimeMillis() - time ) + " ms." );
+
+		return time;
+	}
+
+	private static void processDownsampledViews(
+			final JavaSparkContext sc,
+			final int[][] downsamplings,
+			final List< ViewId > viewIdsGlobal,
+			final Map< ViewId, MultiResolutionLevelInfo[] > viewIdToMrInfo,
+			final StorageFormat storageFormat,
+			final URI n5PathURI )
+	{
+		for ( int level = 1; level < downsamplings.length; ++level )
+		{
+			final int s = level;
+
+			//mrInfo.dimensions, mrInfo.blockSize, mrInfo.blockSize
+			final List<long[][]> allBlocks =
+					viewIdsGlobal.stream().map( viewId ->
+							N5ApiTools.assembleJobs(
+									viewId,
+									viewIdToMrInfo.get( viewId )[s]) ).flatMap(List::stream).collect( Collectors.toList() );
+
+			System.out.println( "Downsampling level " + (storageFormat == StorageFormat.N5 ? "s" : "") + s + "... " );
+			System.out.println( "Number of compute blocks: " + allBlocks.size() );
+
+			processSNBlocks(
+					sc,
+					allBlocks,
+					blockCount -> Math.min( Spark.maxPartitions, blockCount ),
+					"s" + s +" n5-api dataset resaving",
+					"Resaved " + (storageFormat == StorageFormat.N5 ? "N5 s" : "OME-ZARR ") + s + " level, took: ",
+					false,
+					false,
+					gridBlock ->
+					{
+						final N5Writer n5Lcl = URITools.instantiateN5Writer( storageFormat, n5PathURI );
+
+						if ( storageFormat == StorageFormat.N5 )
+						{
+							N5ApiTools.writeDownsampledBlock(
+									n5Lcl,
+									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+									gridBlock );
+						}
+						else
+						{
+							N5ApiTools.writeDownsampledBlock5dOMEZARR(
+									n5Lcl,
+									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s ], //N5ResaveTools.gridToDatasetBdv( s, StorageType.N5 ),
+									viewIdToMrInfo.get( N5ApiTools.gridBlockToViewId( gridBlock ) )[ s - 1 ],//N5ResaveTools.gridToDatasetBdv( s - 1, StorageType.N5 ),
+									gridBlock,
+									0,
+									0 );
+						}
+
+						n5Lcl.close();
+					} );
+		}
+	}
+
+	private static void validateExistingS0Datasets(
+			final N5Reader n5Reader,
+			final StorageFormat storageFormat,
+			final List< ViewId > viewIds,
+			final Map< Integer, long[] > dimensions,
+			final Map< Integer, DataType > dataTypes,
+			final int[] blockSize,
+			final Compression compression )
+	{
+		final StringBuilder errors = new StringBuilder();
+
+		for ( final ViewId viewId : viewIds )
+		{
+			final String dataset = N5ApiTools.createBDVPath( viewId, 0, storageFormat );
+
+			if ( !n5Reader.datasetExists( dataset ) )
+			{
+				errors.append( "\n  - missing dataset " ).append( dataset );
+				continue;
+			}
+
+			final DatasetAttributes attributes = n5Reader.getDatasetAttributes( dataset );
+			final long[] expectedDimensions = expectedS0Dimensions( storageFormat, dimensions.get( viewId.getViewSetupId() ) );
+			final DataType expectedDataType = dataTypes.get( viewId.getViewSetupId() );
+
+			if ( !Arrays.equals( expectedDimensions, attributes.getDimensions() ) )
+				errors.append( "\n  - " ).append( dataset )
+						.append( " dimensions are " ).append( Util.printCoordinates( attributes.getDimensions() ) )
+						.append( ", expected " ).append( Util.printCoordinates( expectedDimensions ) );
+
+			if ( expectedDataType != attributes.getDataType() )
+				errors.append( "\n  - " ).append( dataset )
+						.append( " data type is " ).append( attributes.getDataType() )
+						.append( ", expected " ).append( expectedDataType );
+
+			if ( StorageFormat.N5.equals( storageFormat ) && !Arrays.equals( blockSize, attributes.getBlockSize() ) )
+				errors.append( "\n  - " ).append( dataset )
+						.append( " block size is " ).append( Util.printCoordinates( attributes.getBlockSize() ) )
+						.append( ", expected " ).append( Util.printCoordinates( blockSize ) );
+
+			if ( StorageFormat.N5.equals( storageFormat ) && !attributes.getCompression().getType().equals( compression.getType() ) )
+				errors.append( "\n  - " ).append( dataset )
+						.append( " compression is " ).append( attributes.getCompression().getType() )
+						.append( ", expected " ).append( compression.getType() );
+		}
+
+		if ( errors.length() > 0 )
+			throw new IllegalStateException( "Cannot use --skipS0IfExists because existing s0 datasets are missing or incompatible:" + errors );
+	}
+
+	private static MultiResolutionLevelInfo[] setupBdvDatasetsN5SkippingS0(
+			final N5Writer n5Writer,
+			final ViewId viewId,
+			final DataType dataType,
+			final long[] dimensions,
+			final Compression compression,
+			final int[] blockSize,
+			int[][] downsamplings )
+	{
+		final MultiResolutionLevelInfo[] mrInfo = setupMultiResolutionPyramidSkippingS0(
+				n5Writer,
+				viewId,
+				N5ApiTools.viewIdToDatasetBdv( StorageFormat.N5 ),
+				dataType,
+				dimensions,
+				compression,
+				blockSize,
+				downsamplings,
+				false,
+				null );
+
+		final String s0Dataset = N5ApiTools.createBDVPath( viewId, 0, StorageFormat.N5 );
+		final String setupDataset = s0Dataset.substring(0, s0Dataset.indexOf( "/timepoint" ));
+		final String timepointDataset = s0Dataset.substring(0, s0Dataset.indexOf("/s0" ));
+		final DatasetAttributes s0Attributes = n5Writer.getDatasetAttributes( s0Dataset );
+
+		final Map<String, Class<?>> attribs = n5Writer.listAttributes( setupDataset );
+
+		if ( !attribs.containsKey( DatasetAttributes.DATA_TYPE_KEY ) || !attribs.containsKey( DatasetAttributes.BLOCK_SIZE_KEY ) || !attribs.containsKey( DatasetAttributes.DIMENSIONS_KEY ) || !attribs.containsKey( DatasetAttributes.COMPRESSION_KEY ) || !attribs.containsKey( "downsamplingFactors" ) )
+		{
+			final HashMap<String, Object > attribs2 = new HashMap<>();
+			attribs2.put(DatasetAttributes.DATA_TYPE_KEY, s0Attributes.getDataType() );
+			attribs2.put(DatasetAttributes.BLOCK_SIZE_KEY, s0Attributes.getBlockSize() );
+			attribs2.put(DatasetAttributes.DIMENSIONS_KEY, s0Attributes.getDimensions() );
+			attribs2.put(DatasetAttributes.COMPRESSION_KEY, s0Attributes.getCompression() );
+			attribs2.put( "downsamplingFactors", downsamplings );
+
+			n5Writer.setAttributes( setupDataset, attribs2 );
+		}
+
+		n5Writer.setAttribute(timepointDataset, "resolution", new double[] {1,1,1} );
+		n5Writer.setAttribute(timepointDataset, "saved_completely", true );
+		n5Writer.setAttribute(timepointDataset, "multiScale", downsamplings != null && downsamplings.length != 0 );
+
+		for ( int level = 1; level < downsamplings.length; ++level )
+			n5Writer.setAttribute( mrInfo[ level ].dataset, "downsamplingFactors", mrInfo[ level ].absoluteDownsampling );
+
+		return mrInfo;
+	}
+
+	private static MultiResolutionLevelInfo[] setupBdvDatasetsOMEZARRResaveRawSkippingS0(
+			final N5Writer n5Writer,
+			final ViewId viewId,
+			final DataType dataType,
+			final long[] dimensions,
+			final double[] resolutionS0,
+			final String resolutionUnit,
+			final Compression compression,
+			final int[] blockSize,
+			final int[][] downsamplings,
+			final boolean useSharding,
+			final int[] shardSize )
+	{
+		final String s0Dataset = N5ApiTools.viewIdToDatasetBdv( StorageFormat.ZARR ).apply( viewId, 0 );
+		final String baseDataset = s0Dataset.substring(0, s0Dataset.lastIndexOf( "/" ) + 1);
+
+		System.out.println( "Creating 5D OME-ZARR metadata for '" + baseDataset + "' ... " );
+
+		final long[] dim5d = new long[] { dimensions[ 0 ], dimensions[ 1 ], dimensions[ 2 ], 1, 1 };
+		final int[] blockSize5d = new int[] { blockSize[ 0 ], blockSize[ 1 ], blockSize[ 2 ], 1, 1 };
+		final int[][] ds5d = new int[ downsamplings.length ][];
+
+		for ( int d = 0; d < ds5d.length; ++d )
+			ds5d[ d ] = new int[] { downsamplings[ d ][ 0 ], downsamplings[ d ][ 1 ], downsamplings[ d ][ 2 ], 1, 1 };
+
+		final int[] shardSize5d = useSharding && shardSize != null
+				? new int[] { shardSize[ 0 ], shardSize[ 1 ], shardSize[ 2 ], 1, 1 }
+				: null;
+
+		final MultiResolutionLevelInfo[] mrInfo = setupMultiResolutionPyramidSkippingS0(
+				n5Writer,
+				viewId,
+				N5ApiTools.viewIdToDatasetBdv( StorageFormat.ZARR ),
+				dataType,
+				dim5d,
+				compression,
+				blockSize5d,
+				ds5d,
+				useSharding,
+				shardSize5d );
+
+		final Function<Integer, String> levelToName = level -> "/" + level;
+		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
+				level -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
+
+		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+				5,
+				"/",
+				resolutionS0,
+				resolutionUnit,
+				mrInfo.length,
+				levelToName,
+				levelToMipmapTransform );
+
+		n5Writer.setAttribute( baseDataset, "multiscales", meta );
+
+		return mrInfo;
+	}
+
+	private static MultiResolutionLevelInfo[] setupMultiResolutionPyramidSkippingS0(
+			final N5Writer n5Writer,
+			final ViewId viewId,
+			final BiFunction<ViewId, Integer, String> viewIdToDataset,
+			final DataType dataType,
+			final long[] dimensionsS0,
+			final Compression compression,
+			final int[] blockSize,
+			final int[][] downsamplings,
+			final boolean useSharding,
+			final int[] shardSize )
+	{
+		final MultiResolutionLevelInfo[] mrInfo = new MultiResolutionLevelInfo[ downsamplings.length ];
+		final int[] relativeDownsampling = downsamplings[ 0 ].clone();
+		Arrays.setAll( relativeDownsampling, i -> 1 );
+
+		final String datasetS0 = viewIdToDataset.apply( viewId, 0 );
+		final DatasetAttributes s0Attributes = n5Writer.getDatasetAttributes( datasetS0 );
+
+		mrInfo[ 0 ] = new MultiResolutionLevelInfo(
+				datasetS0,
+				s0Attributes.getDimensions().clone(),
+				s0Attributes.getDataType(),
+				relativeDownsampling,
+				downsamplings[ 0 ],
+				s0Attributes.getBlockSize(),
+				null );
+
+		long[] previousDim = dimensionsS0.clone();
+
+		for ( int level = 1; level < downsamplings.length; ++level )
+		{
+			final int[] relativeDownsamplingLevel = N5ApiTools.computeRelativeDownsampling( downsamplings, level );
+			final String datasetLevel = viewIdToDataset.apply( viewId, level );
+			final long[] dim = new long[ previousDim.length ];
+
+			for ( int d = 0; d < dim.length; ++d )
+				dim[ d ] = previousDim[ d ] / relativeDownsamplingLevel[ d ];
+
+			final DatasetAttributes attributes;
+
+			if ( n5Writer.datasetExists( datasetLevel ) )
+			{
+				attributes = n5Writer.getDatasetAttributes( datasetLevel );
+				validateExistingPyramidDataset(
+						datasetLevel,
+						attributes,
+						dim,
+						dataType,
+						blockSize,
+						shardSize,
+						useSharding );
+			}
+			else if ( useSharding )
+			{
+				attributes = ZarrV3DatasetAttributes.builder(dim, dataType)
+						.blockSize(blockSize)
+						.shardShape(shardSize)
+						.compression(compression)
+						.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
+						.build();
+				n5Writer.createDataset( datasetLevel, attributes );
+			}
+			else
+			{
+				attributes = n5Writer.createDataset(
+						datasetLevel,
+						dim,
+						blockSize,
+						dataType,
+						compression );
+			}
+
+			mrInfo[ level ] = new MultiResolutionLevelInfo(
+					datasetLevel,
+					attributes.getDimensions().clone(),
+					attributes.getDataType(),
+					relativeDownsamplingLevel,
+					downsamplings[ level ],
+					blockSize,
+					useSharding ? shardSize : null );
+
+			n5Writer.setAttribute( datasetLevel, "downsamplingFactors", downsamplings[ level ] );
+
+			previousDim = dim;
+		}
+
+		return mrInfo;
+	}
+
+	private static void validateExistingPyramidDataset(
+			final String dataset,
+			final DatasetAttributes attributes,
+			final long[] expectedDimensions,
+			final DataType expectedDataType,
+			final int[] expectedBlockSize,
+			final int[] expectedShardSize,
+			final boolean useSharding )
+	{
+		final StringBuilder errors = new StringBuilder();
+
+		if ( !Arrays.equals( expectedDimensions, attributes.getDimensions() ) )
+			errors.append( "\n  - dimensions are " ).append( Util.printCoordinates( attributes.getDimensions() ) )
+					.append( ", expected " ).append( Util.printCoordinates( expectedDimensions ) );
+
+		if ( expectedDataType != attributes.getDataType() )
+			errors.append( "\n  - data type is " ).append( attributes.getDataType() )
+					.append( ", expected " ).append( expectedDataType );
+
+		if ( attributes.isSharded() != useSharding )
+			errors.append( "\n  - existing dataset " )
+					.append( attributes.isSharded() ? "is sharded" : "is not sharded" )
+					.append( ", but --useSharding is " ).append( useSharding );
+
+		if ( useSharding )
+		{
+			if ( !Arrays.equals( expectedShardSize, attributes.getBlockSize() ) )
+				errors.append( "\n  - shard size is " ).append( Util.printCoordinates( attributes.getBlockSize() ) )
+						.append( ", expected " ).append( Util.printCoordinates( expectedShardSize ) );
+
+			if ( attributes.getBlockCodecInfo() instanceof ShardCodecInfo )
+			{
+				final int[] innerBlockSize = ((ShardCodecInfo)attributes.getBlockCodecInfo()).getInnerBlockSize();
+				if ( !Arrays.equals( expectedBlockSize, innerBlockSize ) )
+					errors.append( "\n  - inner block size is " ).append( Util.printCoordinates( innerBlockSize ) )
+							.append( ", expected " ).append( Util.printCoordinates( expectedBlockSize ) );
+			}
+			else
+			{
+				errors.append( "\n  - existing dataset is missing shard codec metadata" );
+			}
+		}
+		else if ( !Arrays.equals( expectedBlockSize, attributes.getBlockSize() ) )
+		{
+			errors.append( "\n  - block size is " ).append( Util.printCoordinates( attributes.getBlockSize() ) )
+					.append( ", expected " ).append( Util.printCoordinates( expectedBlockSize ) );
+		}
+
+		if ( errors.length() > 0 )
+			throw new IllegalStateException( "Cannot reuse existing pyramid dataset '" + dataset + "' because it is incompatible:" + errors );
+	}
+
+	private static long[] expectedS0Dimensions( final StorageFormat storageFormat, final long[] dimensions )
+	{
+		if ( StorageFormat.ZARR.equals( storageFormat ) || StorageFormat.ZARR2.equals( storageFormat ) )
+			return new long[] { dimensions[ 0 ], dimensions[ 1 ], dimensions[ 2 ], 1, 1 };
+
+		return dimensions.clone();
 	}
 
 	public static void main(final String... args) {
