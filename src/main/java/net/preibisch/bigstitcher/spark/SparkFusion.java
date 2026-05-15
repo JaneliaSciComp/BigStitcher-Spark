@@ -69,6 +69,7 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
@@ -793,7 +794,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										null, // fusion order — only for FIRST_LOW / FIRST_HIGH
 										coefficients,
 										new BoundingBox( interval ),
-										(RealType & NativeType) type,
+										Cast.unchecked( type ),
 										blockSize );
 								blockSupplier = rawSupplier;
 							}
