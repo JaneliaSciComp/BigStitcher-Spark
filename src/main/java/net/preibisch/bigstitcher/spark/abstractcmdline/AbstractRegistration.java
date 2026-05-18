@@ -148,8 +148,6 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 		else
 			rm = new AffineModel3D();
 
-		final Model< ? > model;
-
 		if ( rm == null )
 			return tm;
 		else
