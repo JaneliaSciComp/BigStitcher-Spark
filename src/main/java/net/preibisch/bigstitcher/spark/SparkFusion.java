@@ -525,8 +525,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final long totalTime = System.currentTimeMillis();
 
-		for ( int c = 0; c < numChannels; ++c )
-			for ( int t = 0; t < numTimepoints; ++t )
+		for ( int t = 0; t < numTimepoints; ++t )
+			for ( int c = 0; c < numChannels; ++c )
 			{
 				final int tIndex = (timepointIndex == null) ? t : timepointIndex;
 				final int cIndex = (channelIndex == null) ? c : channelIndex;
@@ -815,7 +815,10 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				}
 				while ( grid.size() > 0 );
 
-				System.out.println( new Date( System.currentTimeMillis() ) + ": Saved full resolution, took: " + (System.currentTimeMillis() - time ) + " ms." );
+				System.out.println( new Date( System.currentTimeMillis() ) +
+						" timepoint: "  + t +
+						" channel: " + c +
+						" full resolution, took: " + (System.currentTimeMillis() - time ) / 1000. + " s." );
 
 				//
 				// save multiresolution pyramid (s1 ... sN)
@@ -895,6 +898,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					}
 					while ( grid.size() > 0 );
 
+					System.out.println( new Date( System.currentTimeMillis() ) +
+							" timepoint: "  + t +
+							" channel: " + c +
+							" saving level : " + s +
+							" took " + (System.currentTimeMillis() - time ) / 1000. + " s." );
 					System.out.println( new Date( System.currentTimeMillis() ) + ": Saved level s " + level + ", took: " + (System.currentTimeMillis() - time ) + " ms." );
 				}
 			}
@@ -902,7 +910,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		// close main writer (is shared over Spark-threads if it's HDF5, thus just closing it here)
 		driverVolumeWriter.close();
 
-		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
+		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) / 1000. + " s." );
 
 		sc.close();
 
