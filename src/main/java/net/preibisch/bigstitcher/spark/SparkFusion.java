@@ -25,14 +25,23 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.function.Consumer;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
@@ -86,11 +95,13 @@ import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLoader;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.imglib2.realtransform.ThinplateSplineTransform;
 import net.preibisch.mvrecon.process.fusion.blk.BlkAffineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.BlkThinPlateSplineFusion;
 import net.preibisch.mvrecon.process.fusion.blk.DisplacementFieldN5Tools;
 import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion;
+import net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion.LandmarkRecord;
 import net.preibisch.mvrecon.process.fusion.tps.Landmarks;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
@@ -174,11 +185,37 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@Option(names = { "--dfieldType" }, description = "TPS only: dfield component type, FLOAT32 or FLOAT64 (default: FLOAT64, matching the pre-cache behavior). FLOAT32 halves on-disk and in-RAM size at the cost of some precision.")
 	private DfieldType dfieldType = DfieldType.FLOAT64;
 
-	@Option(names = { "--reuseDfieldCache" }, description = "TPS only: skip recomputing per-view dfields if already present in the output container with matching parameters (default: true).")
-	private boolean reuseDfieldCache = true;
+	@Option(names = { "--reuseDeformationFields" }, description = "TPS only: if set, reuse any per-underlying-view dfield datasets that already exist in the output container (no parameter-match check is performed — the caller is asserting the cache is valid). Default: false (always recompute from scratch).")
+	private boolean reuseDeformationFields = false;
 
 	@Option(names = { "--dfieldBlockSize" }, description = "TPS only: N5 block size of the cached dfield datasets (default: 128,128,128).")
 	private String dfieldBlockSizeString = "128,128,128";
+
+	@Option(names = { "--tpsCorrespondenceLabel" }, description = "TPS only: interest-point label whose cross-split correspondences are used to add cross-view 'tie' landmarks to each underlying view's TPS. Typically the splitting-suffixed label, e.g. 'beads_split'. Default: null (no tie landmarks, behave as pure split-center TPS).")
+	private String tpsCorrespondenceLabel = null;
+
+	@Option(names = { "--tpsMinNumCorrespondences" }, description = "TPS only: minimum number of corresponding interest points required per overlapping split-pair before adding a tie landmark (default: 4). Only used when --tpsCorrespondenceLabel is set.")
+	private int tpsMinNumCorrespondences = 4;
+
+	@Option(names = { "--tpsAnchorOverlapCorners" }, description = "TPS only: when set, additionally place anchor 'nail' landmarks at the 8 zero-min corners of each split sub-view that overlaps another underlying view. Default: false. Only meaningful when --tpsCorrespondenceLabel is also set.")
+	private boolean tpsAnchorOverlapCorners = false;
+
+	@Option(names = { "--tpsCornerCoverageRadius" }, description = "TPS only: render-space distance threshold (in output pixels). A candidate corner is nailed iff its distance to the split's correspondence center-of-mass (in render coords) is greater than this value. 0 = nail every candidate corner. Default: 0.")
+	private double tpsCornerCoverageRadius = 0.0;
+
+	@Option(names = { "--tpsSeamSamplesPerAxis" }, description = "TPS only: samples per axis on each face of every split sub-view when --tpsAnchorOverlapCorners is set. 2 = corners only (8 candidate nails per split, current default). 3 = also edge midpoints + face centers (26 unique surface positions). Larger = denser surface coverage. Cost grows roughly O(N^3 - (N-2)^3). Default: 2. Per-split override via --tpsSeamSamplesSchedule.")
+	private int tpsSeamSamplesPerAxis = 2;
+
+	@Option(names = { "--tpsSeamSamplesSchedule" }, split = ",",
+			description = "TPS only: adapt --tpsSeamSamplesPerAxis per split based on the total number of correspondences feeding that split. "
+					+ "Format: a comma-separated list of 'threshold=value' entries, sorted ascending by threshold. "
+					+ "For each split, the first entry whose threshold >= correspondence-count is used; if none match, --tpsSeamSamplesPerAxis is the fallback. "
+					+ "Example: --tpsSeamSamplesSchedule 100=4,200=3 (with --tpsSeamSamplesPerAxis 2) means: "
+					+ "<=100 -> 4 samples/axis, <=200 -> 3 samples/axis, otherwise 2. Default: null (use --tpsSeamSamplesPerAxis for every split).")
+	private java.util.Map< Integer, Integer > tpsSeamSamplesSchedule = null;
+
+	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (centers, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
+	private String tpsLandmarksOut = null;
 
 
 	// TODO: add support for loading coefficients during fusion
@@ -534,6 +571,10 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final long totalTime = System.currentTimeMillis();
 
+		final TpsSeamSchedule tpsSchedule = buildSeamSamplesSchedule( tpsSeamSamplesSchedule, tpsSeamSamplesPerAxis );
+
+		final TpsLandmarksSink landmarksSink = openLandmarksSink( tpsLandmarksOut, fusionMethod );
+
 		for ( int c = 0; c < numChannels; ++c )
 			for ( int t = 0; t < numTimepoints; ++t )
 			{
@@ -561,7 +602,10 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				// === Phase 1.5: materialize per-underlying-view dfields if needed (TPS only) ===
 				if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 				{
-					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor );
+					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor,
+							tpsCorrespondenceLabel, tpsMinNumCorrespondences,
+							tpsAnchorOverlapCorners, tpsCornerCoverageRadius,
+							tpsSeamSamplesPerAxis, tpsSchedule.thresholds, tpsSchedule.values, landmarksSink.visitor );
 				}
 
 				final MultiResolutionLevelInfo[] mrInfo;
@@ -764,6 +808,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 								final Map< ViewId, Interval > viewBoundsLoaded = new HashMap<>();
 								@SuppressWarnings( { "unchecked", "rawtypes" } )
 								final Map rawDfields = new HashMap<>();
+								final Map< ViewId, AffineTransform3D > approxAffines = new HashMap<>();
 								try ( final N5Reader r = URITools.instantiateN5Reader( storageType, outPathURI ) )
 								{
 									for ( final ViewId uvid : overlappingUnderlying )
@@ -775,6 +820,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 														? DisplacementFieldN5Tools.readDisplacementFieldAsCellImg( r, dsPath, new FloatType() )
 														: DisplacementFieldN5Tools.readDisplacementFieldAsCellImg( r, dsPath, new DoubleType() );
 										rawDfields.put( uvid, df );
+
+										final AffineTransform3D a = DisplacementFieldN5Tools.readApproxAffine( r, dsPath );
+										if ( a == null )
+											throw new RuntimeException( "dfield dataset '" + dsPath
+													+ "' is missing the 'approx_affine_row_major' attribute — Phase 1.5 should have written it." );
+										approxAffines.put( uvid, a );
 									}
 								}
 
@@ -783,19 +834,19 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										conv,
 										splitImgLoaderLambda,
 										overlappingViews,
-										dataLocal.getViewRegistrations().getViewRegistrations(),
 										dataLocal.getSequenceDescription().getViewDescriptions(),
 										viewBoundsLoaded,
 										rawDfields,
 										fusionType,
-										overlapExpansion,
 										anisotropyFactor,
 										1, // linear interpolation
 										null, // fusion order — only for FIRST_LOW / FIRST_HIGH
 										coefficients,
 										new BoundingBox( interval ),
 										Cast.unchecked( type ),
-										blockSize );
+										blockSize,
+										approxAffines );
+
 								blockSupplier = rawSupplier;
 							}
 						}
@@ -966,6 +1017,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
 
+		landmarksSink.close();
+
 		sc.close();
 
 		return null;
@@ -992,8 +1045,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private static final class DfieldBlockSpec implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
-		final int viewSetupId;
-		final int timepointId;
 		final long[] blockGridPos3d;
 		final long[] bboxMin;
 		final long[] bboxMax;
@@ -1002,14 +1053,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final String datasetPath;
 
 		DfieldBlockSpec(
-				final ViewId v,
 				final long[] blockGridPos3d,
 				final Interval bbox,
 				final Landmarks landmarks,
 				final String datasetPath )
 		{
-			this.viewSetupId = v.getViewSetupId();
-			this.timepointId = v.getTimePointId();
 			this.blockGridPos3d = blockGridPos3d;
 			this.bboxMin = bbox.minAsLongArray();
 			this.bboxMax = bbox.maxAsLongArray();
@@ -1023,7 +1071,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	 * Phase 1.5: materialize per-underlying-view displacement fields under the
 	 * output container. Parallelized at the N5-chunk level: one Spark task per
 	 * dfield block. Driver pre-creates the empty datasets so executors don't
-	 * race on dataset creation. Skips views whose cache entry already matches.
+	 * race on dataset creation. Always recomputes from scratch, unless the user
+	 * passed {@code --reuseDeformationFields} in which case any existing dfield
+	 * dataset at the per-view path is reused as-is (no parameter-match check).
 	 */
 	private void materializeDisplacementFields(
 			final JavaSparkContext sc,
@@ -1032,7 +1082,15 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final URI xmlURIFinal,
 			final URI outPathURIFinal,
 			final StorageFormat storageTypeFinal,
-			final double anisotropyFactor )
+			final double anisotropyFactor,
+			final String correspondenceLabel,
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final int[] seamSamplesScheduleThresholds,
+			final int[] seamSamplesScheduleValues,
+			final Consumer< LandmarkRecord > landmarkVisitor )
 	{
 		final int[] dfieldSpacingInt = Import.csvStringToIntArray( dfieldSpacingString );
 		if ( dfieldSpacingInt.length != 3 )
@@ -1045,12 +1103,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		if ( !( dataGlobal.getSequenceDescription().getImgLoader() instanceof SplitViewerImgLoader ) )
 			throw new IllegalStateException( "THIN_PLATE_SPLINE requires SplitViewerImgLoader." );
 		final SplitViewerImgLoader splitImgLoader = ( SplitViewerImgLoader ) dataGlobal.getSequenceDescription().getImgLoader();
-		final Map< Integer, java.util.List< Integer > > old2newSetupId =
+		final Map< Integer, List< Integer > > old2newSetupId =
 				SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
 		final List< ViewId > underlyingViewIds =
 				SplitImgLoaderThinPlateSplineFusion.underlyingViewIds( splitViewIds, splitImgLoader.new2oldSetupId() );
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 		final Map< ViewId, ViewRegistration > splitRegMap = dataGlobal.getViewRegistrations().getViewRegistrations();
+		final ViewInterestPoints viewInterestPoints = ( correspondenceLabel != null ) ? dataGlobal.getViewInterestPoints() : null;
 
 		// Pass 1 (driver): compute landmarks + bbox per view, check cache, pre-create N5 datasets.
 		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
@@ -1063,25 +1122,51 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			for ( final ViewId uvid : underlyingViewIds )
 			{
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
-				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
-						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN );
-				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
-				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
-				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
 
-				if ( reuseDfieldCache && DisplacementFieldN5Tools.datasetMatches( r, dsPath, bbox, dfieldSpacing ) )
+				// Trust the cache: a complete dfield dataset includes the approx_affine_row_major
+				// attribute written by a previous Phase 1.5, so there's no reason to recompute
+				// landmarks (which would re-load all interest points + correspondences) just to
+				// rewrite the same affine.
+				if ( reuseDeformationFields && r.exists( dsPath ) )
 				{
 					System.out.println( "Phase 1.5: reusing cached dfield for " + Group.pvid( uvid ) + " (" + dsPath + ")" );
 					continue;
 				}
 
+				// Always-recompute path from here on.
+				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
+						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN,
+						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+						anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
+				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
+				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
+				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
+				final AffineTransform3D approxAffine = BlkThinPlateSplineFusion.fitAffineTransform(
+						lm.getSourcePoints(), lm.getTargetPoints() );
+
+				// Wipe any stale dataset at this path so createEmptyDataset gets a clean slot.
+				if ( w.exists( dsPath ) )
+					w.remove( dsPath );
+
 				// Pre-create the empty 4D dataset on the driver, including all attrs.
 				if ( dfieldType == DfieldType.FLOAT32 )
 					DisplacementFieldN5Tools.createEmptyDataset(
-							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression );
+							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression,
+							correspondenceLabel, minNumCorrespondences,
+							anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+							seamSamplesScheduleThresholds, seamSamplesScheduleValues );
 				else
 					DisplacementFieldN5Tools.createEmptyDataset(
-							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression );
+							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression,
+							correspondenceLabel, minNumCorrespondences,
+							anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+							seamSamplesScheduleThresholds, seamSamplesScheduleValues );
+
+				// Persist the approximate affine alongside the dfield attrs so Phase 2 can
+				// drive FusionTools.adjustBlending without recomputing landmarks (which would
+				// re-load all interest points + correspondences per fusion block).
+				DisplacementFieldN5Tools.writeApproxAffine( w, dsPath, approxAffine );
 
 				// Enumerate every block of this view's dfield grid into the flat spec list.
 				final long[] numBlocks = DisplacementFieldN5Tools.gridBlockCount( bbox, dfieldSpacing, dfieldBlockSize );
@@ -1090,7 +1175,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					for ( long by = 0; by < numBlocks[ 1 ]; ++by )
 						for ( long bx = 0; bx < numBlocks[ 0 ]; ++bx )
 						{
-							allSpecs.add( new DfieldBlockSpec( uvid, new long[] { bx, by, bz }, bbox, lm, dsPath ) );
+							allSpecs.add( new DfieldBlockSpec( new long[] { bx, by, bz }, bbox, lm, dsPath ) );
 							++viewBlockCount;
 						}
 
@@ -1135,6 +1220,125 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		} );
 
 		System.out.println( "Phase 1.5 complete in " + ( System.currentTimeMillis() - phase15Start ) + " ms." );
+	}
+
+	/**
+	 * Sort the TPS seam-samples schedule by threshold ascending into parallel {@code int[]}
+	 * arrays. Returns {@link TpsSeamSchedule#EMPTY} (both arrays null) when {@code schedule}
+	 * is null or empty. The fallback value is only used for the diagnostic log line.
+	 */
+	private static TpsSeamSchedule buildSeamSamplesSchedule( final Map< Integer, Integer > schedule, final int fallbackSamplesPerAxis )
+	{
+		if ( schedule == null || schedule.isEmpty() )
+			return TpsSeamSchedule.EMPTY;
+
+		final List< Entry< Integer, Integer > > entries = new ArrayList<>( schedule.entrySet() );
+		entries.sort( Comparator.comparingInt( Entry::getKey ) );
+
+		final int[] thresholds = new int[ entries.size() ];
+		final int[] values = new int[ entries.size() ];
+		for ( int i = 0; i < entries.size(); ++i )
+		{
+			thresholds[ i ] = entries.get( i ).getKey();
+			values[ i ] = Math.max( 2, entries.get( i ).getValue() );
+		}
+
+		System.out.println( "[--tpsSeamSamplesSchedule] thresholds=" + Arrays.toString( thresholds )
+				+ " values=" + Arrays.toString( values )
+				+ " fallback=" + fallbackSamplesPerAxis );
+
+		return new TpsSeamSchedule( thresholds, values );
+	}
+
+	/**
+	 * Holds the per-split TPS seam-samples schedule as parallel sorted-by-threshold arrays.
+	 * The {@link #EMPTY} singleton (both fields null) means "no schedule — use the global
+	 * {@code --tpsSeamSamplesPerAxis} fallback for every split".
+	 */
+	static final class TpsSeamSchedule
+	{
+		static final TpsSeamSchedule EMPTY = new TpsSeamSchedule( null, null );
+
+		final int[] thresholds;     // sorted ascending; null when empty
+		final int[] values;         // parallel to thresholds, each value clamped to >= 2; null when empty
+
+		private TpsSeamSchedule( final int[] thresholds, final int[] values )
+		{
+			this.thresholds = thresholds;
+			this.values = values;
+		}
+	}
+
+	/**
+	 * Open the optional TPS landmarks CSV file and return a {@link TpsLandmarksSink} carrying
+	 * its writer + visitor. Returns {@link TpsLandmarksSink#NOOP} when {@code path} is null,
+	 * when {@code fusionMethod} isn't TPS, or when the file cannot be opened (an error is
+	 * printed to stderr and fusion continues without landmark export).
+	 */
+	private static TpsLandmarksSink openLandmarksSink( final String path, final FusionMethod fusionMethod )
+	{
+		if ( path == null || fusionMethod != FusionMethod.THIN_PLATE_SPLINE )
+			return TpsLandmarksSink.NOOP;
+
+		try
+		{
+			final BufferedWriter w = Files.newBufferedWriter( Paths.get( path ), StandardCharsets.UTF_8 );
+			w.write( "view_setup_id,timepoint_id,type,source_x,source_y,source_z,target_x,target_y,target_z" );
+			w.newLine();
+			return new TpsLandmarksSink( w, path );
+		}
+		catch ( final IOException ex )
+		{
+			System.err.println( "[--tpsLandmarksOut] could not open '" + path + "': " + ex
+					+ " — continuing without landmark export." );
+			return TpsLandmarksSink.NOOP;
+		}
+	}
+
+	/**
+	 * Holds a (possibly-null) {@link BufferedWriter} and the {@link Consumer} that pushes
+	 * {@link SplitImgLoaderThinPlateSplineFusion.LandmarkRecord}s into it as CSV rows.
+	 *
+	 * The {@link #NOOP} singleton represents "no landmark export"; its {@link #visitor}
+	 * field is null and {@link #close()} does nothing.
+	 */
+	static final class TpsLandmarksSink
+	{
+		static final TpsLandmarksSink NOOP = new TpsLandmarksSink( null, null );
+
+		final BufferedWriter writer;        // null = no export
+		final String path;                  // non-null when writer != null, only used in close() messages
+		final Consumer< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > visitor;
+
+		private TpsLandmarksSink( final BufferedWriter writer, final String path )
+		{
+			this.writer = writer;
+			this.path = path;
+			this.visitor = ( writer == null ) ? null : rec -> {
+				try
+				{
+					writer.write( String.format( "%d,%d,%s,%s,%s,%s,%s,%s,%s%n",
+							rec.underlyingViewId.getViewSetupId(),
+							rec.underlyingViewId.getTimePointId(),
+							rec.type,
+							Double.toString( rec.source[ 0 ] ), Double.toString( rec.source[ 1 ] ), Double.toString( rec.source[ 2 ] ),
+							Double.toString( rec.target[ 0 ] ), Double.toString( rec.target[ 1 ] ), Double.toString( rec.target[ 2 ] ) ) );
+				}
+				catch ( final IOException ex )
+				{
+					throw new RuntimeException( "Failed to write landmark CSV row", ex );
+				}
+			};
+		}
+
+		void close()
+		{
+			if ( writer == null )
+				return;
+			try { writer.close(); }
+			catch ( final IOException ex ) { System.err.println( "[--tpsLandmarksOut] error closing '" + path + "': " + ex ); }
+			System.out.println( "[--tpsLandmarksOut] wrote landmarks to '" + path + "'." );
+		}
 	}
 
 	public static void main(final String... args) throws SpimDataException {
