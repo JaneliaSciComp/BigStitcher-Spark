@@ -34,6 +34,13 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.function.Consumer;
+
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -185,6 +192,26 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 	@Option(names = { "--tpsMinNumCorrespondences" }, description = "TPS only: minimum number of corresponding interest points required per overlapping split-pair before adding a tie landmark (default: 4). Only used when --tpsCorrespondenceLabel is set.")
 	private int tpsMinNumCorrespondences = 4;
+
+	@Option(names = { "--tpsAnchorOverlapCorners" }, description = "TPS only: when set, additionally place anchor 'nail' landmarks at the 8 zero-min corners of each split sub-view that overlaps another underlying view. Default: false. Only meaningful when --tpsCorrespondenceLabel is also set.")
+	private boolean tpsAnchorOverlapCorners = false;
+
+	@Option(names = { "--tpsCornerCoverageRadius" }, description = "TPS only: render-space distance threshold (in output pixels). A candidate corner is nailed iff its distance to the split's correspondence center-of-mass (in render coords) is greater than this value. 0 = nail every candidate corner. Default: 0.")
+	private double tpsCornerCoverageRadius = 0.0;
+
+	@Option(names = { "--tpsSeamSamplesPerAxis" }, description = "TPS only: samples per axis on each face of every split sub-view when --tpsAnchorOverlapCorners is set. 2 = corners only (8 candidate nails per split, current default). 3 = also edge midpoints + face centers (26 unique surface positions). Larger = denser surface coverage. Cost grows roughly O(N^3 - (N-2)^3). Default: 2. Per-split override via --tpsSeamSamplesSchedule.")
+	private int tpsSeamSamplesPerAxis = 2;
+
+	@Option(names = { "--tpsSeamSamplesSchedule" }, split = ",",
+			description = "TPS only: adapt --tpsSeamSamplesPerAxis per split based on the total number of correspondences feeding that split. "
+					+ "Format: a comma-separated list of 'threshold=value' entries, sorted ascending by threshold. "
+					+ "For each split, the first entry whose threshold >= correspondence-count is used; if none match, --tpsSeamSamplesPerAxis is the fallback. "
+					+ "Example: --tpsSeamSamplesSchedule 100=4,200=3 (with --tpsSeamSamplesPerAxis 2) means: "
+					+ "<=100 -> 4 samples/axis, <=200 -> 3 samples/axis, otherwise 2. Default: null (use --tpsSeamSamplesPerAxis for every split).")
+	private java.util.Map< Integer, Integer > tpsSeamSamplesSchedule = null;
+
+	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (centers, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
+	private String tpsLandmarksOut = null;
 
 
 	// TODO: add support for loading coefficients during fusion
@@ -540,6 +567,71 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final long totalTime = System.currentTimeMillis();
 
+		// Sort the TPS seam-samples schedule by threshold ascending into parallel int[] arrays.
+		final int[] tpsScheduleThresholds;
+		final int[] tpsScheduleValues;
+		if ( tpsSeamSamplesSchedule == null || tpsSeamSamplesSchedule.isEmpty() )
+		{
+			tpsScheduleThresholds = null;
+			tpsScheduleValues = null;
+		}
+		else
+		{
+			final java.util.List< java.util.Map.Entry< Integer, Integer > > entries =
+					new java.util.ArrayList<>( tpsSeamSamplesSchedule.entrySet() );
+			entries.sort( java.util.Comparator.comparingInt( java.util.Map.Entry::getKey ) );
+			tpsScheduleThresholds = new int[ entries.size() ];
+			tpsScheduleValues = new int[ entries.size() ];
+			for ( int i = 0; i < entries.size(); ++i )
+			{
+				tpsScheduleThresholds[ i ] = entries.get( i ).getKey();
+				tpsScheduleValues[ i ] = Math.max( 2, entries.get( i ).getValue() );
+			}
+			System.out.println( "[--tpsSeamSamplesSchedule] thresholds=" + java.util.Arrays.toString( tpsScheduleThresholds )
+					+ " values=" + java.util.Arrays.toString( tpsScheduleValues )
+					+ " fallback=" + tpsSeamSamplesPerAxis );
+		}
+
+		// Optional TPS landmarks CSV writer + visitor.
+		final BufferedWriter landmarksWriter;
+		final Consumer< net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > landmarksVisitor;
+		if ( tpsLandmarksOut != null && fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
+		{
+			BufferedWriter w;
+			try
+			{
+				w = Files.newBufferedWriter( Paths.get( tpsLandmarksOut ), StandardCharsets.UTF_8 );
+				w.write( "view_setup_id,timepoint_id,type,source_x,source_y,source_z,target_x,target_y,target_z" );
+				w.newLine();
+			}
+			catch ( IOException ex )
+			{
+				System.err.println( "[--tpsLandmarksOut] could not open '" + tpsLandmarksOut + "': " + ex + " — continuing without landmark export." );
+				w = null;
+			}
+			landmarksWriter = w;
+			landmarksVisitor = ( landmarksWriter == null ) ? null : rec -> {
+				try
+				{
+					landmarksWriter.write( String.format( "%d,%d,%s,%s,%s,%s,%s,%s,%s%n",
+							rec.underlyingViewId.getViewSetupId(),
+							rec.underlyingViewId.getTimePointId(),
+							rec.type,
+							Double.toString( rec.source[ 0 ] ), Double.toString( rec.source[ 1 ] ), Double.toString( rec.source[ 2 ] ),
+							Double.toString( rec.target[ 0 ] ), Double.toString( rec.target[ 1 ] ), Double.toString( rec.target[ 2 ] ) ) );
+				}
+				catch ( IOException ex )
+				{
+					throw new RuntimeException( "Failed to write landmark CSV row", ex );
+				}
+			};
+		}
+		else
+		{
+			landmarksWriter = null;
+			landmarksVisitor = null;
+		}
+
 		for ( int c = 0; c < numChannels; ++c )
 			for ( int t = 0; t < numTimepoints; ++t )
 			{
@@ -568,7 +660,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 				{
 					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor,
-							tpsCorrespondenceLabel, tpsMinNumCorrespondences );
+							tpsCorrespondenceLabel, tpsMinNumCorrespondences,
+							tpsAnchorOverlapCorners, tpsCornerCoverageRadius,
+							tpsSeamSamplesPerAxis, tpsScheduleThresholds, tpsScheduleValues, landmarksVisitor );
 				}
 
 				final MultiResolutionLevelInfo[] mrInfo;
@@ -808,7 +902,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										blockSize,
 										vipLambda,
 										tpsCorrespondenceLabel,
-										tpsMinNumCorrespondences );
+										tpsMinNumCorrespondences,
+										tpsAnchorOverlapCorners,
+										tpsCornerCoverageRadius,
+										tpsSeamSamplesPerAxis,
+										tpsScheduleThresholds,
+										tpsScheduleValues,
+										null ); // landmark visitor — emitted only in Phase 1.5
 								blockSupplier = rawSupplier;
 							}
 						}
@@ -979,6 +1079,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		System.out.println( "done, took: " + (System.currentTimeMillis() - totalTime ) + " ms." );
 
+		if ( landmarksWriter != null )
+		{
+			try { landmarksWriter.close(); }
+			catch ( IOException ex ) { System.err.println( "[--tpsLandmarksOut] error closing '" + tpsLandmarksOut + "': " + ex ); }
+			System.out.println( "[--tpsLandmarksOut] wrote landmarks to '" + tpsLandmarksOut + "'." );
+		}
+
 		sc.close();
 
 		return null;
@@ -1047,7 +1154,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final StorageFormat storageTypeFinal,
 			final double anisotropyFactor,
 			final String correspondenceLabel,
-			final int minNumCorrespondences )
+			final int minNumCorrespondences,
+			final boolean anchorOverlapCorners,
+			final double cornerCoverageRadius,
+			final int seamSamplesPerAxis,
+			final int[] seamSamplesScheduleThresholds,
+			final int[] seamSamplesScheduleValues,
+			final Consumer< net.preibisch.mvrecon.process.fusion.blk.SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > landmarkVisitor )
 	{
 		final int[] dfieldSpacingInt = Import.csvStringToIntArray( dfieldSpacingString );
 		if ( dfieldSpacingInt.length != 3 )
@@ -1082,13 +1195,17 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
 				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
 						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN,
-						viewInterestPoints, correspondenceLabel, minNumCorrespondences );
+						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+						anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
 				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
 				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
 
 				if ( reuseDfieldCache && DisplacementFieldN5Tools.datasetMatches(
-						r, dsPath, bbox, dfieldSpacing, correspondenceLabel, minNumCorrespondences ) )
+						r, dsPath, bbox, dfieldSpacing, correspondenceLabel, minNumCorrespondences,
+						anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues ) )
 				{
 					System.out.println( "Phase 1.5: reusing cached dfield for " + Group.pvid( uvid ) + " (" + dsPath + ")" );
 					continue;
@@ -1098,11 +1215,15 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				if ( dfieldType == DfieldType.FLOAT32 )
 					DisplacementFieldN5Tools.createEmptyDataset(
 							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression,
-							correspondenceLabel, minNumCorrespondences );
+							correspondenceLabel, minNumCorrespondences,
+							anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+							seamSamplesScheduleThresholds, seamSamplesScheduleValues );
 				else
 					DisplacementFieldN5Tools.createEmptyDataset(
 							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression,
-							correspondenceLabel, minNumCorrespondences );
+							correspondenceLabel, minNumCorrespondences,
+							anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+							seamSamplesScheduleThresholds, seamSamplesScheduleValues );
 
 				// Enumerate every block of this view's dfield grid into the flat spec list.
 				final long[] numBlocks = DisplacementFieldN5Tools.gridBlockCount( bbox, dfieldSpacing, dfieldBlockSize );
