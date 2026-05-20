@@ -25,6 +25,7 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
@@ -1111,6 +1112,20 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final Map< ViewId, ViewRegistration > splitRegMap = dataGlobal.getViewRegistrations().getViewRegistrations();
 		final ViewInterestPoints viewInterestPoints = ( correspondenceLabel != null ) ? dataGlobal.getViewInterestPoints() : null;
 
+		// Cross-view nail donations are global: each (split S, partner S') overlap-corner emits
+		// a pair of landmarks pointing at the same render-space target (one into U's TPS, one
+		// into U''s TPS). Done once at the driver before per-view landmark assembly. The
+		// landmarkVisitor receives one record per emitted nail (with donor=U for both copies).
+		final Map< ViewId, List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > > nailDonations =
+				anchorOverlapCorners
+				? SplitImgLoaderThinPlateSplineFusion.computeCrossViewNailDonations(
+						splitImgLoader, old2newSetupId, splitRegMap, underlyingViewIds,
+						anisotropyFactor, Double.NaN,
+						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+						cornerCoverageRadius, seamSamplesPerAxis,
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor )
+				: Collections.emptyMap();
+
 		// Pass 1 (driver): compute landmarks + bbox per view, check cache, pre-create N5 datasets.
 		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
 		int viewsToCompute = 0;
@@ -1133,12 +1148,15 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					continue;
 				}
 
-				// Always-recompute path from here on.
+				// Always-recompute path from here on. Centers + midpoints come from getCoefficients;
+				// cross-view nails are injected via donatedNails (already emitted to the visitor
+				// inside computeCrossViewNailDonations above, so we pass null here to avoid dupes).
 				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
 						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN,
 						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
 						anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor,
+						nailDonations.get( uvid ) );
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
 				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
 				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
@@ -1283,7 +1301,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		try
 		{
 			final BufferedWriter w = Files.newBufferedWriter( Paths.get( path ), StandardCharsets.UTF_8 );
-			w.write( "view_setup_id,timepoint_id,type,source_x,source_y,source_z,target_x,target_y,target_z" );
+			// view_setup_id is the RECIPIENT underlying view (whose TPS holds this landmark).
+			// donor_view_setup_id is the underlying view whose split sub-view's surface produced
+			// this corner; equals recipient for centers/midpoints + self-nail donations, and
+			// differs for cross-view nail donations. Added in scheme V2 (symmetric nails).
+			w.write( "view_setup_id,timepoint_id,type,source_x,source_y,source_z,target_x,target_y,target_z,donor_view_setup_id" );
 			w.newLine();
 			return new TpsLandmarksSink( w, path );
 		}
@@ -1317,12 +1339,13 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			this.visitor = ( writer == null ) ? null : rec -> {
 				try
 				{
-					writer.write( String.format( "%d,%d,%s,%s,%s,%s,%s,%s,%s%n",
+					writer.write( String.format( "%d,%d,%s,%s,%s,%s,%s,%s,%s,%d%n",
 							rec.underlyingViewId.getViewSetupId(),
 							rec.underlyingViewId.getTimePointId(),
 							rec.type,
 							Double.toString( rec.source[ 0 ] ), Double.toString( rec.source[ 1 ] ), Double.toString( rec.source[ 2 ] ),
-							Double.toString( rec.target[ 0 ] ), Double.toString( rec.target[ 1 ] ), Double.toString( rec.target[ 2 ] ) ) );
+							Double.toString( rec.target[ 0 ] ), Double.toString( rec.target[ 1 ] ), Double.toString( rec.target[ 2 ] ),
+							rec.donorViewId.getViewSetupId() ) );
 				}
 				catch ( final IOException ex )
 				{

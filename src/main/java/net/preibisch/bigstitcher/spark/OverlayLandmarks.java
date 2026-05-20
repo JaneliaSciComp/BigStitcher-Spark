@@ -245,6 +245,9 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			if ( header == null || !header.startsWith( "view_setup_id" ) )
 				throw new IOException( "Unexpected CSV header: " + header );
 
+			// Forward-compatible: accept the legacy 9-column format (no donor) AND the new
+			// 10-column format with a trailing donor_view_setup_id. Nails are colored by the
+			// RECIPIENT view (cols[0]) — that's the TPS they actually feed, regardless of donor.
 			String line;
 			while ( ( line = r.readLine() ) != null )
 			{
