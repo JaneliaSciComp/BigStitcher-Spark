@@ -1116,15 +1116,22 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		// a pair of landmarks pointing at the same render-space target (one into U's TPS, one
 		// into U''s TPS). Done once at the driver before per-view landmark assembly. The
 		// landmarkVisitor receives one record per emitted nail (with donor=U for both copies).
-		final Map< ViewId, List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > > nailDonations =
-				anchorOverlapCorners
-				? SplitImgLoaderThinPlateSplineFusion.computeCrossViewNailDonations(
-						splitImgLoader, old2newSetupId, splitRegMap, underlyingViewIds,
-						anisotropyFactor, Double.NaN,
-						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
-						cornerCoverageRadius, seamSamplesPerAxis,
-						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor )
-				: Collections.emptyMap();
+		final Map< ViewId, List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > > nailDonations;
+		if ( anchorOverlapCorners )
+		{
+			nailDonations = SplitImgLoaderThinPlateSplineFusion.computeCrossViewNailDonations(
+					splitImgLoader, old2newSetupId, splitRegMap, underlyingViewIds,
+					anisotropyFactor, Double.NaN,
+					viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+					cornerCoverageRadius, seamSamplesPerAxis,
+					seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor );
+		}
+		else
+		{
+			System.out.println( "[TPS] cross-view nail donations: --tpsAnchorOverlapCorners is OFF; "
+					+ "no corner/surface nails will be added (centers + correspondence midpoints only)." );
+			nailDonations = Collections.emptyMap();
+		}
 
 		// Pass 1 (driver): compute landmarks + bbox per view, check cache, pre-create N5 datasets.
 		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
