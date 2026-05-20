@@ -426,10 +426,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					(level) -> MipmapTransforms.getMipmapTransformDefault( Arrays.copyOf( mrInfo[level].absoluteDownsamplingDouble(), 3 ) );
 
 			// extract the resolution of the s0 export
-			// TODO: use TransformationTools.computeAverageCalibration()
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			//final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+			// TODO: use TransformationTools.computeAverageCalibration() for real xy units
+			// When --preserveAnisotropy is set, the fused volume keeps native z spacing,
+			// so each output z-voxel covers anisotropyFactor * xy_voxel of physical space.
+			// Reflect that in the OME-NGFF s0 scale so viewers don't squash z.
+			final double zResS0 = preserveAnisotropy ? anisotropyFactor : 1.0;
+			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1.0, 1.0, zResS0 } );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
@@ -473,12 +475,13 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				tps.add( new TimePoint( t ) );
 
 			// extract the resolution of the s0 export
-			// TODO: use TransformationTools.computeAverageCalibration()
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			//final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
+			// TODO: use TransformationTools.computeAverageCalibration() for real xy units
+			// When --preserveAnisotropy is set, the fused volume keeps native z spacing,
+			// so the BDV ViewSetup's voxelSize z component must reflect anisotropyFactor.
+			final double zResS0Bdv = preserveAnisotropy ? anisotropyFactor : 1.0;
+			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1.0, 1.0, zResS0Bdv } );
 
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" );
 
 			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", vx.dimensionsAsDoubleArray() );
 
