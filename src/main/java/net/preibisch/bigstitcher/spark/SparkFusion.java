@@ -1069,6 +1069,97 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	}
 
 	/**
+	 * Serializable description of all per-underlying-view dfield-preamble work
+	 * for Phase 1.5: getCoefficients (loads correspondence interest points) +
+	 * TPS bbox/affine + N5 createEmptyDataset + writeApproxAffine + dfield
+	 * grid enumeration. One {@code PerUTaskSpec} per uncached underlying view,
+	 * parallelized across executors so the IP loading and N5 dataset registration
+	 * happen in parallel rather than serially on the driver.
+	 */
+	private static final class PerUTaskSpec implements Serializable
+	{
+		private static final long serialVersionUID = 1L;
+		final int[] uvidSerialized;
+		final URI xmlURI;
+		final URI outPathURI;
+		final StorageFormat storageType;
+		final double anisotropyFactor;
+		final String correspondenceLabel;             // nullable
+		final int minNumCorrespondences;
+		final boolean anchorOverlapCorners;
+		final double cornerCoverageRadius;
+		final int seamSamplesPerAxis;
+		final int[] seamSamplesScheduleThresholds;   // nullable
+		final int[] seamSamplesScheduleValues;       // nullable
+		final double[] dfieldSpacing;
+		final int[] dfieldBlockSize;
+		final DfieldType dfieldType;
+		final List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > donatedNails;
+
+		PerUTaskSpec(
+				final int[] uvidSerialized,
+				final URI xmlURI, final URI outPathURI, final StorageFormat storageType,
+				final double anisotropyFactor,
+				final String correspondenceLabel, final int minNumCorrespondences,
+				final boolean anchorOverlapCorners, final double cornerCoverageRadius,
+				final int seamSamplesPerAxis,
+				final int[] seamSamplesScheduleThresholds, final int[] seamSamplesScheduleValues,
+				final double[] dfieldSpacing, final int[] dfieldBlockSize, final DfieldType dfieldType,
+				final List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > donatedNails )
+		{
+			this.uvidSerialized = uvidSerialized;
+			this.xmlURI = xmlURI;
+			this.outPathURI = outPathURI;
+			this.storageType = storageType;
+			this.anisotropyFactor = anisotropyFactor;
+			this.correspondenceLabel = correspondenceLabel;
+			this.minNumCorrespondences = minNumCorrespondences;
+			this.anchorOverlapCorners = anchorOverlapCorners;
+			this.cornerCoverageRadius = cornerCoverageRadius;
+			this.seamSamplesPerAxis = seamSamplesPerAxis;
+			this.seamSamplesScheduleThresholds = seamSamplesScheduleThresholds;
+			this.seamSamplesScheduleValues = seamSamplesScheduleValues;
+			this.dfieldSpacing = dfieldSpacing;
+			this.dfieldBlockSize = dfieldBlockSize;
+			this.dfieldType = dfieldType;
+			this.donatedNails = donatedNails;
+		}
+	}
+
+	/**
+	 * Per-underlying-view task result: the dfield-block specs that go to the
+	 * next Spark stage plus the {@code LandmarkRecord}s collected on the
+	 * executor (for the optional CSV visitor, fanned out on the driver to
+	 * keep the single BufferedWriter single-threaded).
+	 */
+	private static final class PerUTaskResult implements Serializable
+	{
+		private static final long serialVersionUID = 1L;
+		final int[] uvidSerialized;
+		final String dsPath;
+		final long[] bboxMin;
+		final long[] bboxMax;
+		final long[] numBlocks;
+		final List< DfieldBlockSpec > blockSpecs;
+		final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records;
+
+		PerUTaskResult(
+				final int[] uvidSerialized, final String dsPath,
+				final long[] bboxMin, final long[] bboxMax, final long[] numBlocks,
+				final List< DfieldBlockSpec > blockSpecs,
+				final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records )
+		{
+			this.uvidSerialized = uvidSerialized;
+			this.dsPath = dsPath;
+			this.bboxMin = bboxMin;
+			this.bboxMax = bboxMax;
+			this.numBlocks = numBlocks;
+			this.blockSpecs = blockSpecs;
+			this.records = records;
+		}
+	}
+
+	/**
 	 * Phase 1.5: materialize per-underlying-view displacement fields under the
 	 * output container. Parallelized at the N5-chunk level: one Spark task per
 	 * dfield block. Driver pre-creates the empty datasets so executors don't
@@ -1133,13 +1224,15 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			nailDonations = Collections.emptyMap();
 		}
 
-		// Pass 1 (driver): compute landmarks + bbox per view, check cache, pre-create N5 datasets.
+		// Pass 1: parallelize per-underlying-view dfield-preamble work across Spark
+		// executors. Each task does: getCoefficients (loads IPs for its U's splits) ->
+		// TPS bbox/affine -> N5 createEmptyDataset -> writeApproxAffine -> enumerate
+		// dfield grid blocks. Cache hits are filtered on the driver before dispatch so
+		// no executor is launched for already-materialized views.
 		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
-		int viewsToCompute = 0;
-		final Compression compression = new GzipCompression( 1 );
+		final List< PerUTaskSpec > perUSpecs = new ArrayList<>();
 
-		try ( final N5Reader r = URITools.instantiateN5Reader( storageTypeFinal, outPathURIFinal );
-		      final N5Writer w = URITools.instantiateN5Writer( storageTypeFinal, outPathURIFinal ) )
+		try ( final N5Reader r = URITools.instantiateN5Reader( storageTypeFinal, outPathURIFinal ) )
 		{
 			for ( final ViewId uvid : underlyingViewIds )
 			{
@@ -1155,61 +1248,111 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					continue;
 				}
 
-				// Always-recompute path from here on. Centers + midpoints come from getCoefficients;
-				// cross-view nails are injected via donatedNails (already emitted to the visitor
-				// inside computeCrossViewNailDonations above, so we pass null here to avoid dupes).
-				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
-						splitImgLoader, old2newSetupId, splitRegMap, uvid, anisotropyFactor, Double.NaN,
-						viewInterestPoints, correspondenceLabel, minNumCorrespondences,
+				perUSpecs.add( new PerUTaskSpec(
+						Spark.serializeViewId( uvid ),
+						xmlURIFinal, outPathURIFinal, storageTypeFinal,
+						anisotropyFactor,
+						correspondenceLabel, minNumCorrespondences,
 						anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-						seamSamplesScheduleThresholds, seamSamplesScheduleValues, landmarkVisitor,
-						nailDonations.get( uvid ) );
+						seamSamplesScheduleThresholds, seamSamplesScheduleValues,
+						dfieldSpacing, dfieldBlockSize, dfieldType,
+						nailDonations.get( uvid ) ) );
+			}
+		}
+
+		final int viewsToCompute = perUSpecs.size();
+		if ( !perUSpecs.isEmpty() )
+		{
+			System.out.println( "Phase 1.5 preamble: parallelizing per-U work across "
+					+ Math.min( Spark.maxPartitions, perUSpecs.size() ) + " partition(s) for "
+					+ perUSpecs.size() + " underlying view(s)." );
+
+			final long preambleStart = System.currentTimeMillis();
+			final List< PerUTaskResult > perUResults = sc.parallelize(
+					perUSpecs, Math.min( Spark.maxPartitions, perUSpecs.size() ) ).map( spec ->
+			{
+				final ViewId uvid = Spark.deserializeViewId( spec.uvidSerialized );
+				final SpimData2 data = Spark.getSparkJobSpimData2( spec.xmlURI );
+				final SplitViewerImgLoader sil = ( SplitViewerImgLoader ) data.getSequenceDescription().getImgLoader();
+				final SequenceDescription uSD = sil.underlyingSequenceDescription();
+				final Map< Integer, List< Integer > > o2n =
+						SplitImgLoaderThinPlateSplineFusion.old2newSetupId( sil.new2oldSetupId() );
+				final Map< ViewId, ViewRegistration > regs = data.getViewRegistrations().getViewRegistrations();
+				final ViewInterestPoints vip = ( spec.correspondenceLabel != null ) ? data.getViewInterestPoints() : null;
+
+				// Collect LandmarkRecords locally; driver fans them out to the CSV
+				// visitor after collect() so the single BufferedWriter stays
+				// single-threaded.
+				final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records = new ArrayList<>();
+				final Consumer< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > sink = records::add;
+
+				final Landmarks lm = SplitImgLoaderThinPlateSplineFusion.getCoefficients(
+						sil, o2n, regs, uvid, spec.anisotropyFactor, Double.NaN,
+						vip, spec.correspondenceLabel, spec.minNumCorrespondences,
+						spec.anchorOverlapCorners, spec.cornerCoverageRadius, spec.seamSamplesPerAxis,
+						spec.seamSamplesScheduleThresholds, spec.seamSamplesScheduleValues, sink,
+						spec.donatedNails );
+
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
-				final Dimensions dims = underlyingSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
+				final Dimensions dims = uSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
 				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
 				final AffineTransform3D approxAffine = BlkThinPlateSplineFusion.fitAffineTransform(
 						lm.getSourcePoints(), lm.getTargetPoints() );
 
-				// Wipe any stale dataset at this path so createEmptyDataset gets a clean slot.
-				if ( w.exists( dsPath ) )
-					w.remove( dsPath );
+				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
+				try ( final N5Writer w = URITools.instantiateN5Writer( spec.storageType, spec.outPathURI ) )
+				{
+					// Wipe any stale dataset at this path so createEmptyDataset gets a clean slot.
+					if ( w.exists( dsPath ) )
+						w.remove( dsPath );
 
-				// Pre-create the empty 4D dataset on the driver, including all attrs.
-				if ( dfieldType == DfieldType.FLOAT32 )
-					DisplacementFieldN5Tools.createEmptyDataset(
-							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new FloatType(), compression,
-							correspondenceLabel, minNumCorrespondences,
-							anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-							seamSamplesScheduleThresholds, seamSamplesScheduleValues );
-				else
-					DisplacementFieldN5Tools.createEmptyDataset(
-							w, dsPath, bbox, dfieldSpacing, dfieldBlockSize, new DoubleType(), compression,
-							correspondenceLabel, minNumCorrespondences,
-							anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-							seamSamplesScheduleThresholds, seamSamplesScheduleValues );
+					final Compression compression = new GzipCompression( 1 );
+					if ( spec.dfieldType == DfieldType.FLOAT32 )
+						DisplacementFieldN5Tools.createEmptyDataset(
+								w, dsPath, bbox, spec.dfieldSpacing, spec.dfieldBlockSize, new FloatType(), compression,
+								spec.correspondenceLabel, spec.minNumCorrespondences,
+								spec.anchorOverlapCorners, spec.cornerCoverageRadius, spec.seamSamplesPerAxis,
+								spec.seamSamplesScheduleThresholds, spec.seamSamplesScheduleValues );
+					else
+						DisplacementFieldN5Tools.createEmptyDataset(
+								w, dsPath, bbox, spec.dfieldSpacing, spec.dfieldBlockSize, new DoubleType(), compression,
+								spec.correspondenceLabel, spec.minNumCorrespondences,
+								spec.anchorOverlapCorners, spec.cornerCoverageRadius, spec.seamSamplesPerAxis,
+								spec.seamSamplesScheduleThresholds, spec.seamSamplesScheduleValues );
+					DisplacementFieldN5Tools.writeApproxAffine( w, dsPath, approxAffine );
+				}
 
-				// Persist the approximate affine alongside the dfield attrs so Phase 2 can
-				// drive FusionTools.adjustBlending without recomputing landmarks (which would
-				// re-load all interest points + correspondences per fusion block).
-				DisplacementFieldN5Tools.writeApproxAffine( w, dsPath, approxAffine );
-
-				// Enumerate every block of this view's dfield grid into the flat spec list.
-				final long[] numBlocks = DisplacementFieldN5Tools.gridBlockCount( bbox, dfieldSpacing, dfieldBlockSize );
-				long viewBlockCount = 0;
+				final long[] numBlocks = DisplacementFieldN5Tools.gridBlockCount( bbox, spec.dfieldSpacing, spec.dfieldBlockSize );
+				final List< DfieldBlockSpec > blockSpecs = new ArrayList<>();
 				for ( long bz = 0; bz < numBlocks[ 2 ]; ++bz )
 					for ( long by = 0; by < numBlocks[ 1 ]; ++by )
 						for ( long bx = 0; bx < numBlocks[ 0 ]; ++bx )
-						{
-							allSpecs.add( new DfieldBlockSpec( new long[] { bx, by, bz }, bbox, lm, dsPath ) );
-							++viewBlockCount;
-						}
+							blockSpecs.add( new DfieldBlockSpec( new long[] { bx, by, bz }, bbox, lm, dsPath ) );
 
+				return new PerUTaskResult(
+						spec.uvidSerialized, dsPath,
+						bbox.minAsLongArray(), bbox.maxAsLongArray(), numBlocks,
+						blockSpecs, records );
+			} ).collect();
+
+			// Driver-side fan-out: visitor records + per-U Phase 1.5 log line + allSpecs aggregation.
+			for ( final PerUTaskResult res : perUResults )
+			{
+				if ( landmarkVisitor != null )
+					for ( final SplitImgLoaderThinPlateSplineFusion.LandmarkRecord rec : res.records )
+						landmarkVisitor.accept( rec );
+
+				final ViewId uvid = Spark.deserializeViewId( res.uvidSerialized );
+				final Interval bbox = new FinalInterval( res.bboxMin, res.bboxMax );
 				System.out.println( "Phase 1.5: " + Group.pvid( uvid )
 						+ " bbox=" + Util.printInterval( bbox )
-						+ " gridBlocks=" + Arrays.toString( numBlocks )
-						+ " (" + viewBlockCount + " tasks) -> " + dsPath );
-				++viewsToCompute;
+						+ " gridBlocks=" + Arrays.toString( res.numBlocks )
+						+ " (" + res.blockSpecs.size() + " tasks) -> " + res.dsPath );
+				allSpecs.addAll( res.blockSpecs );
 			}
+
+			System.out.println( "Phase 1.5 preamble complete in "
+					+ ( System.currentTimeMillis() - preambleStart ) + " ms." );
 		}
 
 		if ( allSpecs.isEmpty() )
