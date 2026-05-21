@@ -215,7 +215,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					+ "<=100 -> 4 samples/axis, <=200 -> 3 samples/axis, otherwise 2. Default: null (use --tpsSeamSamplesPerAxis for every split).")
 	private java.util.Map< Integer, Integer > tpsSeamSamplesSchedule = null;
 
-	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (centers, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
+	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (corrCOM, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z, donor_view_setup_id. Nail rows whose donor differs from view_setup_id are cross-view tie 'partner' nails. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
 	private String tpsLandmarksOut = null;
 
 
@@ -1129,7 +1129,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		else
 		{
 			System.out.println( "[TPS] cross-view nail donations: --tpsAnchorOverlapCorners is OFF; "
-					+ "no corner/surface nails will be added (centers + correspondence midpoints only)." );
+					+ "no corner/surface nails will be added (corrCOM + correspondence midpoints only)." );
 			nailDonations = Collections.emptyMap();
 		}
 

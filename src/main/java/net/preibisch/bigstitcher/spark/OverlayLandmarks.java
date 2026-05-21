@@ -27,7 +27,10 @@ import java.util.concurrent.Callable;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.CoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.coordinateTransformations.ScaleCoordinateTransformation;
 
 import bdv.util.BdvFunctions;
 import bdv.util.BdvOptions;
@@ -45,6 +48,7 @@ import net.imglib2.converter.RealUnsignedByteConverter;
 import net.imglib2.img.basictypeaccess.AccessFlags;
 import net.imglib2.RealPointSampleList;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.FloatType;
@@ -69,12 +73,15 @@ import util.URITools;
  * children) or an OME-Zarr group (multiscales attribute auto-detected).
  * Each source can optionally be normalized with CLLCN / CLAHE.
  *
- * <p>Landmarks are color-coded:
+ * <p>Default color-coding (one source per landmark type):
  * <ul>
- *   <li><b>tile centers</b> → green</li>
- *   <li><b>correspondence midpoints</b> → pink</li>
- *   <li><b>surface/corner nails</b> → red→yellow, hue derived from view_setup_id</li>
+ *   <li><b>correspondence centers-of-mass (corrCOM)</b> → magenta</li>
+ *   <li><b>correspondence midpoints</b> → green</li>
+ *   <li><b>self-donation surface nails (nail)</b> → yellow</li>
+ *   <li><b>cross-view tie nails (partner_nail)</b> → cyan</li>
  * </ul>
+ * With {@code --csvSplitByViewId}, each type is split into one source per
+ * view_setup_id and colored by a golden-ratio hue derived from the view id.
  */
 public class OverlayLandmarks implements Callable< Void >, Serializable
 {
@@ -92,12 +99,12 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			description = "Per-dataset normalization (parallel to -i): NONE, CLLCN, CLAHE, CLAHE_WITH_THRESHOLDMASK. Default: NONE." )
 	private Normalization[] filters;
 
-	@Option( names = "--csv", required = true,
-			description = "Landmarks CSV from --tpsLandmarksOut." )
+	@Option( names = "--csv",
+			description = "Landmarks CSV from --tpsLandmarksOut. Required unless --debugPoint is given." )
 	private String csv;
 
-	@Option( names = "--sigma", defaultValue = "50",
-			description = "Gaussian sigma (render-space pixels) for landmark rendering (default: 50)." )
+	@Option( names = "--sigma", defaultValue = "40",
+			description = "Gaussian sigma (render-space pixels) for landmark rendering (default: 40)." )
 	private double sigma;
 
 	@Option( names = "-c", arity = "1..*",
@@ -119,6 +126,10 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 	@Option( names = "--maxIntensity", defaultValue = "65535",
 			description = "Max intensity for converting input to UnsignedByteType (default 65535)." )
 	private double maxIntensity;
+
+	@Option( names = "--csvSplitByViewId",
+			description = "If set, split every landmark type by view_setup_id (one BDV source per (type, view), per-view colored). Default: merge all view ids within each type (3 sources total: corrCOM, midpoints, nails)." )
+	private boolean csvSplitByViewId;
 
 	@Override
 	public Void call() throws Exception
@@ -184,46 +195,79 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			bdv.setDisplayRange( 0, 255 );
 		}
 
-		// === Load CSV ===
-		final List< RealPoint > centers = new ArrayList<>();
-		final List< RealPoint > midpoints = new ArrayList<>();
-		final Map< Integer, List< RealPoint > > nailsByView = new HashMap<>();
-		loadCsv( csv, centers, midpoints, nailsByView );
-		System.out.println( "[overlay-landmarks] loaded " + centers.size() + " centers, " + midpoints.size() + " midpoints, "
-				+ nailsByView.values().stream().mapToInt( List::size ).sum() + " nails across " + nailsByView.size() + " views" );
-
-		// === Compute viewer interval from the first image source for rasterization extents ===
-		final Source< UnsignedByteType > anySrc = ( bdv != null ) ? toSource( bdv ) : null;
-		final Interval viewerInterval = ( anySrc != null )
-				? new FinalInterval( anySrc.getSource( 0, 0 ) )
-				: enclosingInterval( centers, midpoints, nailsByView, sigma );
-
-		// === Build landmark sources ===
-		if ( !centers.isEmpty() )
-			bdv = addPointSource( bdv, centers, viewerInterval, sigma, "centers" );
-		if ( !midpoints.isEmpty() )
-			bdv = addPointSource( bdv, midpoints, viewerInterval, sigma, "midpoints" );
-
-		final TreeSet< Integer > viewIds = new TreeSet<>( nailsByView.keySet() );
-		final List< Integer > viewIdList = new ArrayList<>( viewIds );
-		for ( int idx = 0; idx < viewIdList.size(); ++idx )
+		// === Load landmarks (CSV or single debug point) ===
+		if ( csv != null && !csv.isEmpty() )
 		{
-			final int vid = viewIdList.get( idx );
-			final List< RealPoint > pts = nailsByView.get( vid );
-			if ( pts == null || pts.isEmpty() ) continue;
-			bdv = addPointSource( bdv, pts, viewerInterval, sigma, "nails view " + vid );
+			final Map< Integer, List< RealPoint > > corrCOMByView = new HashMap<>();
+			final Map< Integer, List< RealPoint > > midpointsByView = new HashMap<>();
+			final Map< Integer, List< RealPoint > > nailsByView = new HashMap<>();
+			final Map< Integer, List< RealPoint > > partnerNailsByView = new HashMap<>();
+			loadCsv( csv, corrCOMByView, midpointsByView, nailsByView, partnerNailsByView );
+			System.out.println( "[overlay-landmarks] loaded "
+					+ corrCOMByView.values().stream().mapToInt( List::size ).sum() + " corrCOM, "
+					+ midpointsByView.values().stream().mapToInt( List::size ).sum() + " midpoints, "
+					+ nailsByView.values().stream().mapToInt( List::size ).sum() + " nails, "
+					+ partnerNailsByView.values().stream().mapToInt( List::size ).sum() + " partner_nails across "
+					+ allViewIds( corrCOMByView, midpointsByView, nailsByView, partnerNailsByView ).size() + " views" );
+
+			// === Transform landmark coordinates into the image's BDV world frame ===
+			// Two pieces are needed (read from the first input — landmarks are one CSV per fusion):
+			//   1. Bigstitcher-Spark/Boundingbox_min — the ZARR is always indexed from (0,0,0)
+			//      while the CSV uses global world coords; subtract bbox_min to get voxel coords.
+			//   2. Bigstitcher-Spark/AnisotropyFactor — for --preserveAnisotropy fusions the CSV
+			//      and the bbox are in anisotropic z-voxel units, but the image source is shown
+			//      with sourceTransform = scale(1, 1, anisoZ) so voxel k ends up at world z = k*anisoZ
+			//      in BDV. Multiply landmark z by anisoZ so they land in the same world frame.
+			final double[] bboxMin = readBoundingBoxMin( readers[ 0 ] );
+			final Double anisoZ = readBssAnisotropyFactor( readers[ 0 ] );
+			final double zScale = ( anisoZ != null ) ? anisoZ : 1.0;
+			if ( bboxMin != null || zScale != 1.0 )
+			{
+				final double[] off = ( bboxMin != null ) ? bboxMin : new double[ 3 ];
+				System.out.println( "[overlay-landmarks] landmark transform: subtract " + Arrays.toString( off )
+						+ ( zScale != 1.0 ? "  then *z " + zScale : "" ) );
+				for ( final Map< Integer, List< RealPoint > > byView :
+						Arrays.asList( corrCOMByView, midpointsByView, nailsByView, partnerNailsByView ) )
+					for ( final List< RealPoint > pts : byView.values() )
+						transformAll( pts, off, zScale );
+			}
+
+			// === Compute viewer interval from the landmark world-coord extent (not image
+			// voxel extent — landmarks are in global/world coordinates and may sit outside
+			// the image's voxel bounds, especially when --preserveAnisotropy has stretched
+			// the image's world z). The image source is shown with its own transform; the
+			// landmark sources stay at identity since their coordinates are already world. ===
+			final Interval viewerInterval = enclosingInterval( sigma, corrCOMByView, midpointsByView, nailsByView, partnerNailsByView );
+
+			// === Build landmark sources ===
+			// Without --csvSplitByViewId: one source per type. corrCOM=magenta, midpoints=green,
+			// nails (self donations) = yellow, partner_nails (cross-view ties) = cyan; display
+			// range 0..2 for the dot types, 0..6 for both nail variants.
+			// With --csvSplitByViewId: one source per (type, view_id); each source is colored by
+			// its view (golden-ratio hue), so cross-view structure is visible.
+			final ARGBType magenta = new ARGBType( ARGBType.rgba( 255,   0, 255, 255 ) );
+			final ARGBType green   = new ARGBType( ARGBType.rgba(   0, 255,   0, 255 ) );
+			final ARGBType yellow  = new ARGBType( ARGBType.rgba( 255, 255,   0, 255 ) );
+			final ARGBType cyan    = new ARGBType( ARGBType.rgba(   0, 255, 255, 255 ) );
+			if ( csvSplitByViewId )
+			{
+				bdv = addSplitSources( bdv, corrCOMByView,      viewerInterval, sigma, "corrCOM",       2.0 );
+				bdv = addSplitSources( bdv, midpointsByView,    viewerInterval, sigma, "midpoints",     2.0 );
+				bdv = addSplitSources( bdv, nailsByView,        viewerInterval, sigma, "nails",         6.0 );
+				bdv = addSplitSources( bdv, partnerNailsByView, viewerInterval, sigma, "partner_nails", 6.0 );
+			}
+			else
+			{
+				final List< RealPoint > corrCOMAll      = flatten( corrCOMByView );
+				final List< RealPoint > midpointsAll    = flatten( midpointsByView );
+				final List< RealPoint > nailsAll        = flatten( nailsByView );
+				final List< RealPoint > partnerNailsAll = flatten( partnerNailsByView );
+				if ( !corrCOMAll.isEmpty() )      bdv = addPointSource( bdv, corrCOMAll,      viewerInterval, sigma, "corrCOM",       magenta, 2.0 );
+				if ( !midpointsAll.isEmpty() )    bdv = addPointSource( bdv, midpointsAll,    viewerInterval, sigma, "midpoints",     green,   2.0 );
+				if ( !nailsAll.isEmpty() )        bdv = addPointSource( bdv, nailsAll,        viewerInterval, sigma, "nails",         yellow,  6.0 );
+				if ( !partnerNailsAll.isEmpty() ) bdv = addPointSource( bdv, partnerNailsAll, viewerInterval, sigma, "partner_nails", cyan,    6.0 );
+			}
 		}
-
-		// === Apply colors (image sources at indices 0..inputs.length-1, then landmark sources) ===
-		final List< BdvStackSource< ? > > all = new ArrayList<>();
-		// Recover handles for the most recently created bdv stack. BdvFunctions.show
-		// returns the latest BdvStackSource each time; we discarded earlier ones —
-		// reorganize by re-creating handles is non-trivial. Instead, set colors on
-		// the BDV's converterSetups by index via the bdv handle's setupAssignments.
-		// Simpler approach: each call to BdvFunctions.show returns a BdvStackSource;
-		// we keep them all this time.
-
-		// (No-op block: handle list is built by re-running addPointSource if needed.)
 
 		System.out.println( "[overlay-landmarks] BDV ready. Close the window to exit." );
 		return null;
@@ -235,9 +279,10 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 
 	private static void loadCsv(
 			final String path,
-			final List< RealPoint > centers,
-			final List< RealPoint > midpoints,
-			final Map< Integer, List< RealPoint > > nailsByView ) throws IOException
+			final Map< Integer, List< RealPoint > > corrCOMByView,
+			final Map< Integer, List< RealPoint > > midpointsByView,
+			final Map< Integer, List< RealPoint > > nailsByView,
+			final Map< Integer, List< RealPoint > > partnerNailsByView ) throws IOException
 	{
 		try ( final BufferedReader r = Files.newBufferedReader( Paths.get( path ), StandardCharsets.UTF_8 ) )
 		{
@@ -246,8 +291,13 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 				throw new IOException( "Unexpected CSV header: " + header );
 
 			// Forward-compatible: accept the legacy 9-column format (no donor) AND the new
-			// 10-column format with a trailing donor_view_setup_id. Nails are colored by the
-			// RECIPIENT view (cols[0]) — that's the TPS they actually feed, regardless of donor.
+			// 10-column format with a trailing donor_view_setup_id. Per-view bucketing uses
+			// the RECIPIENT view (cols[0]) — that's the TPS they actually feed.
+			//
+			// "nail" rows split into two buckets based on the donor column:
+			//   donor == recipient → self-donation, bucket as "nails"
+			//   donor != recipient → cross-view tie,  bucket as "partner_nails"
+			// Legacy CSVs without a donor column treat every nail as self (no info to do otherwise).
 			String line;
 			while ( ( line = r.readLine() ) != null )
 			{
@@ -260,12 +310,19 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 				final double ty = Double.parseDouble( cols[ 7 ].trim() );
 				final double tz = Double.parseDouble( cols[ 8 ].trim() );
 				final RealPoint p = new RealPoint( tx, ty, tz );
-				if ( "center".equals( type ) )
-					centers.add( p );
+				if ( "corrCOM".equals( type ) )
+					corrCOMByView.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
 				else if ( "midpoint".equals( type ) )
-					midpoints.add( p );
+					midpointsByView.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
 				else if ( "nail".equals( type ) )
-					nailsByView.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
+				{
+					final int donorViewId = ( cols.length >= 10 )
+							? Integer.parseInt( cols[ 9 ].trim() )
+							: viewSetupId;
+					final Map< Integer, List< RealPoint > > bucket =
+							( donorViewId == viewSetupId ) ? nailsByView : partnerNailsByView;
+					bucket.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
+				}
 			}
 		}
 	}
@@ -290,23 +347,13 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 	{
 		// Discover scale paths.
 		final List< String > scalePaths = new ArrayList<>();
-		final double[][] resolutions; // per-level voxel scales relative to s0
 		final OmeNgffMultiScaleMetadata[] omeMs = tryReadMultiscales( n5, groupPath );
-		if ( omeMs != null && omeMs.length > 0 && omeMs[ 0 ].datasets != null )
+		final boolean isOmeZarr = omeMs != null && omeMs.length > 0 && omeMs[ 0 ].datasets != null;
+
+		if ( isOmeZarr )
 		{
 			for ( int i = 0; i < omeMs[ 0 ].datasets.length; ++i )
-			{
-				final String relPath = omeMs[ 0 ].datasets[ i ].path;
-				scalePaths.add( joinPath( groupPath, relPath ) );
-			}
-			resolutions = new double[ scalePaths.size() ][ 3 ];
-			for ( int i = 0; i < scalePaths.size(); ++i )
-			{
-				resolutions[ i ][ 0 ] = 1.0;
-				resolutions[ i ][ 1 ] = 1.0;
-				resolutions[ i ][ 2 ] = 1.0;
-			}
-			// We'll fill the real ratios below from the loaded dims.
+				scalePaths.add( joinPath( groupPath, omeMs[ 0 ].datasets[ i ].path ) );
 		}
 		else
 		{
@@ -321,7 +368,6 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			}
 			if ( scalePaths.isEmpty() )
 				throw new IllegalArgumentException( "No multiscales attribute and no s0 subdir under '" + groupPath + "' — cannot load." );
-			resolutions = new double[ scalePaths.size() ][ 3 ];
 		}
 
 		// Load each scale, converting / normalizing to UnsignedByteType.
@@ -346,19 +392,135 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 					: applyNormalization( asByte, normalization );
 			scales[ i ] = processed;
 			if ( i == 0 ) s0Dims = scales[ i ].dimensionsAsLongArray();
+		}
 
-			// fill resolutions from dim ratios
-			final long[] dims = scales[ i ].dimensionsAsLongArray();
-			for ( int d = 0; d < 3; ++d )
-				resolutions[ i ][ d ] = ( double ) s0Dims[ Math.min( d, s0Dims.length - 1 ) ] / Math.max( 1, dims[ Math.min( d, dims.length - 1 ) ] );
+		// Build per-level XYZ scales (world units). For OME-Zarr containers we lift the
+		// absolute scales from multiscales.datasets[i].coordinateTransformations — this
+		// already encodes anisotropy (e.g. z=anisotropyFactor when --preserveAnisotropy
+		// was used) × downsampling. For N5 hot-knife containers we fall back to dim
+		// ratios and post-multiply z by the BSS anisotropy attribute if present.
+		final double[][] resolutions = new double[ scalePaths.size() ][ 3 ];
+		final FinalVoxelDimensions voxelDims;
+		if ( isOmeZarr )
+		{
+			boolean ok = true;
+			for ( int i = 0; i < scalePaths.size() && ok; ++i )
+			{
+				final double[] s = readScaleXYZ( omeMs[ 0 ], i );
+				if ( s == null ) { ok = false; break; }
+				resolutions[ i ] = s;
+			}
+			if ( !ok )
+				fillResolutionsFromDimRatios( resolutions, scales, s0Dims );
+			final double[] s0Scale = resolutions[ 0 ].clone();
+			voxelDims = new FinalVoxelDimensions( omeZarrSpatialUnit( omeMs[ 0 ] ), s0Scale );
+		}
+		else
+		{
+			fillResolutionsFromDimRatios( resolutions, scales, s0Dims );
+			final Double aniso = readBssAnisotropyFactor( n5 );
+			if ( aniso != null )
+			{
+				for ( int i = 0; i < resolutions.length; ++i )
+					resolutions[ i ][ 2 ] *= aniso;
+				voxelDims = new FinalVoxelDimensions( "micrometer", new double[] { 1.0, 1.0, aniso } );
+			}
+			else
+			{
+				voxelDims = new FinalVoxelDimensions( "px", 1, 1, 1 );
+			}
 		}
 
 		return new RandomAccessibleIntervalMipmapSource<>(
 				scales,
 				new UnsignedByteType(),
 				resolutions,
-				new FinalVoxelDimensions( "px", 1, 1, 1 ),
+				voxelDims,
 				name );
+	}
+
+	private static void fillResolutionsFromDimRatios(
+			final double[][] resolutions,
+			final RandomAccessibleInterval< UnsignedByteType >[] scales,
+			final long[] s0Dims )
+	{
+		for ( int i = 0; i < scales.length; ++i )
+		{
+			final long[] dims = scales[ i ].dimensionsAsLongArray();
+			for ( int d = 0; d < 3; ++d )
+				resolutions[ i ][ d ] = ( double ) s0Dims[ Math.min( d, s0Dims.length - 1 ) ] / Math.max( 1, dims[ Math.min( d, dims.length - 1 ) ] );
+		}
+	}
+
+	private static double[] readScaleXYZ( final OmeNgffMultiScaleMetadata ms, final int level )
+	{
+		if ( ms.datasets == null || level >= ms.datasets.length ) return null;
+		final CoordinateTransformation< ? >[] cts = ms.datasets[ level ].coordinateTransformations;
+		if ( cts == null ) return null;
+		for ( final CoordinateTransformation< ? > c : cts )
+		{
+			if ( c instanceof ScaleCoordinateTransformation )
+			{
+				final double[] s = ( ( ScaleCoordinateTransformation ) c ).getScale();
+				// BSS writes the scale in XYZ(CT) F-order (see OMEZarrAttributes.createOMEZarrMetadata),
+				// matching the convention used by AllenOMEZarrProperties.getMipmapResolutions.
+				if ( s != null && s.length >= 3 )
+					return new double[] { s[ 0 ], s[ 1 ], s[ 2 ] };
+			}
+		}
+		return null;
+	}
+
+	private static String omeZarrSpatialUnit( final OmeNgffMultiScaleMetadata ms )
+	{
+		if ( ms.axes != null )
+		{
+			for ( final Axis ax : ms.axes )
+			{
+				if ( "space".equals( ax.getType() ) && ax.getUnit() != null && !ax.getUnit().isEmpty() )
+					return ax.getUnit();
+			}
+		}
+		return "micrometer";
+	}
+
+	private static Double readBssAnisotropyFactor( final N5Reader n5 )
+	{
+		try
+		{
+			final Boolean preserve = n5.getAttribute( "/", "Bigstitcher-Spark/PreserveAnisotropy", Boolean.class );
+			if ( preserve == null || !preserve ) return null;
+			return n5.getAttribute( "/", "Bigstitcher-Spark/AnisotropyFactor", Double.class );
+		}
+		catch ( final Exception e )
+		{
+			return null;
+		}
+	}
+
+	private static double[] readBoundingBoxMin( final N5Reader n5 )
+	{
+		try
+		{
+			final long[] m = n5.getAttribute( "/", "Bigstitcher-Spark/Boundingbox_min", long[].class );
+			if ( m == null || m.length < 3 ) return null;
+			return new double[] { m[ 0 ], m[ 1 ], m[ 2 ] };
+		}
+		catch ( final Exception e )
+		{
+			return null;
+		}
+	}
+
+	private static void transformAll( final List< RealPoint > pts, final double[] offset, final double zScale )
+	{
+		for ( final RealPoint p : pts )
+		{
+			for ( int d = 0; d < 3; ++d )
+				p.move( -offset[ d ], d );
+			if ( zScale != 1.0 )
+				p.setPosition( p.getDoublePosition( 2 ) * zScale, 2 );
+		}
 	}
 
 	/** Container shape probe, used to validate -c/-t against the actual axis sizes. */
@@ -493,7 +655,9 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			final List< RealPoint > pts,
 			final Interval viewerInterval,
 			final double sigma,
-			final String name )
+			final String name,
+			final ARGBType color,
+			final double displayMax )
 	{
 		final RealPointSampleList< FloatType > samples = new RealPointSampleList<>( 3 );
 		for ( final RealPoint p : pts )
@@ -505,24 +669,41 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 				Views.raster( Render.render( samples, filterFactory ) ),
 				viewerInterval );
 
-		final BdvOptions opts = ( existing == null )
-				? BdvOptions.options().sourceTransform( new AffineTransform3D() )
-				: BdvOptions.options().addTo( existing );
-		return BdvFunctions.show( rendered, name, opts );
+		// Landmarks are in world/global coordinates already → identity sourceTransform.
+		BdvOptions opts = BdvOptions.options().sourceTransform( new AffineTransform3D() );
+		if ( existing != null )
+			opts = opts.addTo( existing );
+		final BdvStackSource< ? > src = BdvFunctions.show( rendered, name, opts );
+		src.setColor( color );
+		src.setDisplayRangeBounds( 0, Math.max( 1, displayMax ) );
+		src.setDisplayRange( 0, displayMax );
+		return src;
 	}
 
+	/** Deterministic but visually well-spread color per view id (golden-ratio hue). */
+	private static ARGBType colorForViewId( final int vid )
+	{
+		final float hue = ( ( vid * 0.6180339887f ) % 1.0f + 1.0f ) % 1.0f;
+		final int rgb = java.awt.Color.HSBtoRGB( hue, 0.85f, 1.0f );
+		return new ARGBType( ARGBType.rgba(
+				( rgb >> 16 ) & 0xff,
+				( rgb >> 8 ) & 0xff,
+				rgb & 0xff,
+				255 ) );
+	}
+
+	@SafeVarargs
 	private static Interval enclosingInterval(
-			final List< RealPoint > a, final List< RealPoint > b,
-			final Map< Integer, List< RealPoint > > c,
-			final double pad )
+			final double pad,
+			final Map< Integer, List< RealPoint > >... byViewMaps )
 	{
 		final double[] min = new double[ 3 ];
 		final double[] max = new double[ 3 ];
 		Arrays.fill( min, Double.POSITIVE_INFINITY );
 		Arrays.fill( max, Double.NEGATIVE_INFINITY );
-		updateBounds( min, max, a );
-		updateBounds( min, max, b );
-		for ( final List< RealPoint > l : c.values() ) updateBounds( min, max, l );
+		for ( final Map< Integer, List< RealPoint > > m : byViewMaps )
+			for ( final List< RealPoint > pts : m.values() )
+				updateBounds( min, max, pts );
 		final long[] lmin = new long[ 3 ];
 		final long[] lmax = new long[ 3 ];
 		for ( int d = 0; d < 3; ++d )
@@ -531,6 +712,41 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			lmax[ d ] = ( long ) Math.ceil( max[ d ] + 3 * pad );
 		}
 		return new FinalInterval( lmin, lmax );
+	}
+
+	private static List< RealPoint > flatten( final Map< Integer, List< RealPoint > > byView )
+	{
+		final List< RealPoint > all = new ArrayList<>();
+		for ( final List< RealPoint > pts : byView.values() )
+			all.addAll( pts );
+		return all;
+	}
+
+	@SafeVarargs
+	private static TreeSet< Integer > allViewIds( final Map< Integer, List< RealPoint > >... byViewMaps )
+	{
+		final TreeSet< Integer > ids = new TreeSet<>();
+		for ( final Map< Integer, List< RealPoint > > m : byViewMaps )
+			ids.addAll( m.keySet() );
+		return ids;
+	}
+
+	private static BdvStackSource< ? > addSplitSources(
+			BdvStackSource< ? > bdv,
+			final Map< Integer, List< RealPoint > > byView,
+			final Interval viewerInterval,
+			final double sigma,
+			final String typeName,
+			final double displayMax )
+	{
+		for ( final Integer vid : new TreeSet<>( byView.keySet() ) )
+		{
+			final List< RealPoint > pts = byView.get( vid );
+			if ( pts == null || pts.isEmpty() ) continue;
+			bdv = addPointSource( bdv, pts, viewerInterval, sigma,
+					typeName + " view " + vid, colorForViewId( vid ), displayMax );
+		}
+		return bdv;
 	}
 
 	private static void updateBounds( final double[] min, final double[] max, final List< RealPoint > pts )
@@ -552,6 +768,6 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 
 	public static void main( final String... args )
 	{
-		System.exit( new CommandLine( new OverlayLandmarks() ).execute( args ) );
+		new CommandLine( new OverlayLandmarks() ).execute( args );
 	}
 }
