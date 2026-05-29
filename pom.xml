@@ -250,13 +250,9 @@
                     <artifactId>jets3t</artifactId>
                     <groupId>net.java.dev.jets3t</groupId>
                 </exclusion>
-                <!--<exclusion>
-                        <groupId>com.esotericsoftware</groupId>
-                        <artifactId>kryo-shaded</artifactId>
-                </exclusion>-->
                 <exclusion>
-                        <groupId>javax.xml.stream</groupId>
-                        <artifactId>stax-api</artifactId>
+                    <groupId>javax.xml.stream</groupId>
+                    <artifactId>stax-api</artifactId>
                 </exclusion>
             </exclusions>
             <scope>provided</scope>
