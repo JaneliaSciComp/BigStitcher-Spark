@@ -79,43 +79,35 @@
         <url>https://github.com/JaneliaSciComp/BigStitcher-Spark/actions</url>
     </ciManagement>
 
-    <properties>
-        <package-name>net.preibisch.bigstitcher.spark</package-name>
+	<properties>
+		<package-name>net.preibisch.bigstitcher.spark</package-name>
 
-        <!-- <scijava.jvm.version>1.8</scijava.jvm.version> -->
-        <license.licenseName>bsd</license.licenseName>
-        <license.copyrightOwners>Developers.</license.copyrightOwners>
+		<license.licenseName>bsd</license.licenseName>
+		<license.copyrightOwners>Developers.</license.copyrightOwners>
 
-		<!--
-		<imglib2.version>7.1.2</imglib2.version>
-		<imglib2-realtransform.version>4.0.3</imglib2-realtransform.version>
-		<imglib2-cache.version>1.0.0-beta-19</imglib2-cache.version>
-		<imglib2-algorithm.version>0.16.0</imglib2-algorithm.version>
-		<imglib2-roi.version>0.15.1</imglib2-roi.version>
-		<bigdataviewer-core.version>10.6.1</bigdataviewer-core.version>
-		<bigdataviewer-vistools.version>1.0.0-beta-36</bigdataviewer-vistools.version>
-		-->
-		<imglib2.version>8.0.0</imglib2.version>
+		<scijava.jvm.version>11</scijava.jvm.version>
+
+		<imglib2.version>8.0.1</imglib2.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
-		<imglib2-algorithm.version>0.18.2</imglib2-algorithm.version>
-		<imglib2-realtransform.version>4.0.4</imglib2-realtransform.version>
+		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
+		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
 		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
 		<bigdataviewer-n5.version>1.0.2</bigdataviewer-n5.version>
 
 		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>9.0.0-SNAPSHOT</multiview-reconstruction.version>
+		<multiview-reconstruction.version>9.0.1-SNAPSHOT</multiview-reconstruction.version>
 		<BigStitcher.version>2.6.1</BigStitcher.version>
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.0-alpha-12</n5.version>
-		<n5-aws-s3.version>4.4.0-alpha-9</n5-aws-s3.version>
-		<n5-hdf5.version>2.3.0-alpha-7</n5-hdf5.version>
-		<n5-imglib2.version>7.1.0-alpha-8</n5-imglib2.version>
-		<n5-universe.version>2.4.0-alpha-9</n5-universe.version>
-		<n5-zarr.version>2.0.0-alpha-8</n5-zarr.version>
-		<n5-zstandard.version>2.0.0-alpha-4</n5-zstandard.version>
-		<n5-blosc.version>2.0.0-alpha-4</n5-blosc.version>
+		<n5.version>4.0.0</n5.version>
+		<n5-aws-s3.version>5.0.0</n5-aws-s3.version>
+		<n5-hdf5.version>3.0.0</n5-hdf5.version>
+		<n5-imglib2.version>8.0.0</n5-imglib2.version>
+		<n5-universe.version>3.0.0</n5-universe.version>
+		<n5-zarr.version>2.0.1</n5-zarr.version>
+		<n5-zstandard.version>2.0.0</n5-zstandard.version>
+		<n5-blosc.version>2.0.0</n5-blosc.version>
 
 		<mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
 
@@ -291,6 +283,10 @@
                     <groupId>javax.annotation</groupId>
                     <artifactId>javax.annotation-api</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
         <dependency>
@@ -369,6 +365,10 @@
                 <exclusion>
                     <groupId>ch.epfl.biop</groupId>
                     <artifactId>ijp-kheops</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>*</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>

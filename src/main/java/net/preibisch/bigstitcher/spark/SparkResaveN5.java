@@ -66,7 +66,7 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
 import org.janelia.saalfeldlab.n5.shard.ShardCodecInfo;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -693,16 +693,17 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 				level -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
 
-		final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+		final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 				5,
 				"/",
+				"0.5",
 				resolutionS0,
 				resolutionUnit,
 				mrInfo.length,
 				levelToName,
 				levelToMipmapTransform );
 
-		n5Writer.setAttribute( baseDataset, "multiscales", meta );
+		n5Writer.setAttribute( baseDataset, "ome", meta );
 
 		return mrInfo;
 	}
@@ -763,8 +764,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			else if ( useSharding )
 			{
 				attributes = ZarrV3DatasetAttributes.builder(dim, dataType)
-						.blockSize(blockSize)
-						.shardShape(shardSize)
+						.blockSize(shardSize) // shard dimensions
+						.chunkSize(blockSize) //  inner chunk size within shards
 						.compression(compression)
 						.shardIndexDataCodecInfos(new Crc32cChecksumCodec())
 						.build();

@@ -25,7 +25,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 
 import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
@@ -59,7 +59,6 @@ import net.preibisch.mvrecon.process.interestpointregistration.TransformationToo
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v05.OmeNgffV05Metadata;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -72,7 +71,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type, currently supported OME-ZARR, N5, and ONLY for local, multithreaded Spark HDF5 (default: OME-ZARR)")
+			description = "Dataset storage type: ZARR (=OME-ZARR v3, supports sharding), ZARR2 (=OME-ZARR v2, no sharding), N5, "
+					+ "or HDF5 (ONLY for local, multithreaded Spark). Note: with the default ZARR (v3), sharding is auto-enabled "
+					+ "unless --useSharding=false is set. Use ZARR2 for OME-ZARR v2 (no sharding). (default: ZARR / OME-ZARR v3)")
 	private StorageFormat storageType = null;
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
@@ -466,21 +467,23 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			// create metadata
 			if (storageType == StorageFormat.ZARR2) {
-				final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEv04ZarrMetadata(
+				final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 						5, // int n
-						getContainerGroupPath(), // String name, I also saw "/"
+						getContainerGroupPath(), // String name, I also saw "/",
+						"0.4",
 						resolutionS0, // double[] resolutionS0,
 						calUnit, //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 						mrInfos[ 0 ].length, // int numResolutionLevels,
 						(level) -> "/" + level, // OME-ZARR metadata will be created relative to the provided group
 						levelToMipmapTransform );
 
-				driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "multiscales", meta.multiscales );
 			} else {
 				// ZARRv3
-				final OmeNgffV05Metadata meta = OMEZarrAttributes.createOMEv05ZarrMetadata(
+				final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 						5, // int n
 						StringUtils.removeEnd(getContainerGroupPath(), "/"), // String name
+						"0.5",
 						resolutionS0, // double[] resolutionS0,
 						calUnit, // vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 						mrInfos[ 0 ].length, // int numResolutionLevels,
@@ -513,7 +516,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				tps.add( new TimePoint( t ) );
 
 			// extract the resolution of the s0 export
-
 			final double[] resolutionS0 = OMEZarrAttributes.getResolutionS0( cal, avgAnisotropy, Double.NaN );
 
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + calUnit );
