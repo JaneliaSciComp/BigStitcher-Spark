@@ -491,7 +491,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 						levelToMipmapTransform );
 				driverVolumeWriter.setAttribute( getContainerGroupPath(), "ome", meta );
 				// this is hacky until OmeNgffV05Metadata gets fixed to output version
-				driverVolumeWriter.setAttribute( getContainerGroupPath(), "ome/version", "0.5" );
+				driverVolumeWriter.setAttribute( getContainerGroupPath(), "ome/version", meta.version );
 			}
 		}
 

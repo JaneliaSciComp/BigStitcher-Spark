@@ -704,6 +704,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 				levelToMipmapTransform );
 
 		n5Writer.setAttribute( baseDataset, "ome", meta );
+		n5Writer.setAttribute( baseDataset, "ome/version", meta.version );
 
 		return mrInfo;
 	}

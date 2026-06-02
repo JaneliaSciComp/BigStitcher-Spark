@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.scijava</groupId>
         <artifactId>pom-scijava</artifactId>
-        <version>43.0.0</version>
+        <version>44.0.0</version>
         <relativePath/>
     </parent>
 
@@ -84,7 +84,6 @@
 
 		<license.licenseName>bsd</license.licenseName>
 		<license.copyrightOwners>Developers.</license.copyrightOwners>
-
 		<scijava.jvm.version>11</scijava.jvm.version>
 
 		<imglib2.version>8.0.1</imglib2.version>

@@ -5,6 +5,7 @@
         </encoder>
     </appender>
     <logger name="org.apache.spark" level="WARN"/>
+    <logger name="loci.formats" level="OFF"/>
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
     </root>
