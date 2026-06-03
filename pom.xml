@@ -84,7 +84,7 @@
 
 		<license.licenseName>bsd</license.licenseName>
 		<license.copyrightOwners>Developers.</license.copyrightOwners>
-		<scijava.jvm.version>11</scijava.jvm.version>
+		<scijava.jvm.version>21</scijava.jvm.version>
 
 		<imglib2.version>8.0.1</imglib2.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
@@ -178,7 +178,7 @@
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
             <exclusions>
-                <!-- netty-all already provides all io.netty classes; exclude individual modules to avoid duplicate class conflicts -->
+                <!-- Spark 4 provides Netty; exclude AWS Netty modules to avoid duplicate class conflicts. -->
                 <exclusion>
                     <groupId>io.netty</groupId>
                     <artifactId>*</artifactId>
@@ -189,22 +189,19 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.13.4</version>
+            <version>2.21.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.21</version>
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
-            <!-- Spark 3.3.2 release comes with scala 2.12.15 -->
-            <artifactId>spark-core_2.12</artifactId>
-            <version>3.3.2</version>
+            <!-- Spark 4.1.2 release comes with scala 2.13 -->
+            <artifactId>spark-core_2.13</artifactId>
+            <version>4.1.2</version>
             <exclusions>
-                <exclusion>
-                    <artifactId>netty-all</artifactId>
-                    <groupId>io.netty</groupId>
-                </exclusion>
-                <exclusion>
-                    <artifactId>netty</artifactId>
-                    <groupId>io.netty</groupId>
-                </exclusion>
                 <exclusion>
                     <artifactId>jcl-over-slf4j</artifactId>
                     <groupId>org.slf4j</groupId>
@@ -251,7 +248,7 @@
         <dependency>
             <groupId>org.scala-lang</groupId>
             <artifactId>scala-library</artifactId>
-            <version>2.12.15</version>
+            <version>2.13.17</version>
         </dependency>
         <dependency>
             <groupId>net.preibisch</groupId>
@@ -287,16 +284,6 @@
                     <artifactId>*</artifactId>
                 </exclusion>
             </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
-            <version>4.1.68.Final</version>
-        </dependency>
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty</artifactId>
-            <version>3.9.9.Final</version>
         </dependency>
         <dependency>
             <groupId>info.picocli</groupId>

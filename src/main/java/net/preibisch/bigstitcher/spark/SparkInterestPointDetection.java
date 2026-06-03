@@ -292,6 +292,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
+		try
+		{
 		final JavaRDD<Tuple2<ViewId, ViewId>> metadataJobsSpark = sc.parallelize( metadataJobs, Math.min( Spark.maxPartitions, metadataJobs.size() ) );
 
 		final JavaRDD< ArrayList< Tuple4< ViewId, long[], long[], long[] > > > metadataJobRDD = metadataJobsSpark.map( metaData ->
@@ -739,9 +741,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			System.out.println( "All deleted.");
 		}
-
-		sc.close();
-
 		System.out.println( "Computed all interest points, statistics:" );
 
 		// assemble all ViewIds
@@ -975,6 +974,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "Done ..." );
 
 		return null;
+		}
+		finally
+		{
+			sc.close();
+		}
 	}
 
 	public static void filterPoints(
