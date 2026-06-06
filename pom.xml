@@ -84,7 +84,7 @@
 
 		<license.licenseName>bsd</license.licenseName>
 		<license.copyrightOwners>Developers.</license.copyrightOwners>
-		<scijava.jvm.version>21</scijava.jvm.version>
+		<scijava.jvm.version>17</scijava.jvm.version>
 
 		<imglib2.version>8.0.1</imglib2.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
@@ -112,6 +112,9 @@
 
 		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
 		<ome-codecs.version>0.3.0</ome-codecs.version>
+
+		<!-- JaCoCo 0.8.14+ required for Java 26 (class file major version 70) support -->
+		<jacoco-maven-plugin.version>0.8.14</jacoco-maven-plugin.version>
     </properties>
 
     <repositories>
