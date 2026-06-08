@@ -17,7 +17,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
 
 import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
@@ -525,14 +525,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final XmlIoSpimData2 ioFusion = new XmlIoSpimData2();
 
-			// For Zarr v3 containers, embed the SpimData2 payload as JSON inside the
-			// store's root zarr.json. save() auto-detects this when xmlOutURI lives
-			// inside the .zarr/, but the user may have pointed xmlOutURI elsewhere;
-			// route by storage format here to guarantee the embed happens.
-			if ( storageType == StorageFormat.ZARR )
-				ioFusion.saveToZarrV3( dataFusion, outPathURI );
-			else
-				ioFusion.save( dataFusion, xmlOutURI );
+			ioFusion.save( dataFusion, xmlOutURI );
 
 			if ( storageType != StorageFormat.ZARR && storageType != StorageFormat.ZARR2 )
 			{
