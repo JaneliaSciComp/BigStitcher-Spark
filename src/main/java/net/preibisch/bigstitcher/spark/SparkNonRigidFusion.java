@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 2 of the
  * License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public
  * License along with this program.  If not, see
  * <http://www.gnu.org/licenses/gpl-2.0.html>.
@@ -26,7 +26,9 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 
@@ -42,28 +44,37 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.converter.Converters;
 import net.imglib2.parallel.SequentialExecutorService;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
+import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.SparkFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.BDVSparkInstantiateViewSetup;
+import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.plugin.fusion.FusionGUI.FusionType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
+import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
+import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.fusion.transformed.nonrigid.NonRigidTools;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
@@ -75,7 +86,7 @@ import util.URITools;
 public class SparkNonRigidFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	/**
-	 * 
+	 *
 	 */
 	private static final long serialVersionUID = 385486695284409953L;
 
@@ -117,6 +128,19 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 	@Option(names = { "--maxIntensity" }, description = "max intensity for scaling values to the desired range (required for UINT8 and UINT16), e.g. 2048.0")
 	private Double maxIntensity = null;
+
+	@Option(names = { "--multiRes" }, description = "Automatically create a multi-resolution pyramid (default: false)")
+	private boolean multiRes = false;
+
+	@Option(names = { "-ds", "--downsampling" }, split = ";", required = false,
+			description = "Manually define steps to create a multi-resolution pyramid (e.g. -ds 1,1,1 -ds 2,2,1 -ds 4,4,2 -ds 8,8,4)")
+	private List<String> downsampling = null;
+
+	@Option(names = { "--preserveAnisotropy" }, description = "preserve the anisotropy of the data (default: false)")
+	private boolean preserveAnisotropy = false;
+
+	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
+	private double anisotropyFactor = Double.NaN;
 
 	URI n5PathURI = null, xmlOutURI = null;
 
@@ -163,7 +187,50 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		for ( final String ip : interestPoints )
 			System.out.println( "nonrigid using interestpoint label: " + ip );
 
-		final BoundingBox bb = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
+		// validate downsampling parameters before doing any expensive work
+		if ( !Downsampling.testDownsamplingParameters( this.multiRes, this.downsampling ) )
+			return null;
+
+		// get bounding box (may be adjusted below for anisotropy)
+		BoundingBox bb = Import.getBoundingBox( dataGlobal, viewIdsGlobal, boundingBoxName );
+
+		// anisotropy preservation: compress z so output voxels are isotropic
+		if ( preserveAnisotropy )
+		{
+			System.out.println( "Preserving anisotropy." );
+
+			if ( Double.isNaN( anisotropyFactor ) )
+			{
+				anisotropyFactor = TransformationTools.getAverageAnisotropyFactor( dataGlobal, viewIdsGlobal );
+				System.out.println( "Anisotropy factor [computed from data]: " + anisotropyFactor );
+			}
+			else
+			{
+				System.out.println( "Anisotropy factor [provided]: " + anisotropyFactor );
+			}
+
+			final long[] minBB = bb.minAsLongArray();
+			final long[] maxBB = bb.maxAsLongArray();
+			minBB[ 2 ] = Math.round( Math.floor( minBB[ 2 ] / anisotropyFactor ) );
+			maxBB[ 2 ] = Math.round( Math.ceil(  maxBB[ 2 ] / anisotropyFactor ) );
+			bb = new BoundingBox( new FinalInterval( minBB, maxBB ) );
+			System.out.println( "Adjusted bounding box (anisotropy preserved): " + Util.printInterval( bb ) );
+		}
+
+		// build the multi-resolution downsampling table
+		final int[][] downsamplings;
+		if ( multiRes )
+			downsamplings = ExportN5Api.estimateMultiResPyramid( new FinalDimensions( bb ), anisotropyFactor );
+		else if ( this.downsampling != null )
+			downsamplings = Import.csvStringListToDownsampling( this.downsampling );
+		else
+			downsamplings = new int[][]{{ 1, 1, 1 }};
+
+		if ( downsamplings == null )
+			return null;
+
+		System.out.println( "The following downsampling pyramid will be created:" );
+		System.out.println( Arrays.deepToString( downsamplings ) );
 
 		this.n5PathURI = URITools.toURI( n5PathURIString );
 		System.out.println( "Fused volume: " + n5PathURI );
@@ -200,7 +267,6 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final long[] dimensions = bb.dimensionsAsLongArray();
 		final long[] min = bb.minAsLongArray();
 
-		
 		//
 		// final variables for Spark
 		//
@@ -223,6 +289,10 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		else
 			range = 0;
 		final int[][] serializedViewIds = Spark.serializeViewIds(viewIdsGlobal);
+
+		// capture anisotropy state for Spark lambdas
+		final boolean preserveAnisotropy = this.preserveAnisotropy;
+		final double anisotropyFactorFinal = this.anisotropyFactor;
 
 		try
 		{
@@ -249,9 +319,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		// using bigger blocksizes than being stored for efficiency (needed for very large datasets)
 		final int[] superBlockSize = new int[ 3 ];
 		Arrays.setAll( superBlockSize, d -> blockSize[ d ] * blocksPerJob[ d ] );
-		final List<long[][]> grid = Grid.create(dimensions,
-				superBlockSize,
-				blockSize);
+		final List<long[][]> grid = new ArrayList<>( Grid.create(dimensions, superBlockSize, blockSize) );
 
 		System.out.println( "numJobs = " + grid.size() );
 
@@ -260,9 +328,6 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
 		{
-			// TODO: support create downsampling pyramids, null is fine for now
-			final int[][] downsamplings = null;
-
 			// A Functional Interface that converts a ViewId to a ViewSetup, only called if the ViewSetup does not exist
 			final InstantiateViewSetup instantiate =
 					new BDVSparkInstantiateViewSetup( angleIds, illuminationIds, channelIds, tileIds );
@@ -310,133 +375,323 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<long[][]> rdd = sc.parallelize( grid, Math.min( Spark.maxPartitions, grid.size() ) );
+		//
+		// s0 fusion with retry
+		//
+		final List<long[][]> gridRetry = new ArrayList<>( grid );
+		final RetryTrackerSpark<long[][]> retryTracker =
+				RetryTrackerSpark.forGridBlocks( "s0 non-rigid block processing", gridRetry.size() );
 
 		final long time = System.currentTimeMillis();
 
-		rdd.foreach(
-				gridBlock -> {
-					final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+		do
+		{
+			if ( !retryTracker.beginAttempt() )
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
 
-					// be smarter, test which ViewIds are actually needed for the block we want to fuse
-					final Interval fusedBlock =
-							Intervals.translate(
-									Intervals.translate(
-											new FinalInterval( gridBlock[1] ), // blocksize
-											gridBlock[0] ), // block offset
-									min ); // min of the randomaccessbileinterval
+			final JavaRDD<long[][]> rdd = sc.parallelize( gridRetry, Math.min( Spark.maxPartitions, gridRetry.size() ) );
 
-					// recover views to process
-					final List< ViewId > viewsToFuse = new ArrayList<>(); // fuse
-					final List< ViewId > allViews = new ArrayList<>();
+			final JavaRDD<long[][]> rddResult = rdd.map(
+					gridBlock -> {
+						final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 
-					for ( int i = 0; i < serializedViewIds.length; ++i )
-					{
-						final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
-
-						// expand by 50 to be conservative for non-rigid overlaps
-						dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
-						final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );
-						final Interval bounds = Intervals.expand( boundingBox, 50 );
-						// TODO: estimate the "50" from the distance of corresponding, transformed interest points
-
-						if ( ViewUtil.overlaps( fusedBlock, bounds ) )
-							viewsToFuse.add( viewId );
-
-						allViews.add( viewId );
-					}
-
-					// nothing to save...
-					if ( viewsToFuse.size() == 0 )
-						return;
-
-					// test with which views the viewsToFuse overlap
-					// TODO: use the actual interest point correspondences maybe (i.e. change in mvr)
-					final List< ViewId > viewsToUse = new ArrayList<>(); // used to compute the non-rigid transform
-
-					for ( final ViewId viewId : allViews )
-					{
-						dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
-						final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );
-						final Interval boundsView = Intervals.expand( boundingBoxView, 25 );
-
-						for ( final ViewId fusedId : viewsToFuse )
+						// inject z-scale into every view registration so the non-rigid fusion
+						// works in isotropic output space (same effect as adjustAllTransforms
+						// in the affine fusion path)
+						if ( preserveAnisotropy )
 						{
-							dataLocal.getViewRegistrations().getViewRegistration( fusedId ).updateModel();
-							final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId, dataLocal.getViewRegistrations().getViewRegistration( fusedId ).getModel() );
-							final Interval boundsFused = Intervals.expand( boundingBoxFused, 25 );
-							
-							if ( ViewUtil.overlaps( boundsView, boundsFused ))
+							final AffineTransform3D zScale = new AffineTransform3D();
+							zScale.set( 1,0,0,0, 0,1,0,0, 0,0,1.0/anisotropyFactorFinal,0 );
+							final ViewTransformAffine anisotropyTransform =
+									new ViewTransformAffine( "anisotropy_correction", zScale );
+							for ( int i = 0; i < serializedViewIds.length; ++i )
+								dataLocal.getViewRegistrations()
+										.getViewRegistration( Spark.deserializeViewIds( serializedViewIds, i ) )
+										.getTransformList().add( anisotropyTransform );
+							// updateModel() is called per-view in the overlap-detection loops below;
+							// the z-scale is in the list so every recomposition includes it
+						}
+
+						// be smarter, test which ViewIds are actually needed for the block we want to fuse
+						final Interval fusedBlock =
+								Intervals.translate(
+										Intervals.translate(
+												new FinalInterval( gridBlock[1] ), // blocksize
+												gridBlock[0] ), // block offset
+										min ); // min of the randomaccessbileinterval
+
+						// recover views to process
+						final List< ViewId > viewsToFuse = new ArrayList<>(); // fuse
+						final List< ViewId > allViews = new ArrayList<>();
+
+						for ( int i = 0; i < serializedViewIds.length; ++i )
+						{
+							final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
+
+							// expand by 50 to be conservative for non-rigid overlaps
+							dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
+							final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );
+							final Interval bounds = Intervals.expand( boundingBox, 50 );
+							// TODO: estimate the "50" from the distance of corresponding, transformed interest points
+
+							if ( ViewUtil.overlaps( fusedBlock, bounds ) )
+								viewsToFuse.add( viewId );
+
+							allViews.add( viewId );
+						}
+
+						// nothing to save...
+						if ( viewsToFuse.size() == 0 )
+							return gridBlock.clone();
+
+						// test with which views the viewsToFuse overlap
+						// TODO: use the actual interest point correspondences maybe (i.e. change in mvr)
+						final List< ViewId > viewsToUse = new ArrayList<>(); // used to compute the non-rigid transform
+
+						for ( final ViewId viewId : allViews )
+						{
+							dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
+							final Interval boundingBoxView = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );
+							final Interval boundsView = Intervals.expand( boundingBoxView, 25 );
+
+							for ( final ViewId fusedId : viewsToFuse )
 							{
-								viewsToUse.add( viewId );
-								break;
+								dataLocal.getViewRegistrations().getViewRegistration( fusedId ).updateModel();
+								final Interval boundingBoxFused = ViewUtil.getTransformedBoundingBox( dataLocal, fusedId, dataLocal.getViewRegistrations().getViewRegistration( fusedId ).getModel() );
+								final Interval boundsFused = Intervals.expand( boundingBoxFused, 25 );
+
+								if ( ViewUtil.overlaps( boundsView, boundsFused ))
+								{
+									viewsToUse.add( viewId );
+									break;
+								}
 							}
 						}
-					}
 
-					final double downsampling = Double.NaN;
-					final double ds = 1.0;
-					final int cpd = Math.max( 1, (int)Math.round( 10 / ds ) );
+						final double downsampling = Double.NaN;
+						final double ds = 1.0;
+						final int cpd = Math.max( 1, (int)Math.round( 10 / ds ) );
 
-					final int interpolation = 1;
-					final long[] controlPointDistance = new long[] { cpd, cpd, cpd };
-					final double alpha = 1.0;
-					final boolean virtualGrid = false;
+						final int interpolation = 1;
+						final long[] controlPointDistance = new long[] { cpd, cpd, cpd };
+						final double alpha = 1.0;
+						final boolean virtualGrid = false;
 
-					final FusionType fusionType = FusionType.AVG_BLEND;
-					final boolean displayDistances = false;
+						final FusionType fusionType = FusionType.AVG_BLEND;
+						final boolean displayDistances = false;
 
-					final ExecutorService service = new SequentialExecutorService();
+						final ExecutorService service = new SequentialExecutorService();
 
-					final RandomAccessibleInterval< FloatType > source =
-							NonRigidTools.fuseVirtualInterpolatedNonRigid(
-									dataLocal,
-									viewsToFuse,
-									viewsToUse,
-									labels,
-									fusionType,
-									displayDistances,
-									controlPointDistance,
-									alpha,
-									virtualGrid,
-									interpolation,
-									fusedBlock,
-									null,
-									service );
+						final RandomAccessibleInterval< FloatType > source =
+								NonRigidTools.fuseVirtualInterpolatedNonRigid(
+										dataLocal,
+										viewsToFuse,
+										viewsToUse,
+										labels,
+										fusionType,
+										displayDistances,
+										controlPointDistance,
+										alpha,
+										virtualGrid,
+										interpolation,
+										fusedBlock,
+										null,
+										service );
 
-					service.shutdown();
+						service.shutdown();
 
-					final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
+						final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
 
-					if ( uint8 )
+						if ( uint8 )
+						{
+							final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
+									Converters.convert(
+											source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+											new UnsignedByteType());
+
+							N5Utils.saveBlock(sourceUINT8, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+						else if ( uint16 )
+						{
+							final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
+									Converters.convert(
+											source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+											new UnsignedShortType());
+
+							N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+						else
+						{
+							N5Utils.saveBlock(source, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+
+						if ( executorVolumeWriter != N5Util.sharedHDF5Writer )
+							executorVolumeWriter.close();
+
+						return gridBlock.clone();
+					});
+
+			rddResult.cache();
+			rddResult.count();
+
+			final Set<long[][]> failedBlocks = retryTracker.processWithSpark( rddResult, gridRetry );
+			if ( !retryTracker.processFailures( failedBlocks ) )
+			{
+				System.out.println( "Stopping." );
+				System.exit( 1 );
+			}
+			gridRetry.clear();
+			gridRetry.addAll( failedBlocks );
+		}
+		while ( gridRetry.size() > 0 );
+
+		System.out.println( new Date() + ": Saved full resolution, took: " + (System.currentTimeMillis() - time ) + " ms." );
+
+		//
+		// multi-resolution pyramid (s1 .. sN)
+		//
+		if ( downsamplings.length > 1 )
+		{
+			long[] previousDim = dimensions.clone();
+			String previousDataset = n5Dataset;
+
+			for ( int level = 1; level < downsamplings.length; ++level )
+			{
+				final int[] relativeDs = new int[ downsamplings[ 0 ].length ];
+				for ( int d = 0; d < relativeDs.length; ++d )
+					relativeDs[ d ] = downsamplings[ level ][ d ] / downsamplings[ level - 1 ][ d ];
+
+				final long[] dimDS = new long[ previousDim.length ];
+				for ( int d = 0; d < dimDS.length; ++d )
+					dimDS[ d ] = previousDim[ d ] / relativeDs[ d ];
+
+				final String datasetDS;
+				if ( bdvString != null )
+					datasetDS = N5ApiTools.createDownsampledBDVPath( n5Dataset, level, storageType );
+				else
+					datasetDS = n5Dataset.substring( 0, n5Dataset.length() - 3 ) + "/s" + level;
+
+				driverVolumeWriter.createDataset( datasetDS, dimDS, blockSize, dataType, compression );
+				driverVolumeWriter.setAttribute( datasetDS, "downsamplingFactors", downsamplings[ level ] );
+
+				System.out.println( new Date() + ": Downsampling: " + Arrays.toString( downsamplings[ level ] )
+						+ " with relative downsampling of " + Arrays.toString( relativeDs ) );
+				System.out.println( new Date() + ": Loading '" + previousDataset + "', downsampled will be written as '" + datasetDS + "'." );
+
+				final List<long[][]> gridDS = new ArrayList<>( Grid.create( dimDS, blockSize, blockSize ) );
+				System.out.println( new Date() + ": s" + level + " numBlocks=" + gridDS.size() );
+
+				final List<long[][]> gridDSRetry = new ArrayList<>( gridDS );
+				final RetryTrackerSpark<long[][]> retryTrackerDS =
+						RetryTrackerSpark.forGridBlocks( "s" + level + " non-rigid block processing", gridDSRetry.size() );
+
+				final long timeDS = System.currentTimeMillis();
+				final String prevDataset = previousDataset;
+				final int[] relDsCapture = relativeDs;
+
+				do
+				{
+					if ( !retryTrackerDS.beginAttempt() )
 					{
-						final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
-								Converters.convert(
-										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-										new UnsignedByteType());
-
-						//final RandomAccessibleInterval<UnsignedByteType> sourceGridBlock = Views.offsetInterval(sourceUINT8, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceUINT8, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						System.out.println( "Stopping." );
+						System.exit( 1 );
 					}
-					else if ( uint16 )
+
+					final JavaRDD<long[][]> rddDS = sc.parallelize( gridDSRetry, Math.min( Spark.maxPartitions, gridDSRetry.size() ) );
+
+					final JavaRDD<long[][]> rddDSResult = rddDS.map( gridBlock ->
 					{
-						final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
-								Converters.convert(
-										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-										new UnsignedShortType());
+						final N5Writer executorVolumeWriterDS = N5Util.createN5Writer( n5PathURI, storageType );
 
-						//final RandomAccessibleInterval<UnsignedShortType> sourceGridBlock = Views.offsetInterval(sourceUINT16, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
-					}
-					else
+						try
+						{
+							if ( dataType == DataType.UINT16 )
+							{
+								RandomAccessibleInterval<UnsignedShortType> downsampled =
+										N5Utils.open( executorVolumeWriterDS, prevDataset );
+								for ( int d = 0; d < downsampled.numDimensions(); ++d )
+									if ( relDsCapture[ d ] > 1 )
+										downsampled = LazyHalfPixelDownsample2x.init(
+												downsampled,
+												new FinalInterval( downsampled ),
+												new UnsignedShortType(),
+												blockSize,
+												d );
+								N5Utils.saveNonEmptyBlock(
+										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
+										executorVolumeWriterDS, datasetDS, gridBlock[2], new UnsignedShortType() );
+							}
+							else if ( dataType == DataType.UINT8 )
+							{
+								RandomAccessibleInterval<UnsignedByteType> downsampled =
+										N5Utils.open( executorVolumeWriterDS, prevDataset );
+								for ( int d = 0; d < downsampled.numDimensions(); ++d )
+									if ( relDsCapture[ d ] > 1 )
+										downsampled = LazyHalfPixelDownsample2x.init(
+												downsampled,
+												new FinalInterval( downsampled ),
+												new UnsignedByteType(),
+												blockSize,
+												d );
+								N5Utils.saveNonEmptyBlock(
+										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
+										executorVolumeWriterDS, datasetDS, gridBlock[2], new UnsignedByteType() );
+							}
+							else // FLOAT32
+							{
+								RandomAccessibleInterval<FloatType> downsampled =
+										N5Utils.open( executorVolumeWriterDS, prevDataset );
+								for ( int d = 0; d < downsampled.numDimensions(); ++d )
+									if ( relDsCapture[ d ] > 1 )
+										downsampled = LazyHalfPixelDownsample2x.init(
+												downsampled,
+												new FinalInterval( downsampled ),
+												new FloatType(),
+												blockSize,
+												d );
+								N5Utils.saveNonEmptyBlock(
+										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
+										executorVolumeWriterDS, datasetDS, gridBlock[2], new FloatType() );
+							}
+						}
+						catch ( Exception e )
+						{
+							System.out.println( "Error writing downsampled block offset=" + Arrays.toString( gridBlock[0] ) + ": " + e );
+							e.printStackTrace();
+							if ( executorVolumeWriterDS != N5Util.sharedHDF5Writer )
+								executorVolumeWriterDS.close();
+							return null; // signals failure to retry tracker
+						}
+
+						if ( executorVolumeWriterDS != N5Util.sharedHDF5Writer )
+							executorVolumeWriterDS.close();
+
+						return gridBlock.clone();
+					});
+
+					rddDSResult.cache();
+					rddDSResult.count();
+
+					final Set<long[][]> failedDS = retryTrackerDS.processWithSpark( rddDSResult, gridDSRetry );
+					if ( !retryTrackerDS.processFailures( failedDS ) )
 					{
-						//final RandomAccessibleInterval<FloatType> sourceGridBlock = Views.offsetInterval(source, gridBlock[0], gridBlock[1]);
-						N5Utils.saveBlock(source, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						System.out.println( "Stopping." );
+						System.exit( 1 );
 					}
+					gridDSRetry.clear();
+					gridDSRetry.addAll( failedDS );
+				}
+				while ( gridDSRetry.size() > 0 );
 
-					if ( executorVolumeWriter != N5Util.sharedHDF5Writer )
-						executorVolumeWriter.close();
-				});
+				System.out.println( new Date() + ": Saved level s" + level + ", took: " + (System.currentTimeMillis() - timeDS ) + " ms." );
+
+				previousDim = dimDS;
+				previousDataset = datasetDS;
+			}
+		}
 
 		sc.close();
 

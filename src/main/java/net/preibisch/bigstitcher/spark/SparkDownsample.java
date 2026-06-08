@@ -23,6 +23,7 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -31,23 +32,18 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.Compression;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import mpicbg.spim.data.SpimDataException;
-import net.imglib2.FinalInterval;
-import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.type.NativeType;
-import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Util;
-import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
-import net.preibisch.bigstitcher.spark.util.DataTypeUtil;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
-import net.preibisch.mvrecon.process.downsampling.lazy.LazyHalfPixelDownsample2x;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools;
+import net.preibisch.mvrecon.process.n5api.N5ApiTools.MultiResolutionLevelInfo;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.Grid;
@@ -98,90 +94,142 @@ public class SparkDownsample extends AbstractInfrastructure implements Callable<
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("OFF");
 
-		final int[][] downsampling = Import.csvStringListToDownsampling( this.downsampling );
+		// per-step (relative) downsampling factors; unlike CreateFusionContainer we do NOT
+		// require the first entry to be 1,1,1.
+		final int[][] relativeDs = new int[ this.downsampling.size() ][];
+		for ( int i = 0; i < this.downsampling.size(); ++i )
+			relativeDs[ i ] = Import.csvStringToIntArray( this.downsampling.get( i ) );
 
 		final URI n5Path = URITools.toURI( this.n5PathIn );
 		final N5Writer n5 = N5Util.createN5Writer( n5Path, storageType );
 
-		final Compression compression = n5.getAttribute( n5DatasetIn, "compression", Compression.class );
-		final int[] blockSize = n5.getAttribute( n5DatasetIn, "blockSize", int[].class );
+		// Cross-format dataset attribute lookup (works for N5 and Zarr v2/v3),
+		// matching the pattern in mvr's AllenOMEZarrProperties / N5ApiTools.
+		final DatasetAttributes srcAttrs = n5.getDatasetAttributes( n5DatasetIn );
+		if ( srcAttrs == null )
+			throw new RuntimeException( "Could not find dataset attributes for '" + n5DatasetIn + "' in '" + n5PathIn + "'." );
+
+		final long[] srcDim = srcAttrs.getDimensions();
+		final int[] srcBlockSize = srcAttrs.getBlockSize();
+		final DataType dataType = srcAttrs.getDataType();
+		final Compression compression = srcAttrs.getCompression();
+		final int n = srcDim.length;
+		final boolean is5DOmeZarr = ( n == 5 )
+				&& ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 );
+
 		final int[] blockScale = Import.csvStringToIntArray( blockScaleString );
-		final DataType dataType = n5.getAttribute( n5DatasetIn, "dataType", DataType.class );
-		final String dataTypeString = dataType.toString();
 
-		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
-		System.out.println( "dataType: " + dataTypeString );
+		System.out.println( "input '" + n5DatasetIn + "' dims=" + Util.printCoordinates( srcDim )
+				+ ", blockSize=" + Util.printCoordinates( srcBlockSize ) + ", dataType=" + dataType );
 
-		for ( int i = 0; i < n5DatasetsOut.size(); ++i )
-			System.out.println( "'" + n5DatasetsOut.get( i ) + "' : " + Util.printCoordinates( downsampling[ i ] ) );
+		// Build MultiResolutionLevelInfo per level (index 0 = input, 1..N = outputs) and create
+		// the output datasets. relativeDownsampling describes the step from the previous level;
+		// absoluteDownsampling is cumulative from the input.
+		final MultiResolutionLevelInfo[] mrInfo = new MultiResolutionLevelInfo[ relativeDs.length + 1 ];
+		final int[] dsOne = new int[ n ];
+		Arrays.fill( dsOne, 1 );
+		mrInfo[ 0 ] = new MultiResolutionLevelInfo(
+				n5DatasetIn, srcDim.clone(), dataType, dsOne.clone(), dsOne.clone(), srcBlockSize, null );
+
+		for ( int level = 1; level <= relativeDs.length; ++level )
+		{
+			final int[] relDs = new int[ n ];
+			Arrays.fill( relDs, 1 );
+			for ( int d = 0; d < Math.min( relativeDs[ level - 1 ].length, n ); ++d )
+				relDs[ d ] = relativeDs[ level - 1 ][ d ];
+
+			final long[] dim = new long[ n ];
+			for ( int d = 0; d < n; ++d )
+				dim[ d ] = mrInfo[ level - 1 ].dimensions[ d ] / relDs[ d ];
+
+			final int[] absDs = new int[ n ];
+			for ( int d = 0; d < n; ++d )
+				absDs[ d ] = mrInfo[ level - 1 ].absoluteDownsampling[ d ] * relDs[ d ];
+
+			final String datasetOut = n5DatasetsOut.get( level - 1 );
+			mrInfo[ level ] = new MultiResolutionLevelInfo(
+					datasetOut, dim, dataType, relDs, absDs, srcBlockSize, null );
+
+			n5.createDataset( datasetOut, dim, srcBlockSize, dataType, compression );
+			System.out.println( "level " + level + " '" + datasetOut + "': relDs=" + Util.printCoordinates( relDs ) + ", dims=" + Util.printCoordinates( dim ) );
+		}
 
 		final long time = System.currentTimeMillis();
 
-		for ( int level = 0; level < n5DatasetsOut.size(); ++level )
+		final long numChannels = is5DOmeZarr ? srcDim[ 3 ] : 1;
+		final long numTimepoints = is5DOmeZarr ? srcDim[ 4 ] : 1;
+
+		for ( int level = 1; level <= relativeDs.length; ++level )
 		{
-			final int[] ds = downsampling[ level ].clone();
-
-			System.out.println( "Peforming downsampling: " + Util.printCoordinates( ds ) );
-
-			final String n5DatasetIn = (level == 0) ? this.n5DatasetIn : n5DatasetsOut.get( level - 1 );
-			final String n5DatasetOut = n5DatasetsOut.get( level );
-
-			final long[] inputDim = n5.getAttribute( n5DatasetIn, "dimensions", long[].class );
-			final long[] dim = new long[ inputDim.length ];
-			for ( int d = 0; d < dim.length; ++d )
-				dim[ d ] = inputDim[ d ] / ds[ d ];
-
-			n5.createDataset(
-					n5DatasetOut,
-					dim, // dimensions
-					blockSize,
-					dataType,
-					compression );
-
-			final List<long[][]> grid = Grid.create(
-					dim,
-					new int[] {
-							blockSize[0] * blockScale[ 0 ],
-							blockSize[1] * blockScale[ 1 ],
-							blockSize[2] * blockScale[ 2 ]
-					},
-					blockSize);
-
-			System.out.println( "Input dimensions: " + Util.printCoordinates( inputDim ));
-			System.out.println( "Output dimensions: " + Util.printCoordinates( dim ));
-			System.out.println( "Tasks: " + grid.size() );
-
-			final JavaRDD<long[][]> rdd = sc.parallelize(grid);
-
-
+			final int s = level;
 			final long timeLevel = System.currentTimeMillis();
 
-			rdd.foreach(
-					gridBlock -> {
-						final N5Writer n5Lcl = N5Util.createN5Writer( n5Path, storageType );
-						final DataType dataTypeLcl = DataType.fromString(dataTypeString);
+			// 5D OME-ZARR: writeDownsampledBlock5dOMEZARR expects 3D gridBlock and lifts to 5D internally.
+			// N5/HDF5: use the dataset's native dimensionality.
+			final long[] gridDim = is5DOmeZarr
+					? new long[] { mrInfo[ s ].dimensions[ 0 ], mrInfo[ s ].dimensions[ 1 ], mrInfo[ s ].dimensions[ 2 ] }
+					: mrInfo[ s ].dimensions;
+			final int gn = gridDim.length;
+			final int[] gridBlockSize = new int[ gn ];
+			final int[] innerBlockSize = new int[ gn ];
+			for ( int d = 0; d < gn; ++d )
+			{
+				innerBlockSize[ d ] = srcBlockSize[ d ];
+				gridBlockSize[ d ] = srcBlockSize[ d ] * ( d < blockScale.length ? blockScale[ d ] : 1 );
+			}
 
-						RandomAccessibleInterval downsampled = N5Utils.open( n5Lcl, n5DatasetIn );
+			final List<long[][]> grid = Grid.create( gridDim, gridBlockSize, innerBlockSize );
 
-						for ( int d = 0; d < downsampled.numDimensions(); ++d )
-							if ( ds[ d ] > 1 )
-								downsampled = LazyHalfPixelDownsample2x.init(
-									downsampled,
-									new FinalInterval( downsampled ),
-									(RealType & NativeType)DataTypeUtil.toType( dataTypeLcl ),
-									blockSize,
-									d);
+			// Expand grid over (c,t) for 5D OME-ZARR so each task is one (gridBlock, c, t).
+			final List<long[][]> allJobs;
+			if ( is5DOmeZarr )
+			{
+				allJobs = new ArrayList<>( grid.size() * (int)( numChannels * numTimepoints ) );
+				for ( long t = 0; t < numTimepoints; ++t )
+					for ( long c = 0; c < numChannels; ++c )
+						for ( final long[][] gb : grid )
+							allJobs.add( new long[][] { gb[ 0 ], gb[ 1 ], gb[ 2 ], new long[] { c, t } } );
+			}
+			else
+			{
+				allJobs = grid;
+			}
 
-						final RandomAccessibleInterval sourceGridBlock = Views.offsetInterval(downsampled, gridBlock[0], gridBlock[1]);
-						N5Utils.saveNonEmptyBlock(sourceGridBlock, n5Lcl, n5DatasetOut, gridBlock[2], (RealType & NativeType)DataTypeUtil.toType( dataTypeLcl ));
-					});
+			System.out.println( "level " + level + ": " + grid.size() + " grid blocks"
+					+ ( is5DOmeZarr ? " x " + ( numChannels * numTimepoints ) + " (c,t) = " + allJobs.size() + " tasks" : "" ) );
+
+			final JavaRDD<long[][]> rdd = sc.parallelize( allJobs );
+
+			final boolean is5DLambda = is5DOmeZarr;
+			final StorageFormat storageTypeLcl = storageType;
+
+			rdd.foreach( job -> {
+				final N5Writer n5Lcl = N5Util.createN5Writer( n5Path, storageTypeLcl );
+				try
+				{
+					if ( is5DLambda )
+					{
+						final long[][] gridBlock = new long[][] { job[ 0 ], job[ 1 ], job[ 2 ] };
+						final long cIdx = job[ 3 ][ 0 ];
+						final long tIdx = job[ 3 ][ 1 ];
+						N5ApiTools.writeDownsampledBlock5dOMEZARR( n5Lcl, mrInfo[ s ], mrInfo[ s - 1 ], gridBlock, cIdx, tIdx );
+					}
+					else
+					{
+						N5ApiTools.writeDownsampledBlock( n5Lcl, mrInfo[ s ], mrInfo[ s - 1 ], job );
+					}
+				}
+				finally
+				{
+					n5Lcl.close();
+				}
+			});
 
 			Thread.sleep( 100 );
-			System.out.println( "downsampled level=" + level +", took: " + (System.currentTimeMillis() - timeLevel ) + " ms." );
+			System.out.println( "downsampled level=" + level + ", took: " + ( System.currentTimeMillis() - timeLevel ) + " ms." );
 		}
 
 		sc.close();
-
 		n5.close();
 
 		Thread.sleep( 100 );

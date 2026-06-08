@@ -523,7 +523,16 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final SpimData2 dataFusion =
 					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, viewIdToPath, setups, tps );
 
-			new XmlIoSpimData2().save( dataFusion, xmlOutURI );
+			final XmlIoSpimData2 ioFusion = new XmlIoSpimData2();
+
+			// For Zarr v3 containers, embed the SpimData2 payload as JSON inside the
+			// store's root zarr.json. save() auto-detects this when xmlOutURI lives
+			// inside the .zarr/, but the user may have pointed xmlOutURI elsewhere;
+			// route by storage format here to guarantee the embed happens.
+			if ( storageType == StorageFormat.ZARR )
+				ioFusion.saveToZarrV3( dataFusion, outPathURI );
+			else
+				ioFusion.save( dataFusion, xmlOutURI );
 
 			if ( storageType != StorageFormat.ZARR && storageType != StorageFormat.ZARR2 )
 			{

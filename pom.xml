@@ -100,7 +100,7 @@
 		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
 		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
-		<bigdataviewer-n5.version>1.0.2</bigdataviewer-n5.version>
+		<bigdataviewer-n5.version>1.0.3-bsspark-SNAPSHOT</bigdataviewer-n5.version>
 
 		<spim_data.version>2.3.5</spim_data.version>
 		<multiview-reconstruction.version>9.0.0-SNAPSHOT</multiview-reconstruction.version>
@@ -111,7 +111,7 @@
 		<n5.version>4.0.0-alpha-12</n5.version>
 		<n5-hdf5.version>2.3.0-alpha-6</n5-hdf5.version>
 		<n5-imglib2.version>7.1.0-alpha-8</n5-imglib2.version>
-		<n5-universe.version>2.4.0-alpha-6</n5-universe.version>
+		<n5-universe.version>2.4.0-alpha-7</n5-universe.version>
 		<n5-zarr.version>2.0.0-alpha-8</n5-zarr.version>
 		<n5-zstandard.version>2.0.0-alpha-4</n5-zstandard.version>
 		<n5-blosc.version>2.0.0-alpha-4</n5-blosc.version>
@@ -162,7 +162,7 @@
 		<dependency>
 			<groupId>org.bigdataviewer</groupId>
 			<artifactId>bigdataviewer-n5</artifactId>
-			<version>1.0.2</version>
+			<version>${bigdataviewer-n5.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>javax.annotation</groupId>
@@ -195,7 +195,15 @@
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
-            <!-- <version>4.0.0</version> -->
+            <version>4.4.0-alpha-9</version>
+            <exclusions>
+                <!-- awssdk's netty HTTP client pulls netty 4.1.115, clashing with the
+                     explicit netty-all:4.1.68.Final. apache-client is the default. -->
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 <!--        Scala is sensitive to fasterxml version -->
         <dependency>
