@@ -99,7 +99,7 @@
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
 		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
-		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
+		<bigdataviewer-core.version>10.6.11-bsspark</bigdataviewer-core.version>
 		<bigdataviewer-n5.version>1.0.3-bsspark-SNAPSHOT</bigdataviewer-n5.version>
 
 		<spim_data.version>2.3.5</spim_data.version>
@@ -108,6 +108,8 @@
 
 		<!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
 		<n5.version>4.0.0</n5.version>
+		<commons-compress.version>1.28.0</commons-compress.version>
+		<commons-io.version>2.20.0</commons-io.version>
 		<n5-hdf5.version>3.0.0</n5-hdf5.version>
 		<n5-imglib2.version>8.0.0</n5-imglib2.version>
 		<n5-universe.version>3.0.0</n5-universe.version>
@@ -515,7 +517,7 @@
                                 <!-- Protect newer commons-io from the old version (2.11.0) bundled with Spark -->
                                 <relocation>
                                     <pattern>org.apache.commons.io</pattern>
-                                    <shadedPattern>net.preibisch.shaded.org.apache.commons.io</shadedPattern>
+                                    <shadedPattern>org.janelia.saalfeldlab.org.apache.commons.io</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>
