@@ -402,6 +402,12 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		driverVolumeWriter.setAttribute( n5Dataset, "offset", min);
 
+		// OME-NGFF multiscales metadata for the plain (non-BDV) dataset pyramid. Mirrors the mvr
+		// 'json' branch routing: Zarr v3 -> OME-NGFF 0.5 (attributes.ome.{version,multiscales}),
+		// Zarr v2 -> legacy 0.4 (attributes.multiscales).
+		if ( bdvString == null && ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 ) )
+			writeOmeMultiscales( driverVolumeWriter, storageType, downsamplings, levelToName );
+
 		// saving metadata if it is bdv-compatible (we do this first since it might fail)
 		if ( bdvString != null )
 		{
@@ -941,6 +947,92 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		System.out.println( "done, took: " + (System.currentTimeMillis() - time ) + " ms." );
 
 		return null;
+	}
+
+	/**
+	 * Write OME-NGFF multiscales metadata for the fused pyramid, choosing the layout per storage
+	 * format (mirrors the mvr 'json' branch {@code OMEZarrAttributes.writeMultiscales}):
+	 * <ul>
+	 *   <li>Zarr v3 ({@link StorageFormat#ZARR}) &rarr; OME-NGFF 0.5:
+	 *       {@code attributes.ome = { "version":"0.5", "multiscales":[...] }}</li>
+	 *   <li>Zarr v2 ({@link StorageFormat#ZARR2}) &rarr; legacy 0.4:
+	 *       {@code attributes.multiscales = [ { "version":"0.4", ... } ]}</li>
+	 * </ul>
+	 * Axes are written in stored order z,y,x (the array's {@code dimension_names} are
+	 * {@code dim_2,dim_1,dim_0}); per-level scale/translation come from the (x,y,z) downsampling
+	 * factors mapped to z,y,x (scale = factor, translation = half-pixel shift, matching
+	 * {@code MipmapTransforms.getMipmapTransformDefault}).
+	 */
+	private static void writeOmeMultiscales(
+			final N5Writer writer,
+			final StorageFormat storageType,
+			final int[][] downsamplings,
+			final Function<Integer, String> levelToName )
+	{
+		final String unit = "micrometer";
+
+		// group that holds the multiscales = parent of s0 ("/" for -d /s0, "/ch488" for -d /ch488/s0)
+		final String first = levelToName.apply( 0 );
+		final int slash = first.lastIndexOf( '/' );
+		final String groupPath = ( slash <= 0 ) ? "/" : first.substring( 0, slash );
+
+		// axes in stored order (z, y, x)
+		final List<Object> axes = new ArrayList<>();
+		for ( final String ax : new String[]{ "z", "y", "x" } )
+		{
+			final java.util.LinkedHashMap<String, Object> a = new java.util.LinkedHashMap<>();
+			a.put( "name", ax );
+			a.put( "type", "space" );
+			a.put( "unit", unit );
+			axes.add( a );
+		}
+
+		// one dataset entry per resolution level
+		final List<Object> datasets = new ArrayList<>();
+		for ( int s = 0; s < downsamplings.length; ++s )
+		{
+			final int dx = downsamplings[ s ][ 0 ], dy = downsamplings[ s ][ 1 ], dz = downsamplings[ s ][ 2 ];
+
+			// stored order is z,y,x; scale = downsampling factor, translation = half-pixel shift
+			final double[] scale = new double[]{ dz, dy, dx };
+			final double[] translation = new double[]{ 0.5 * ( dz - 1 ), 0.5 * ( dy - 1 ), 0.5 * ( dx - 1 ) };
+
+			final java.util.LinkedHashMap<String, Object> scaleT = new java.util.LinkedHashMap<>();
+			scaleT.put( "type", "scale" );
+			scaleT.put( "scale", scale );
+			final java.util.LinkedHashMap<String, Object> transT = new java.util.LinkedHashMap<>();
+			transT.put( "type", "translation" );
+			transT.put( "translation", translation );
+
+			String path = levelToName.apply( s );
+			path = path.substring( groupPath.equals( "/" ) ? 1 : groupPath.length() + 1 );
+
+			final java.util.LinkedHashMap<String, Object> ds = new java.util.LinkedHashMap<>();
+			ds.put( "path", path );
+			ds.put( "coordinateTransformations", Arrays.asList( scaleT, transT ) );
+			datasets.add( ds );
+		}
+
+		final java.util.LinkedHashMap<String, Object> ms = new java.util.LinkedHashMap<>();
+		ms.put( "axes", axes );
+		ms.put( "datasets", datasets );
+		final List<Object> multiscales = Arrays.asList( (Object) ms );
+
+		if ( storageType == StorageFormat.ZARR )
+		{
+			// OME-NGFF 0.5 (Zarr v3): single top-level version, multiscales nested under "ome"
+			writer.setAttribute( groupPath, "ome/version", "0.5" );
+			writer.setAttribute( groupPath, "ome/multiscales", multiscales );
+		}
+		else
+		{
+			// legacy 0.4 (Zarr v2): per-multiscale version, multiscales at attributes root
+			ms.put( "version", "0.4" );
+			writer.setAttribute( groupPath, "multiscales", multiscales );
+		}
+
+		System.out.println( "Wrote OME-NGFF " + ( storageType == StorageFormat.ZARR ? "0.5" : "0.4" )
+				+ " multiscales metadata to group '" + groupPath + "'." );
 	}
 
 	/**
