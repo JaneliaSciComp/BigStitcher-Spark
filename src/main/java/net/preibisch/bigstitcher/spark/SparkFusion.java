@@ -79,7 +79,6 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
-import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
@@ -307,7 +306,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		// test that the container exists
 		try( final N5Reader r = URITools.instantiateN5Reader( storageType, outPathURI  ) )
 		{
-			System.out.println( "Found container '" + outPathURI + "'.");
+			System.out.println( "Found container '" + outPathURI + "'. -> " + r.getURI());
 		}
 		catch ( Exception e )
 		{
@@ -867,7 +866,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 										null, // fusion order — only for FIRST_LOW / FIRST_HIGH
 										coefficients,
 										new BoundingBox( interval ),
-										Cast.unchecked( type ),
+										(RealType & NativeType) type,
 										blockSize,
 										approxAffines );
 
