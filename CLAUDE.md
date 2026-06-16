@@ -80,24 +80,34 @@ The `install` script runs `mvn install`, then generates per-command shell wrappe
 
 ## Core Dependencies
 
+Parent: `pom-scijava` `44.0.0` (matches mvr; provides Java 21 defaults and the managed `imglib2` / `spim_data` base versions, so those are **no longer pinned here** — inherited from the parent to stay in lock-step with mvr).
+
 Currently pinned (top of `pom.xml`):
 - `multiview-reconstruction.version` = `9.0.0-SNAPSHOT`
-- `imglib2.version` = `8.0.1`
 - `imglib2-cache.version` = `1.0.0-beta-20`
 - `imglib2-algorithm.version` = `0.18.3` (provides `algorithm.blocks.dfield.PositionFieldFunction`, required by mvr's `SplitImgLoaderThinPlateSplineFusion`)
 - `imglib2-realtransform.version` = `4.0.5`
-- `n5.version` = `4.0.0-alpha-12` (alpha series for Zarr v3 sharding; `DatasetAttributes.getChunkSize()` signature changed between alpha-10 and alpha-12 — must match mvr's pin)
-- `n5-hdf5.version` = `2.3.0-alpha-6`
-- `n5-imglib2.version` = `7.1.0-alpha-8`
-- `n5-universe.version` = `2.4.0-alpha-6`
-- `n5-zarr.version` = `2.0.0-alpha-8`
-- `n5-zstandard.version` = `2.0.0-alpha-4`
-- `n5-blosc.version` = `2.0.0-alpha-4`
-- `spim_data.version` = `2.3.5`
-- Apache Spark 3.3.2 (Scala 2.12.15) — Java 8 required, **Java ≥21 not yet compatible**
+- `bigdataviewer-core.version` = `10.6.11` (plain upstream — the `-bsspark` Java-8 fork was dropped when the project moved to Java 21)
+- `bigdataviewer-n5.version` = `1.0.3` (plain upstream — fork dropped)
+- `n5.version` = `4.0.1`
+- `n5-hdf5.version` = `3.0.0`
+- `n5-imglib2.version` = `8.0.0`
+- `n5-universe.version` = `3.0.1`
+- `n5-zarr.version` = `2.0.1`
+- `n5-zstandard.version` = `2.0.0`
+- `n5-blosc.version` = `2.0.0`
+- `n5-aws-s3` = `5.0.0` (hardcoded in the dependency, not a property)
+- Apache **Spark 4.0.3 (Scala 2.13.16)** — requires **Java 17 or 21** (Spark 4 dropped JDK 8/11). Build/run with `JAVA_HOME` on Java 21.
+- `jackson-databind` = `2.18.6` (matches Spark 4.0.3; Scala is sensitive to the fasterxml version)
+- `netty-all` = `4.1.118.Final` (matches Spark 4.0.3's netty; keeps a single netty 4.1.x on the tree)
 - BigStitcher 2.6.0
 
 These imglib2/n5 versions must stay in lock-step with mvr's `pom.xml`. A divergence produces silent `NoSuchMethodError`/`NoClassDefFoundError` at runtime (the parallel-save path in mvr's `XmlIoSpimData2` is particularly prone to swallowing the cause).
+
+### Java 21 / Spark 4 migration notes
+- The project moved off Java 8 specifically to drop the `-bsspark` bdv forks (plain upstream `bigdataviewer-core:10.6.11` is Java 11 bytecode, which a Java 8 target can't read). Java 21 ⇒ Spark 4.0 ⇒ Scala 2.13 — there is no Scala-2.12 / Java-21 Spark build.
+- **Operational:** the fatjar now runs only on Spark 4.0 (Scala 2.13) clusters/cloud on Java 17/21; it will not run on a Spark 3.3.2 cluster.
+- The generated local-mode wrappers (`install`) include Spark 4's `--add-opens` module flags; without them Java 17/21 throws `InaccessibleObjectException` at startup.
 
 ## Two-Phase Container Workflow
 
@@ -269,8 +279,8 @@ Cluster/cloud: submit the fatjar via `spark-submit --class net.preibisch.bigstit
 
 - **Never commit without explicit user consent.**
 - Branch state: read `git status` / `git log` — don't rely on stale notes here.
-- Build: Maven. Java 8.
-- Spark version: 3.3.2.
+- Build: Maven. Java 21 (17 also works; Spark 4 dropped JDK 8/11).
+- Spark version: 4.0.3 (Scala 2.13.16).
 
 ## References
 
@@ -278,4 +288,4 @@ Cluster/cloud: submit the fatjar via `spark-submit --class net.preibisch.bigstit
 - Repo: https://github.com/PreibischLab/BigStitcher-Spark
 - N5 Zarr v3 blog: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/
 - Zarr spec: https://zarr-specs.readthedocs.io/
-- Apache Spark 3.3.2: https://spark.apache.org/docs/3.3.2/
+- Apache Spark 4.0.3: https://spark.apache.org/docs/4.0.3/

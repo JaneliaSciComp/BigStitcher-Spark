@@ -90,6 +90,9 @@ echo "Installing into $INSTALL_DIR (for local execution)"
 
 echo 'Building the code'
 
+# Requires Java 17 or 21 (Spark 4.0 dropped JDK 8/11). Set JAVA_HOME accordingly, e.g.:
+#   export JAVA_HOME=$(/usr/libexec/java_home -v 21)   # macOS
+
 sleep 2
 
 mvn clean install
@@ -109,6 +112,12 @@ install_command () {
 	echo 'java \' >> $1
 	echo "  -Xmx${MEM}g -Dspark.master=local[${THREADS}] \\" >> $1
 #	echo '  -XX:+UseConcMarkSweepGC \' >> $1
+	# Spark 4.0 on Java 17/21 requires these JVM module-access flags (mirrors Spark's org.apache.spark.launcher.JavaModuleOptions)
+	echo '  -XX:+IgnoreUnrecognizedVMOptions \' >> $1
+	echo '  --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED \' >> $1
+	echo '  --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.base/jdk.internal.ref=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.nio.cs=ALL-UNNAMED \' >> $1
+	echo '  --add-opens=java.base/sun.security.action=ALL-UNNAMED --add-opens=java.base/sun.util.calendar=ALL-UNNAMED --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED \' >> $1
+	echo '  -Djdk.reflect.useDirectMethodHandle=false -Dio.netty.tryReflectionSetAccessible=true \' >> $1
 	echo -n '  -cp $JAR:' >> $1
 	echo -n $(cat cp.txt) >> $1
 	echo ' \' >> $1
