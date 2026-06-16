@@ -327,9 +327,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 		{
-			if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND )
+			if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND && fusionType != FusionType.MAX_INTENSITY )
 			{
-				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: only FusionType.CLOSEST_PIXEL_WINS and FusionType.AVG_BLEND supported right now." );
+				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: only FusionType.CLOSEST_PIXEL_WINS, FusionType.AVG_BLEND and FusionType.MAX_INTENSITY supported right now." );
 				return null;
 			}
 
