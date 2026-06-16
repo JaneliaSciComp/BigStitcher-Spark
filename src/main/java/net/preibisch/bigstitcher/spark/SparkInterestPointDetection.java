@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Callable;
@@ -63,6 +64,7 @@ import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
+import net.imglib2.neighborsearch.RadiusNeighborSearchOnKDTree;
 import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.RealType;
@@ -822,41 +824,63 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			else
 				intensitiesList = null;
 
-			// combine points since overlapping areas might exist
+			// combine points since overlapping areas might exist;
+			// collect all candidates first so we can build the KDTree only once per view
+			final ArrayList< InterestPoint > candidates = new ArrayList<>();
+			final ArrayList< Double > candidateIntensities = ( storeIntensities || maxSpots > 0 ) ? new ArrayList<>() : null;
+
 			for ( int l = 0; l < ipsList.size(); ++l )
 			{
-				final List< InterestPoint > ips = ipsList.get( l );
-				final List< Double > intensities;
+				candidates.addAll( ipsList.get( l ) );
 
 				if ( storeIntensities || maxSpots > 0 )
-					intensities = intensitiesList.get( l );
-				else
-					intensities = null;
+					candidateIntensities.addAll( intensitiesList.get( l ) );
+			}
 
-				if ( !overlappingOnly || myIps.size() == 0 )
+			if ( !overlappingOnly || ipsList.size() <= 1 )
+			{
+				// no inter-block deduplication needed
+				myIps.addAll( candidates );
+
+				if ( storeIntensities || maxSpots > 0 )
+					myIntensities.addAll( candidateIntensities );
+			}
+			else if ( !candidates.isEmpty() )
+			{
+				// build KDTree ONCE over all candidates and do a single greedy dedup pass;
+				// earlier-block points always win: for each accepted point, mark all
+				// later-indexed points within combineDistance as duplicates
+				final KDTree< InterestPoint > tree = new KDTree<>( candidates, candidates );
+				final RadiusNeighborSearchOnKDTree< InterestPoint > search = new RadiusNeighborSearchOnKDTree<>( tree );
+
+				// map object identity → index in candidates for O(1) lookup after radius search
+				final IdentityHashMap< InterestPoint, Integer > indexMap = new IdentityHashMap<>( candidates.size() );
+				for ( int i = 0; i < candidates.size(); ++i )
+					indexMap.put( candidates.get( i ), i );
+
+				final boolean[] isDuplicate = new boolean[ candidates.size() ]; // default false
+
+				for ( int i = 0; i < candidates.size(); ++i )
 				{
-					myIps.addAll( ips );
+					if ( isDuplicate[ i ] ) continue;
 
-					if ( storeIntensities || maxSpots > 0 )
-						myIntensities.addAll( intensities );
-				}
-				else
-				{
-					final KDTree< InterestPoint > tree = new KDTree<>(myIps, myIps);
-					final NearestNeighborSearchOnKDTree< InterestPoint > search = new NearestNeighborSearchOnKDTree<>( tree );
-
-					for ( int i = 0; i < ips.size(); ++i )
+					search.search( candidates.get( i ), combineDistance, false );
+					for ( int k = 0; k < search.numNeighbors(); ++k )
 					{
-						final InterestPoint ip = ips.get( i );
-						search.search( ip );
+						final Integer j = indexMap.get( search.getSampler( k ).get() );
+						if ( j != null && j > i )
+							isDuplicate[ j ] = true;
+					}
+				}
 
-						if ( search.getDistance() > combineDistance )
-						{
-							myIps.add( ip );
+				for ( int i = 0; i < candidates.size(); ++i )
+				{
+					if ( !isDuplicate[ i ] )
+					{
+						myIps.add( candidates.get( i ) );
 
-							if ( storeIntensities || maxSpots > 0 )
-								myIntensities.add( intensities.get( i ) );
-						}
+						if ( storeIntensities || maxSpots > 0 )
+							myIntensities.add( candidateIntensities.get( i ) );
 					}
 				}
 			}
@@ -905,9 +929,13 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
+			long timeAddIP = System.currentTimeMillis();
 			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
+			System.out.println( "addInterestPoints took " + ( System.currentTimeMillis() - timeAddIP ) + " ms." );
 
+			long timeSaveXML = System.currentTimeMillis();
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
+			System.out.println( "Saving XML took " + ( System.currentTimeMillis() - timeSaveXML ) + " ms." );
 
 			// store image intensities for interest points
 			if( storeIntensities )
@@ -916,6 +944,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				{
 					try
 					{
+						long timeIntensities = System.currentTimeMillis();
 						System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
 
 						final InterestPointsN5 i = (InterestPointsN5)dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
@@ -952,8 +981,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 							N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new ZstandardCompression() );
 						}
 
-						System.out.println( "Saved: " + tempURI + "/" + datasetIntensities );
-						
+						System.out.println( "Saved: " + tempURI + "/" + datasetIntensities + " (took " + ( System.currentTimeMillis() - timeIntensities ) + " ms)" );
+
 					}
 					catch ( Exception e )
 					{
