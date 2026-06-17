@@ -56,7 +56,7 @@ public class N5MultichannelProperties implements N5Properties
 	}
 
 	@Override
-	public String getDatasetPath( final int setupId, final int timepointId, final int level )
+	public String getDatasetPath( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
 		return String.format( getPath( setupId, timepointId )+ "/s%d", level );
 	}
@@ -76,7 +76,7 @@ public class N5MultichannelProperties implements N5Properties
 	@Override
 	public long[] getDimensions( final N5Reader n5, final int setupId, final int timepointId, final int level )
 	{
-		final String path = getDatasetPath( setupId, timepointId, level );
+		final String path = getDatasetPath( n5, setupId, timepointId, level );
 		final long[] dimensions = n5.getDatasetAttributes( path ).getDimensions();
 		return Arrays.copyOf( dimensions, 3 );
 	}
@@ -90,7 +90,7 @@ public class N5MultichannelProperties implements N5Properties
 	{
 		String path;
 		if (level >= 0) {
-			path = getDatasetPath( setupId, timepointId, level );
+			path = getDatasetPath( n5, setupId, timepointId, level );
 		} else {
 			path = getPath( setupId, timepointId );
 		}
@@ -126,7 +126,7 @@ public class N5MultichannelProperties implements N5Properties
 	private static DataType getDataType(final N5MultichannelProperties n5properties, final N5Reader n5, final int setupId )
 	{
 		final int timePointId = getFirstAvailableTimepointId( n5properties.sequenceDescription, setupId );
-		return n5.getDatasetAttributes( n5properties.getDatasetPath( setupId, timePointId, 0 ) ).getDataType();
+		return n5.getDatasetAttributes( n5properties.getDatasetPath( n5, setupId, timePointId, 0 ) ).getDataType();
 	}
 
 	private static double[][] getMipMapResolutions(final N5MultichannelProperties n5properties, final N5Reader n5, final int setupId )

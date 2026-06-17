@@ -84,14 +84,15 @@
 
 		<license.licenseName>bsd</license.licenseName>
 		<license.copyrightOwners>Developers.</license.copyrightOwners>
-		<scijava.jvm.version>17</scijava.jvm.version>
+		<scijava.jvm.version>21</scijava.jvm.version>
 
 		<imglib2.version>8.0.1</imglib2.version>
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
-		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
-		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
-		<bigdataviewer-n5.version>1.0.2</bigdataviewer-n5.version>
+		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
+		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
+		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
+		<multiview-simulation.version>0.3.1</multiview-simulation.version>
 
 		<spim_data.version>2.3.5</spim_data.version>
 		<multiview-reconstruction.version>9.0.1-SNAPSHOT</multiview-reconstruction.version>
@@ -99,14 +100,15 @@
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
 		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.0</n5.version>
-		<n5-aws-s3.version>5.0.0</n5-aws-s3.version>
-		<n5-hdf5.version>3.0.0</n5-hdf5.version>
+		<n5.version>4.0.1</n5.version>
+		<n5-universe.version>3.0.1</n5-universe.version>
 		<n5-imglib2.version>8.0.0</n5-imglib2.version>
-		<n5-universe.version>3.0.0</n5-universe.version>
+		<n5-hdf5.version>3.0.0</n5-hdf5.version>
 		<n5-zarr.version>2.0.1</n5-zarr.version>
 		<n5-zstandard.version>2.0.0</n5-zstandard.version>
 		<n5-blosc.version>2.0.0</n5-blosc.version>
+		<n5-aws-s3.version>5.0.0</n5-aws-s3.version>
+		<n5-google-cloud.version>6.0.0</n5-google-cloud.version>
 
 		<mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
 
