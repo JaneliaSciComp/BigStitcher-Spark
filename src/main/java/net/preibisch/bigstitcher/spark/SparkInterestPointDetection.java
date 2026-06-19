@@ -162,7 +162,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--medianFilter" }, description = "divide by the median filtered image of the given radius prior to interest point detection, e.g. --medianFilter 10")
 	protected Integer medianFilter = null;
 
-
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
 	protected Integer dsxy = 2;
 
