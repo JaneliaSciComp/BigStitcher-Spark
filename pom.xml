@@ -364,6 +364,12 @@
             </exclusions>
         </dependency>
 
+        <dependency>
+            <groupId>ch.epfl.biop</groupId>
+            <artifactId>quick-start-czi-reader</artifactId>
+            <version>0.3.0</version>
+        </dependency>
+
         <!-- JUnit 5 for testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

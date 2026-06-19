@@ -29,6 +29,7 @@ import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
@@ -44,6 +45,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.FileMapImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.LegacyStackImgLoaderLOCI;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.CZIImageLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapEntry;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.util.BioformatsReaderUtils;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
@@ -202,12 +204,16 @@ public class SpimDatasetBuilder {
 				fileMap.put( vdI,  fileMapEntry);
 			}
 
-			sequenceDescription.setImgLoader(new FileMapImgLoaderLOCI(
+			sequenceDescription.setImgLoader(createImageLoader(fileMap));
+			return this;
+		}
+
+		protected ImgLoader createImageLoader(Map<BasicViewDescription< ? >, FileMapEntry> fileMap) {
+			return new FileMapImgLoaderLOCI(
 					fileMap,
 					sequenceDescription,
 					false
-			));
-			return this;
+			);
 		}
 
 		@SuppressWarnings("unchecked")
@@ -386,6 +392,18 @@ public class SpimDatasetBuilder {
 		}
 	}
 
+
+	static class CZIViewSetupBuilder extends LOCIViewSetupBuilder {
+
+		public CZIViewSetupBuilder(TimePoints timePoints) {
+			super(timePoints);
+		}
+
+		@Override
+		protected ImgLoader createImageLoader(Map<BasicViewDescription<?>, FileMapEntry> fileMap) {
+			return new CZIImageLoader(fileMap, getSequenceDescription());
+		}
+	}
 
 	static class N5MultichannelViewSetupBuilder implements ViewSetupBuilder {
 
@@ -609,7 +627,9 @@ public class SpimDatasetBuilder {
 	}
 
 	private ViewSetupBuilder createViewSetupBuilder(URI imageURI, TimePoints timePoints) {
-		if ( imageURI.getScheme().equals("n5") || imageURI.getScheme().equals("file") && imageURI.getPath().contains(".n5") ) {
+		if ( imageURI.getPath().contains(".czi") ) {
+			return new CZIViewSetupBuilder(timePoints);
+		} else if ( imageURI.getScheme().equals("n5") || imageURI.getScheme().equals("file") && imageURI.getPath().contains(".n5") ) {
 			return new N5MultichannelViewSetupBuilder(imageURI, timePoints);
 		} else {
 			return new LOCIViewSetupBuilder(timePoints);
