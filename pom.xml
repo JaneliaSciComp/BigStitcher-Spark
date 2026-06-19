@@ -95,7 +95,7 @@
 		<multiview-simulation.version>0.3.1</multiview-simulation.version>
 
 		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>9.0.1-SNAPSHOT</multiview-reconstruction.version>
+		<multiview-reconstruction.version>9.0.1</multiview-reconstruction.version>
 		<BigStitcher.version>2.6.1</BigStitcher.version>
 
 		<!-- N5 alpha versions for Zarr v3 shard support -->
