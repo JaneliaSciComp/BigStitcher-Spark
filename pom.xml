@@ -206,11 +206,26 @@
                 </exclusion>
             </exclusions>
         </dependency>
-<!--        Scala is sensitive to fasterxml version; Spark 4.1.2 ships Jackson 2.21.2 -->
+<!--        Scala is sensitive to fasterxml version; Spark 4.1.2 ships Jackson 2.21.2.
+            All three of databind/core/annotations must be pinned together: pom-scijava 44.0.0
+            manages the jackson family to 2.19.2, so without explicit core/annotations pins the
+            transitive 2.21 requested by databind gets dragged back to 2.19.2 -> mismatched
+            ObjectMapper (NoClassDefFoundError: JsonSerializeAs) at Spark MetricsServlet init. -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.21.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.21.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <!-- NB: jackson-annotations versions on the minor line only (2.21), not 2.21.2 -->
+            <version>2.21</version>
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
