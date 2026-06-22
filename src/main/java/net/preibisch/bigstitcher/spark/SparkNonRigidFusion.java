@@ -402,9 +402,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 		driverVolumeWriter.setAttribute( n5Dataset, "offset", min);
 
-		// OME-NGFF multiscales metadata for the plain (non-BDV) dataset pyramid. Mirrors the mvr
-		// 'json' branch routing: Zarr v3 -> OME-NGFF 0.5 (attributes.ome.{version,multiscales}),
-		// Zarr v2 -> legacy 0.4 (attributes.multiscales).
+		// OME-NGFF multiscales metadata for the plain (non-BDV) dataset pyramid.
 		if ( bdvString == null && ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 ) )
 			writeOmeMultiscales( driverVolumeWriter, storageType, downsamplings, levelToName );
 
@@ -470,9 +468,9 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			//
 			// A shard is written atomically as a single file, so it must be handed to N5 fully
 			// assembled. But the expensive non-rigid rendering that fills it does NOT have to run
-			// in one task. We therefore:
+			// in one task. We therefore have:
 			//   Stage 1 (map):        fuse small (computeBlockSize) sub-blocks in parallel -- one
-			//                         Spark task per sub-block, one thread each (no oversubscription).
+			//                         Spark task per sub-block, one thread each.
 			//   shuffle:              key each rendered sub-block by the shard it belongs to.
 			//   Stage 2 (groupByKey): gather all sub-blocks of a shard into one task, assemble the
 			//                         shard buffer, and write it with a single saveBlock (identical
