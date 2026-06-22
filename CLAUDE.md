@@ -83,7 +83,7 @@ The `install` script runs `mvn install`, then generates per-command shell wrappe
 Parent: `pom-scijava` `44.0.0` (matches mvr; provides Java 21 defaults and the managed `imglib2` / `spim_data` base versions, so those are **no longer pinned here** — inherited from the parent to stay in lock-step with mvr).
 
 Currently pinned (top of `pom.xml`):
-- `multiview-reconstruction.version` = `9.0.0-SNAPSHOT`
+- `multiview-reconstruction.version` = `9.0.1` (released; the zarrv3 line's release — BigStitcher 3.0.0 mirrors its dependency overrides)
 - `imglib2-cache.version` = `1.0.0-beta-20`
 - `imglib2-algorithm.version` = `0.18.3` (provides `algorithm.blocks.dfield.PositionFieldFunction`, required by mvr's `SplitImgLoaderThinPlateSplineFusion`)
 - `imglib2-realtransform.version` = `4.0.5`
@@ -92,15 +92,15 @@ Currently pinned (top of `pom.xml`):
 - `n5.version` = `4.0.1`
 - `n5-hdf5.version` = `3.0.0`
 - `n5-imglib2.version` = `8.0.0`
-- `n5-universe.version` = `3.0.1`
+- `n5-universe.version` = `3.0.2`
 - `n5-zarr.version` = `2.0.1`
 - `n5-zstandard.version` = `2.0.0`
 - `n5-blosc.version` = `2.0.0`
-- `n5-aws-s3` = `5.0.0` (hardcoded in the dependency, not a property)
+- `n5-aws-s3` = `5.0.1` (hardcoded in the dependency, not a property)
 - Apache **Spark 4.0.3 (Scala 2.13.16)** — requires **Java 17 or 21** (Spark 4 dropped JDK 8/11). Build/run with `JAVA_HOME` on Java 21.
 - `jackson-databind` = `2.18.6` (matches Spark 4.0.3; Scala is sensitive to the fasterxml version)
 - `netty-all` = `4.1.118.Final` (matches Spark 4.0.3's netty; keeps a single netty 4.1.x on the tree)
-- BigStitcher 2.6.0
+- BigStitcher 3.0.0 (released)
 
 These imglib2/n5 versions must stay in lock-step with mvr's `pom.xml`. A divergence produces silent `NoSuchMethodError`/`NoClassDefFoundError` at runtime (the parallel-save path in mvr's `XmlIoSpimData2` is particularly prone to swallowing the cause).
 
