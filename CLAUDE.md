@@ -97,16 +97,16 @@ Currently pinned (top of `pom.xml`):
 - `n5-zstandard.version` = `2.0.0`
 - `n5-blosc.version` = `2.0.0`
 - `n5-aws-s3` = `5.0.1` (hardcoded in the dependency, not a property)
-- Apache **Spark 4.0.3 (Scala 2.13.16)** — requires **Java 17 or 21** (Spark 4 dropped JDK 8/11). Build/run with `JAVA_HOME` on Java 21.
-- `jackson-databind` = `2.18.6` (matches Spark 4.0.3; Scala is sensitive to the fasterxml version)
-- `netty-all` = `4.1.118.Final` (matches Spark 4.0.3's netty; keeps a single netty 4.1.x on the tree)
+- Apache **Spark 4.1.2 (Scala 2.13.17)** — requires **Java 17 or 21** (Spark 4 dropped JDK 8/11). Note: mvr 9.0.1 / BigStitcher 3.0.0 artifacts are Java 21 bytecode, so the cluster must run Java 21. Build/run with `JAVA_HOME` on Java 21.
+- `jackson-databind` = `2.21.2` (matches Spark 4.1.2; Scala is sensitive to the fasterxml version)
+- `netty-all` = `4.2.7.Final` (matches Spark 4.1.2's netty; note Spark 4.1 moved to the netty 4.2.x line)
 - BigStitcher 3.0.0 (released)
 
 These imglib2/n5 versions must stay in lock-step with mvr's `pom.xml`. A divergence produces silent `NoSuchMethodError`/`NoClassDefFoundError` at runtime (the parallel-save path in mvr's `XmlIoSpimData2` is particularly prone to swallowing the cause).
 
 ### Java 21 / Spark 4 migration notes
 - The project moved off Java 8 specifically to drop the `-bsspark` bdv forks (plain upstream `bigdataviewer-core:10.6.11` is Java 11 bytecode, which a Java 8 target can't read). Java 21 ⇒ Spark 4.0 ⇒ Scala 2.13 — there is no Scala-2.12 / Java-21 Spark build.
-- **Operational:** the fatjar now runs only on Spark 4.0 (Scala 2.13) clusters/cloud on Java 17/21; it will not run on a Spark 3.3.2 cluster.
+- **Operational:** the fatjar now runs only on Spark 4.1 (Scala 2.13) clusters/cloud on Java 21; it will not run on a Spark 3.3.2 cluster.
 - The generated local-mode wrappers (`install`) include Spark 4's `--add-opens` module flags; without them Java 17/21 throws `InaccessibleObjectException` at startup.
 
 ## Two-Phase Container Workflow
@@ -280,7 +280,7 @@ Cluster/cloud: submit the fatjar via `spark-submit --class net.preibisch.bigstit
 - **Never commit without explicit user consent.**
 - Branch state: read `git status` / `git log` — don't rely on stale notes here.
 - Build: Maven. Java 21 (17 also works; Spark 4 dropped JDK 8/11).
-- Spark version: 4.0.3 (Scala 2.13.16).
+- Spark version: 4.1.2 (Scala 2.13.17).
 
 ## References
 
@@ -288,4 +288,4 @@ Cluster/cloud: submit the fatjar via `spark-submit --class net.preibisch.bigstit
 - Repo: https://github.com/PreibischLab/BigStitcher-Spark
 - N5 Zarr v3 blog: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/
 - Zarr spec: https://zarr-specs.readthedocs.io/
-- Apache Spark 4.0.3: https://spark.apache.org/docs/4.0.3/
+- Apache Spark 4.1.2: https://spark.apache.org/docs/4.1.2/
