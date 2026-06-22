@@ -17,7 +17,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 
 import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
@@ -436,9 +436,10 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttributes.createOMEZarrMetadata(
+			final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 					5, // int n
 					"/", // String name, I also saw "/"
+					storageType == StorageFormat.ZARR2 ? "0.4" : "0.5", // OME-NGFF version
 					vx.dimensionsAsDoubleArray(), // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
@@ -450,7 +451,13 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
 			// for this to work you need to register an adapter in the N5Factory class
 			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+			if ( storageType == StorageFormat.ZARR2 )
+				driverVolumeWriter.setAttribute( "/", "multiscales", meta.multiscales );
+			else
+			{
+				driverVolumeWriter.setAttribute( "/", "ome", meta );
+				driverVolumeWriter.setAttribute( "/", "ome/version", meta.version );
+			}
 		}
 
 		if ( bdv )
