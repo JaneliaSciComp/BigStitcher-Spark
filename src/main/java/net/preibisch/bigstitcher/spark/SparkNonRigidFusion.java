@@ -696,10 +696,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 							}
 						});
 
-				shardResult.cache();
-				shardResult.count();
-
-				final java.util.Set<long[][]> failedShards = retryTracker.processWithSpark( shardResult, gridRetry );
+				final java.util.Set<long[][]> failedShards = retryTracker.processResults( shardResult.collect(), gridRetry );
 				if ( !retryTracker.processFailures( failedShards ) )
 				{
 					System.out.println( "Stopping." );
@@ -730,62 +727,58 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 				final JavaRDD<long[][]> rdd = sc.parallelize( gridRetry, Math.min( Spark.maxPartitions, gridRetry.size() ) );
 
-				final JavaRDD<long[][]> rddResult = rdd.map(
-						gridBlock -> {
-							try
-							{
-								final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+				final JavaRDD<long[][]> rddResult = rdd.map(gridBlock -> {
+					try
+					{
+						final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 
-								final RandomAccessibleInterval< FloatType > source =
-										fuseNonRigidBlock( dataLocal, serializedViewIds, min, gridBlock[ 0 ], gridBlock[ 1 ],
+						final RandomAccessibleInterval< FloatType > source =
+							fuseNonRigidBlock( dataLocal, serializedViewIds, min, gridBlock[ 0 ], gridBlock[ 1 ],
 												labels, preserveAnisotropy, anisotropyFactorFinal, false );
 
-								// nothing to save...
-								if ( source == null )
-									return gridBlock.clone();
+						// nothing to save...
+						if ( source == null )
+							return gridBlock.clone();
 
-								final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
+						final N5Writer executorVolumeWriter = N5Util.createN5Writer(n5PathURI, storageType);
 
-								if ( uint8 )
-								{
-									final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
-											Converters.convert(
-													source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-													new UnsignedByteType());
+						if ( uint8 )
+						{
+							final RandomAccessibleInterval< UnsignedByteType > sourceUINT8 =
+									Converters.convert(
+										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+										new UnsignedByteType());
 
-									N5Utils.saveBlock(sourceUINT8, executorVolumeWriter, n5Dataset, gridBlock[2]);
-								}
-								else if ( uint16 )
-								{
-									final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
-											Converters.convert(
-													source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
-													new UnsignedShortType());
+							N5Utils.saveBlock(sourceUINT8, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+						else if ( uint16 )
+						{
+							final RandomAccessibleInterval< UnsignedShortType > sourceUINT16 =
+								Converters.convert(
+										source,(i, o) -> o.setReal( ( i.get() - minIntensity ) / range ),
+										new UnsignedShortType());
 
-									N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
-								}
-								else
-								{
-									N5Utils.saveBlock(source, executorVolumeWriter, n5Dataset, gridBlock[2]);
-								}
+							N5Utils.saveBlock(sourceUINT16, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
+						else
+						{
+							N5Utils.saveBlock(source, executorVolumeWriter, n5Dataset, gridBlock[2]);
+						}
 
-								if ( executorVolumeWriter != N5Util.sharedHDF5Writer )
-									executorVolumeWriter.close();
+						if ( executorVolumeWriter != N5Util.sharedHDF5Writer )
+							executorVolumeWriter.close();
 
-								return gridBlock.clone();
-							}
-							catch ( Throwable t )
-							{
-								System.out.println( "Error processing block offset=" + Arrays.toString( gridBlock[0] ) + " (will be re-tried): " + t );
-								t.printStackTrace();
-								return null;
-							}
-						});
+							return gridBlock.clone();
+						}
+					catch ( Throwable t )
+					{
+						System.out.println( "Error processing block offset=" + Arrays.toString( gridBlock[0] ) + " (will be re-tried): " + t );
+						t.printStackTrace();
+						return null;
+					}
+				});
 
-				rddResult.cache();
-				rddResult.count();
-
-				final Set<long[][]> failedBlocks = retryTracker.processWithSpark( rddResult, gridRetry );
+				final Set<long[][]> failedBlocks = retryTracker.processResults( rddResult.collect(), gridRetry );
 				if ( !retryTracker.processFailures( failedBlocks ) )
 				{
 					System.out.println( "Stopping." );
@@ -917,10 +910,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 						return gridBlock.clone();
 					});
 
-					rddDSResult.cache();
-					rddDSResult.count();
-
-					final Set<long[][]> failedDS = retryTrackerDS.processWithSpark( rddDSResult, gridDSRetry );
+					final Set<long[][]> failedDS = retryTrackerDS.processResults( rddDSResult.collect(), gridDSRetry );
 					if ( !retryTrackerDS.processFailures( failedDS ) )
 					{
 						System.out.println( "Stopping." );

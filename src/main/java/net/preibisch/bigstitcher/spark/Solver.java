@@ -42,7 +42,6 @@ import org.apache.spark.api.java.JavaSparkContext;
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
-import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
@@ -54,7 +53,7 @@ import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
 import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.bigstitcher.spark.util.ViewUtil;
+import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters.GlobalOptType;
@@ -301,9 +300,30 @@ public class Solver extends AbstractRegistration
 
 		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
-			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
+		{
+			final SparkConf conf = new SparkConf().setAppName("SparkSolver");
+
+			if ( localSparkBindAddress )
+			{
+				conf.set("spark.driver.bindAddress", "127.0.0.1");
+				conf.set("spark.driver.host", "localhost");
+				org.apache.spark.util.Utils.setCustomHostname("localhost");
+			}
+
+			final JavaSparkContext sc = new JavaSparkContext(conf);
+			sc.setLogLevel("INFO");
+
+			try
+			{
+				pmc = setupPointMatchesFromInterestPoints( xmlURI, sc, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
+			}
+			finally
+			{
+				sc.close();
+			}
+		}
 		else
-			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal, vsComparisonPairs);
+			pmc = setupPointMatchesStitching(dataGlobal, vsComparisonPairs);
 
 		if ( pmc == null )
 		{
@@ -382,23 +402,6 @@ public class Solver extends AbstractRegistration
 		// gated by TransformationTools.maxPerViewTransformLog
 		TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, models );
 
-		
-		// get all timepoints
-		//final List< TimePoint > timepointToProcess = SpimData2.getAllTimePointsSorted( dataGlobal, viewIdsGlobal );
-
-		/*
-		// identify groups/subsets
-		final Set< Group< ViewId > > groups = arp.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels );
-		final PairwiseSetup< ViewId > setup = arp.pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groups );
-		final OverlapDetection<ViewId> overlapDetection = GeometricDescriptorSpark.getOverlapDetection( dataGlobal, this.viewReg );
-		GeometricDescriptorSpark.identifySubsets( setup, overlapDetection );
-
-
-		// get the grouping parameters
-		final GroupParameters gp = new GroupParameters();
-		gp.grouping = InterestpointGroupingType.DO_NOT_GROUP;
-		*/
-
 		if (!dryRun)
 		{
 			System.out.println( "Saving resulting XML ... ");
@@ -411,7 +414,6 @@ public class Solver extends AbstractRegistration
 
 	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
-			final ArrayList< ViewId > viewIdsGlobal,
 			final Set< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
@@ -469,25 +471,17 @@ public class Solver extends AbstractRegistration
 	{
 		System.out.println( "Setting up corresponding interest points with Spark ... " );
 
-		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
-		final Set< ViewId > connectedViews = new HashSet<>();
-		final Map< String, Integer > viewIndex = new HashMap<>();
 		final Map< String, ArrayList< String > > labelsByView = new HashMap<>();
 		final Set< String > fixedViewKeys = new HashSet<>();
 		final Set< String > sameGroupPairs = new HashSet<>();
-		final List< LabelTask > tasks = new ArrayList<>();
+		final List< PairTask > tasks = new ArrayList<>();
 
-		for ( int i = 0; i < viewIdsGlobal.size(); ++i )
+		for ( ViewId viewId : viewIdsGlobal )
 		{
-			final ViewId viewId = viewIdsGlobal.get( i );
 			final String viewKey = viewIdKey( viewId );
-			viewIndex.put( viewKey, i );
 
 			final ArrayList< String > viewLabels = new ArrayList<>( labelMap.get( viewId ).keySet() );
 			labelsByView.put( viewKey, viewLabels );
-
-			for ( final String label : viewLabels )
-				tasks.add( new LabelTask( viewId.getTimePointId(), viewId.getViewSetupId(), label ) );
 		}
 
 		for ( final ViewId fixedViewId : fixedViewIds )
@@ -507,126 +501,124 @@ public class Solver extends AbstractRegistration
 				}
 		}
 
+		for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
+			for ( int j = i + 1; j < viewIdsGlobal.size(); ++j )
+			{
+				final ViewId vA = viewIdsGlobal.get( i );
+				final ViewId vB = viewIdsGlobal.get( j );
+				final String vAKey = viewIdKey( vA );
+				final String vBKey = viewIdKey( vB );
+
+				if ( vsComparisonPairs != null )
+				{
+					final Pair< Integer, Integer > key = new ValuePair<>( Math.min( vA.getViewSetupId(), vB.getViewSetupId() ), Math.max( vA.getViewSetupId(), vB.getViewSetupId() ) );
+					if ( !vsComparisonPairs.contains( key ) )
+						continue;
+				}
+
+				if ( fixedViewKeys.contains( vAKey ) && fixedViewKeys.contains( vBKey ) )
+				{
+					System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are both fixed." );
+					continue;
+				}
+
+				if ( sameGroupPairs.contains( pairKey( vAKey, vBKey ) ) )
+				{
+					System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are part of the same group." );
+					continue;
+				}
+
+				tasks.add( new PairTask(
+						vA.getTimePointId(),
+						vA.getViewSetupId(),
+						vB.getTimePointId(),
+						vB.getViewSetupId() ) );
+			}
+
 		if ( tasks.isEmpty() )
 		{
-			System.out.println( "No label/view tasks to process, stopping." );
+			System.out.println( "No view-pair tasks to process, stopping." );
 			return null;
 		}
 
 		System.out.println( "Spark correspondence setup tasks: " + tasks.size() );
 
-		final JavaRDD< LabelTask > rdd =
+		final JavaRDD< PairTask > rdd =
 				sc.parallelize( tasks, Math.min( Spark.maxPartitions, tasks.size() ) );
 
-		final List< ArrayList< SerializedIPPairwiseResult > > sparkResults = rdd.map( task ->
+		final List< ArrayList< SerializedIPPairwiseResult > > sparkResults = rdd.map( pairTask ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-			final ViewId vA = task.viewId();
-			final String vAKey = viewIdKey( task.timePointId, task.viewSetupId );
-			final Integer vAIndex = viewIndex.get( vAKey );
+			final ViewId vA = pairTask.viewId();
+			final ViewId vB = pairTask.correspondingViewId();
+			final String vAKey = viewIdKey( pairTask.timePointA, pairTask.viewSetupA );
+			final String vBKey = viewIdKey( pairTask.timePointB, pairTask.viewSetupB );
+			final ArrayList< String > labelsA = labelsByView.get( vAKey );
+			final ArrayList< String > labelsB = labelsByView.get( vBKey );
 			final ArrayList< SerializedIPPairwiseResult > results = new ArrayList<>();
 
-			if ( vAIndex == null )
+			if ( labelsA == null || labelsB == null )
 				return results;
 
-			final InterestPoints interestPointsA = data.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( task.label );
-
-			if ( interestPointsA == null )
-				return results;
-
-			final Collection< CorrespondingInterestPoints > cpA = interestPointsA.getCorrespondingInterestPointsCopy();
-			final Map< Integer, InterestPoint > ipListA = interestPointsA.getInterestPointsCopy();
 			final ViewRegistration vRegA = data.getViewRegistrations().getViewRegistration( vA );
+			final ViewRegistration vRegB = data.getViewRegistrations().getViewRegistration( vB );
+
 			vRegA.updateModel();
+			vRegB.updateModel();
 			final AffineTransform3D mA = vRegA.getModel();
-			final Map< String, Map< Integer, InterestPoint > > targetInterestPoints = new HashMap<>();
-			final Map< String, AffineTransform3D > targetTransforms = new HashMap<>();
-			final Map< String, SerializedIPPairwiseResult > resultMap = new HashMap<>();
+			final AffineTransform3D mB = vRegB.getModel();
 
-			for ( final CorrespondingInterestPoints p : cpA )
-			{
-				final ViewId vB = p.getCorrespondingViewId();
-				final String vBKey = viewIdKey( vB );
-				final Integer vBIndex = viewIndex.get( vBKey );
-
-				if ( vBIndex == null || vBIndex <= vAIndex )
-					continue;
-
-				if ( fixedViewKeys.contains( vAKey ) && fixedViewKeys.contains( vBKey ) )
-					continue;
-
-				if ( sameGroupPairs.contains( pairKey( vAKey, vBKey ) ) )
-					continue;
-
-				final String labelB = p.getCorrespodingLabel();
-				final ArrayList< String > labelsB = labelsByView.get( vBKey );
-
-				if ( labelsB == null || !labelsB.contains( labelB ) )
-					continue;
-
-				final InterestPoint originalA = ipListA.get( p.getDetectionId() );
-
-				if ( originalA == null )
-					continue;
-
-				final String targetKey = vBKey + "\t" + labelB;
-				Map< Integer, InterestPoint > ipListB = targetInterestPoints.get( targetKey );
-
-				if ( ipListB == null )
+			for ( final String labelA : labelsA )
+				for ( final String labelB : labelsB )
 				{
+					final InterestPoints interestPointsA = data.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA );
 					final InterestPoints interestPointsB = data.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB );
 
-					if ( interestPointsB == null )
+					if ( interestPointsA == null || interestPointsB == null )
 						continue;
 
-					ipListB = interestPointsB.getInterestPointsCopy();
-					targetInterestPoints.put( targetKey, ipListB );
-				}
-
-				final InterestPoint originalB = ipListB.get( p.getCorrespondingDetectionId() );
-
-				if ( originalB == null )
-					continue;
-
-				AffineTransform3D mB = targetTransforms.get( vBKey );
-
-				if ( mB == null )
-				{
-					final ViewRegistration vRegB = data.getViewRegistrations().getViewRegistration( vB );
-					vRegB.updateModel();
-					mB = vRegB.getModel();
-					targetTransforms.put( vBKey, mB );
-				}
-
-				final InterestPoint ipA = new InterestPoint( originalA.getId(), originalA.getL().clone() );
-				final InterestPoint ipB = new InterestPoint( originalB.getId(), originalB.getL().clone() );
-
-				mA.apply( ipA.getL(), ipA.getL() );
-				mA.apply( ipA.getW(), ipA.getW() );
-				mB.apply( ipB.getL(), ipB.getL() );
-				mB.apply( ipB.getW(), ipB.getW() );
-
-				SerializedIPPairwiseResult result = resultMap.get( targetKey );
-
-				if ( result == null )
-				{
-					result = new SerializedIPPairwiseResult(
-							task.timePointId,
-							task.viewSetupId,
-							vB.getTimePointId(),
-							vB.getViewSetupId(),
-							task.label,
+					final Collection< CorrespondingInterestPoints > cpA = interestPointsA.getCorrespondingInterestPointsCopy();
+					final Map< Integer, InterestPoint > ipListA = interestPointsA.getInterestPointsCopy();
+					final Map< Integer, InterestPoint > ipListB = interestPointsB.getInterestPointsCopy();
+					final SerializedIPPairwiseResult result = new SerializedIPPairwiseResult(
+							pairTask.timePointA,
+							pairTask.viewSetupA,
+							pairTask.timePointB,
+							pairTask.viewSetupB,
+							labelA,
 							labelB );
-					resultMap.put( targetKey, result );
-					results.add( result );
-				}
 
-				result.inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
-			}
+					for ( final CorrespondingInterestPoints p : cpA )
+					{
+						if ( !p.getCorrespodingLabel().equals( labelB ) || !p.getCorrespondingViewId().equals( vB ) )
+							continue;
+
+						final InterestPoint originalA = ipListA.get( p.getDetectionId() );
+						final InterestPoint originalB = ipListB.get( p.getCorrespondingDetectionId() );
+
+						if ( originalA == null || originalB == null )
+							continue;
+
+						final InterestPoint ipA = new InterestPoint( originalA.getId(), originalA.getL().clone() );
+						final InterestPoint ipB = new InterestPoint( originalB.getId(), originalB.getL().clone() );
+
+						mA.apply( ipA.getL(), ipA.getL() );
+						mA.apply( ipA.getW(), ipA.getW() );
+						mB.apply( ipB.getL(), ipB.getL() );
+						mB.apply( ipB.getW(), ipB.getW() );
+
+						result.inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
+					}
+
+					if ( !result.inliers.isEmpty() )
+						results.add( result );
+				}
 
 			return results;
 		}).collect();
 
+		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
+		final Set< ViewId > connectedViews = new HashSet<>();
 		for ( final ArrayList< SerializedIPPairwiseResult > taskResults : sparkResults )
 			for ( final SerializedIPPairwiseResult serializedResult : taskResults )
 			{
@@ -664,7 +656,7 @@ public class Solver extends AbstractRegistration
 					pairs.add( new ValuePair<>( new ValuePair<>( viewId, viewId ), pairResult)) ; // we are connecting it to itself with no inliers so it is in the list
 				}
 
-		if ( pairs.size() > 0 )
+		if (!pairs.isEmpty())
 			return new InterestPointMatchCreator( pairs, labelMap );
 		else
 			return null;
@@ -685,24 +677,35 @@ public class Solver extends AbstractRegistration
 		return viewA + ">" + viewB;
 	}
 
-	private static class LabelTask implements Serializable
+	private static class PairTask implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
 
-		final int timePointId;
-		final int viewSetupId;
-		final String label;
+		final int timePointA;
+		final int viewSetupA;
+		final int timePointB;
+		final int viewSetupB;
 
-		LabelTask( final int timePointId, final int viewSetupId, final String label )
+		PairTask(
+				final int timePointA,
+				final int viewSetupA,
+				final int timePointB,
+				final int viewSetupB )
 		{
-			this.timePointId = timePointId;
-			this.viewSetupId = viewSetupId;
-			this.label = label;
+			this.timePointA = timePointA;
+			this.viewSetupA = viewSetupA;
+			this.timePointB = timePointB;
+			this.viewSetupB = viewSetupB;
 		}
 
 		ViewId viewId()
 		{
-			return new ViewId( timePointId, viewSetupId );
+			return new ViewId( timePointA, viewSetupA );
+		}
+
+		ViewId correspondingViewId()
+		{
+			return new ViewId( timePointB, viewSetupB );
 		}
 	}
 
