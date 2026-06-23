@@ -205,6 +205,20 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		// identify groups/subsets
 		final PairwiseSetup< ViewId > setup = setupGroups( viewReg );
 
+		// optionally restrict to allowed view setup ID pairs
+		final HashSet< Pair< Integer, Integer > > vsComparisonPairs = parseVsComparisonsFile( vsComparisonsFile );
+		if ( vsComparisonPairs != null )
+		{
+			final int before = setup.getPairs().size();
+			setup.getPairs().removeIf( pair ->
+			{
+				final int vsA = pair.getA().getViewSetupId();
+				final int vsB = pair.getB().getViewSetupId();
+				return !vsComparisonPairs.contains( new ValuePair<>( Math.min( vsA, vsB ), Math.max( vsA, vsB ) ) );
+			});
+			System.out.println( "vsComparisons filter: kept " + setup.getPairs().size() + " of " + before + " pairs." );
+		}
+
 		// find out how many pairs there are
 		//final int numJobs = (setup.getPairs().size()/pairsPerSparkJob) + (setup.getPairs().size()%pairsPerSparkJob > 0 ? 1 : 0);
 		System.out.println( "In total " + setup.getPairs().size() + " pairs of views need to be aligned.");// with " + pairsPerSparkJob + " pair(s) per Spark job, meaning " + numJobs + " jobs." );

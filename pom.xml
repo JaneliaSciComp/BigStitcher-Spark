@@ -79,44 +79,42 @@
         <url>https://github.com/JaneliaSciComp/BigStitcher-Spark/actions</url>
     </ciManagement>
 
-	<properties>
-		<package-name>net.preibisch.bigstitcher.spark</package-name>
+    <properties>
+        <package-name>net.preibisch.bigstitcher.spark</package-name>
 
-		<license.licenseName>bsd</license.licenseName>
-		<license.copyrightOwners>Developers.</license.copyrightOwners>
-		<scijava.jvm.version>21</scijava.jvm.version>
+        <scijava.jvm.version>21</scijava.jvm.version>
+        <license.licenseName>bsd</license.licenseName>
+        <license.copyrightOwners>Developers.</license.copyrightOwners>
 
-		<imglib2.version>8.0.1</imglib2.version>
-		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
-		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
-		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
-		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
-		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
-		<multiview-simulation.version>0.3.1</multiview-simulation.version>
+        <imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
+        <imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
+        <imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
+        <bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
+        <bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>9.0.6</multiview-reconstruction.version>
-		<BigStitcher.version>3.0.4</BigStitcher.version>
+        <multiview-reconstruction.version>9.0.1</multiview-reconstruction.version>
+        <BigStitcher.version>3.0.0</BigStitcher.version>
 
-		<!-- N5 alpha versions for Zarr v3 shard support -->
-		<!-- See: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/ -->
-		<n5.version>4.0.1</n5.version>
-		<n5-universe.version>3.0.1</n5-universe.version>
-		<n5-imglib2.version>8.0.0</n5-imglib2.version>
-		<n5-hdf5.version>3.0.0</n5-hdf5.version>
-		<n5-zarr.version>2.0.1</n5-zarr.version>
-		<n5-zstandard.version>2.0.0</n5-zstandard.version>
-		<n5-blosc.version>2.0.0</n5-blosc.version>
-		<n5-aws-s3.version>5.0.0</n5-aws-s3.version>
-		<n5-google-cloud.version>6.0.0</n5-google-cloud.version>
+        <!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
+        <n5.version>4.0.1</n5.version>
+        <commons-compress.version>1.28.0</commons-compress.version>
+        <commons-io.version>2.20.0</commons-io.version>
+        <n5-hdf5.version>3.0.0</n5-hdf5.version>
+        <n5-imglib2.version>8.0.0</n5-imglib2.version>
+        <n5-universe.version>3.0.2</n5-universe.version>
+        <n5-zarr.version>2.0.1</n5-zarr.version>
+        <n5-zstandard.version>2.0.0</n5-zstandard.version>
+        <n5-blosc.version>2.0.0</n5-blosc.version>
+        <n5-aws-s3.version>5.0.1</n5-aws-s3.version>
+        <n5-google-cloud.version>6.0.0</n5-google-cloud.version>
 
-		<mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
+        <mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
 
-		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
-		<ome-codecs.version>0.3.0</ome-codecs.version>
+        <!--for the old bioformats to work properly (compared with old main branch to find out)-->
+        <ome-codecs.version>0.3.0</ome-codecs.version>
 
-		<!-- JaCoCo 0.8.14+ required for Java 26 (class file major version 70) support -->
-		<jacoco-maven-plugin.version>0.8.14</jacoco-maven-plugin.version>
+        <!-- JaCoCo 0.8.14+ required for Java 26 (class file major version 70) support -->
+        <jacoco-maven-plugin.version>0.8.14</jacoco-maven-plugin.version>
     </properties>
 
     <repositories>
@@ -146,27 +144,27 @@
             <artifactId>imglib2-cache</artifactId>
             <!-- <version>1.0.0-beta-17</version> -->
         </dependency>
-		<dependency>
-			<groupId>net.imglib2</groupId>
-			<artifactId>imglib2</artifactId>
-			<!-- <version>6.3.0</version> -->
-		</dependency>
-		<dependency>
-			<groupId>net.imglib2</groupId>
-			<artifactId>imglib2-algorithm</artifactId>
-			<!-- <version>0.15.0</version> -->
-		</dependency>
-		<dependency>
-			<groupId>org.bigdataviewer</groupId>
-			<artifactId>bigdataviewer-n5</artifactId>
-			<version>1.0.2</version>
+        <dependency>
+            <groupId>net.imglib2</groupId>
+            <artifactId>imglib2</artifactId>
+            <!-- <version>6.3.0</version> -->
+        </dependency>
+        <dependency>
+            <groupId>net.imglib2</groupId>
+            <artifactId>imglib2-algorithm</artifactId>
+            <!-- <version>0.15.0</version> -->
+        </dependency>
+        <dependency>
+            <groupId>org.bigdataviewer</groupId>
+            <artifactId>bigdataviewer-n5</artifactId>
+            <version>${bigdataviewer-n5.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>javax.annotation</groupId>
                     <artifactId>javax.annotation-api</artifactId>
                 </exclusion>
             </exclusions>
-		</dependency>
+        </dependency>
         <dependency>
             <groupId>sc.fiji</groupId>
             <artifactId>spim_data</artifactId>
@@ -183,10 +181,11 @@
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
             <exclusions>
-                <!-- Spark 4 provides Netty; exclude AWS Netty modules to avoid duplicate class conflicts. -->
+                <!-- awssdk's netty HTTP client pulls netty 4.1.115, clashing with the
+                     explicit netty-all:4.1.68.Final. apache-client is the default. -->
                 <exclusion>
-                    <groupId>io.netty</groupId>
-                    <artifactId>*</artifactId>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -207,6 +206,14 @@
             <artifactId>spark-core_2.13</artifactId>
             <version>4.1.2</version>
             <exclusions>
+                <exclusion>
+                    <artifactId>netty-all</artifactId>
+                    <groupId>io.netty</groupId>
+                </exclusion>
+                <exclusion>
+                    <artifactId>netty</artifactId>
+                    <groupId>io.netty</groupId>
+                </exclusion>
                 <exclusion>
                     <artifactId>jcl-over-slf4j</artifactId>
                     <groupId>org.slf4j</groupId>
@@ -284,11 +291,17 @@
                     <groupId>javax.annotation</groupId>
                     <artifactId>javax.annotation-api</artifactId>
                 </exclusion>
-                <exclusion>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
             </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+            <version>4.1.118.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+            <version>3.9.9.Final</version>
         </dependency>
         <dependency>
             <groupId>info.picocli</groupId>
@@ -356,10 +369,6 @@
                 <exclusion>
                     <groupId>ch.epfl.biop</groupId>
                     <artifactId>ijp-kheops</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>*</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -473,8 +482,8 @@
                                         <exclude>META-INF/*.txt</exclude>
                                         <exclude>module-info.class</exclude>
                                         <exclude>plugins.config</exclude>
-					                    <exclude>META-INF/versions/9/module-info.class</exclude>
-					                    <exclude>META-INF/okio.kotlin_module</exclude>
+                                        <exclude>META-INF/versions/9/module-info.class</exclude>
+                                        <exclude>META-INF/okio.kotlin_module</exclude>
                                         <exclude>META-INF/services/com.fasterxml.jackson.core.JsonFactory</exclude>
                                     </excludes>
                                 </filter>
@@ -482,7 +491,7 @@
                             <!-- Additional configuration. -->
                             <artifactSet>
                                 <excludes>
-				                    <exclude>xpp3:xpp3</exclude>
+                                    <exclude>xpp3:xpp3</exclude>
                                 </excludes>
                             </artifactSet>
                             <relocations>
@@ -494,6 +503,11 @@
                                 <relocation>
                                     <pattern>com.google.gson</pattern>
                                     <shadedPattern>org.janelia.saalfeldlab.com.google.gson</shadedPattern>
+                                </relocation>
+                                <!-- Protect newer commons-io from the old version (2.11.0) bundled with Spark -->
+                                <relocation>
+                                    <pattern>org.apache.commons.io</pattern>
+                                    <shadedPattern>org.janelia.saalfeldlab.org.apache.commons.io</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>
@@ -508,28 +522,6 @@
                         </executions>
                     </plugin>
                     <!-- Maven shade end -->
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>with-deps</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-dependency-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>copy-dependencies</id>
-                                <phase>package</phase>
-                                <goals><goal>copy-dependencies</goal></goals>
-                                <configuration>
-                                    <outputDirectory>${project.build.directory}/deps</outputDirectory>
-                                    <includeScope>runtime</includeScope>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
                 </plugins>
             </build>
         </profile>

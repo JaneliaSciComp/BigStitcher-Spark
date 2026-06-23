@@ -50,6 +50,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.Spark.SerializablePairwiseStitchingResult;
@@ -102,6 +103,9 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 	@Option(names = { "--channelCombine" }, description = "defines how images of different channels of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: AVERAGE)")
 	protected ActionType channelCombine = ActionType.AVERAGE;
+
+	@Option(names = { "--vsComparisonsFile" }, description = "path to a text file listing allowed view setup ID pairs (one pair per line, comma-separated), e.g. '0,1\\n1,2\\n2,3' (default: all-to-all)")
+	protected String vsComparisonsFile = null;
 
 	@Option(names = { "--illumCombine" }, description = "defines how images of different illuminations of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: PICK_BRIGHTEST)")
 	protected ActionType illumCombine = ActionType.PICK_BRIGHTEST;
@@ -159,10 +163,23 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		grouping.getGroupingFactors().addAll( defaultGroupingFactors );
 		grouping.getAxesOfComparison().addAll( defaultComparisonFactors );
 
-		List< ? extends Pair< ? extends Group< ? extends ViewId >, ? extends Group< ? extends ViewId > > > groupedPairs =  grouping.getComparisons();
+		List< ? extends Pair< ? extends Group< ? extends ViewId >, ? extends Group< ? extends ViewId > > > groupedPairs = grouping.getComparisons();
+
+		final HashSet< net.imglib2.util.Pair< Integer, Integer > > vsComparisonPairs = AbstractRegistration.parseVsComparisonsFile( vsComparisonsFile );
+		if ( vsComparisonPairs != null )
+		{
+			final int before = groupedPairs.size();
+			groupedPairs = groupedPairs.stream().filter( pair ->
+			{
+				final int vsA = pair.getA().iterator().next().getViewSetupId();
+				final int vsB = pair.getB().iterator().next().getViewSetupId();
+				return vsComparisonPairs.contains( new ValuePair<>( Math.min( vsA, vsB ), Math.max( vsA, vsB ) ) );
+			}).collect( Collectors.toList() );
+			System.out.println( "vsComparisons filter: kept " + groupedPairs.size() + " of " + before + " stitching pairs." );
+		}
 
 		// remove non-overlapping comparisons
-		final List< Pair< Group< ViewId >, Group< ViewId > > > removedPairs = TransformationTools.filterNonOverlappingPairs( (List)grouping.getComparisons(), dataGlobal.getViewRegistrations(), dataGlobal.getSequenceDescription() );
+		final List< Pair< Group< ViewId >, Group< ViewId > > > removedPairs = TransformationTools.filterNonOverlappingPairs( (List)groupedPairs, dataGlobal.getViewRegistrations(), dataGlobal.getSequenceDescription() );
 		System.out.println( new Date( System.currentTimeMillis() ) + ": Removed " + removedPairs.size() + " non-overlapping view-pairs for computing." );
 
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): For the following pairs pairwise stitching will be computed:");

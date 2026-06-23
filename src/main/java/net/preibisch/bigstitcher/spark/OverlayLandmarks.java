@@ -28,6 +28,9 @@ import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.axes.Axis;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.ScaleCoordinateTransformation;
 
 import bdv.util.BdvFunctions;
 import bdv.util.BdvOptions;
@@ -58,9 +61,6 @@ import net.preibisch.bigstitcher.spark.util.bdv.Normalization;
 import net.preibisch.mvrecon.imglib2.st.filter.GaussianFilterFactory;
 import net.preibisch.mvrecon.imglib2.st.filter.GaussianFilterFactory.WeightType;
 import net.preibisch.mvrecon.imglib2.st.render.Render;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMultiScaleMetadata;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.CoordinateTransformation;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.coordinateTransformations.ScaleCoordinateTransformation;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -381,9 +381,9 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			raw = sliceTo3D( raw, channelIdx, timepointIdx );
 
 			// Convert to UnsignedByteType lazily via Converters.
-			@SuppressWarnings( "unchecked" )
+			@SuppressWarnings( { "unchecked" } )
 			final RandomAccessibleInterval< UnsignedByteType > asByte = Converters.convert(
-					( RandomAccessibleInterval<R> ) raw,
+					( RandomAccessibleInterval< R > ) raw,
 					new RealUnsignedByteConverter<>( minIntensity, maxIntensity ),
 					new UnsignedByteType() );
 
@@ -459,7 +459,7 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 		if ( cts == null ) return null;
 		for ( final CoordinateTransformation< ? > c : cts )
 		{
-			if ( c instanceof ScaleCoordinateTransformation)
+			if ( c instanceof ScaleCoordinateTransformation )
 			{
 				final double[] s = ( ( ScaleCoordinateTransformation ) c ).getScale();
 				// BSS writes the scale in XYZ(CT) F-order (see OMEZarrAttributes.createOMEZarrMetadata),

@@ -79,6 +79,7 @@ import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
+import net.imglib2.util.Cast;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Util;
 import net.imglib2.view.Views;
@@ -220,25 +221,25 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@CommandLine.Option(names = { "--intensityN5Path" }, description = "N5/ZARR/HDF5 base path for loading coefficients (e.g. s3://myBucket/coefficients.n5)")
 	private String intensityN5PathURIString = null;
 
-	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type, can be used to override guessed format (default: guess from n5Path file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
+	@CommandLine.Option(names = { "--intensityN5Storage" }, description = "output storage type of the intensity coefficients container, can be used to override guessed format (default: guess from n5Path file/directory-ending; NOTE: does not work for ZARR2, you need to specify since .zarr would default to ZARR v3)")
 	private StorageFormat intensityN5StorageType = null;
 
 	@CommandLine.Option(names = { "--intensityN5Group" }, description = "group under which coefficient datasets are stored (default: \"\")")
-	String intensityN5Group = "";
+	private String intensityN5Group = "";
 
-	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
+	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{--intensityN5Group}/setup{s}/timepoint{t}/{--intensityN5Dataset}\"")
 	private String intensityN5Dataset = "intensity";
 
 	@Option(names = { "--group" }, description = "Container group path")
-	String groupPath = "";
+	private String groupPath = "";
 
-	URI outPathURI = null;
+	private URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
 	 */
 	//static final int N_PREFETCH_THREADS = 72;
 
-	URI intensityN5PathURI = null;
+	private URI intensityN5PathURI = null;
 
 	/**
 	 * @return container group path always terminated with a '/'
@@ -341,9 +342,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 		{
-			if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND )
+			if ( fusionType != FusionType.CLOSEST_PIXEL_WINS && fusionType != FusionType.AVG_BLEND && fusionType != FusionType.MAX_INTENSITY )
 			{
-				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: only FusionType.CLOSEST_PIXEL_WINS and FusionType.AVG_BLEND supported right now." );
+				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: only FusionType.CLOSEST_PIXEL_WINS, FusionType.AVG_BLEND and FusionType.MAX_INTENSITY supported right now." );
 				return null;
 			}
 
@@ -383,7 +384,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final long[] bbMin = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_min", long[].class );
 		final long[] bbMax = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/Boundingbox_max", long[].class );
- 
+
 		final BoundingBox boundingBox = new BoundingBox( new FinalInterval( bbMin, bbMax ) );
 
 		final boolean preserveAnisotropy = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/PreserveAnisotropy", boolean.class );
@@ -1003,7 +1004,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	
 							return gridBlock.clone();
 						});
-						
+
 						// extract all blocks that failed
 						final Set<long[][]> failedBlocksSet =
 								retryTrackerDS.processResults( rddDSResult.collect(), grid );

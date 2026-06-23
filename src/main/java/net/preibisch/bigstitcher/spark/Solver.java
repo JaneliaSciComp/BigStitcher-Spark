@@ -49,13 +49,12 @@ import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.Dimensions;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
 import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.global.GlobalOptimizationParameters.GlobalOptType;
@@ -253,8 +252,8 @@ public class Solver extends AbstractRegistration
 		System.out.println("maxPlateauwidth: " + maxPlateauwidth );
 		System.out.println("disableFixedViews: " + disableFixedViews );
 		System.out.println("fixedViews: " + ( fixedViews == null ? "null" : Arrays.toString( fixedViews ) ) );
-		System.out.println("labels: " + labels );
-		System.out.println("labelweights: " + labelweights );
+		System.out.println("labels: " + ( labels == null ? "null" : Arrays.toString( labels.toArray() ) ));
+		System.out.println("labelweights: " + ( labelweights == null ? "null" : Arrays.toString( labelweights.toArray() ) ));
 
 		// assemble fixed views
 		final Set< ViewId > fixedViewIds;
@@ -295,34 +294,16 @@ public class Solver extends AbstractRegistration
 		else // for grouping all we need here is the set of groups
 			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
 
+		// parse view setup ID comparison pairs from file (null = all-to-all)
+		final HashSet< Pair< Integer, Integer > > vsComparisonPairs = parseVsComparisonsFile( vsComparisonsFile );
+
 		final PointMatchCreator pmc;
 
 		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
-		{
-			final SparkConf conf = new SparkConf().setAppName("SparkSolver");
-
-			if ( localSparkBindAddress )
-			{
-				conf.set("spark.driver.bindAddress", "127.0.0.1");
-				conf.set("spark.driver.host", "localhost");
-				org.apache.spark.util.Utils.setCustomHostname("localhost");
-			}
-
-			final JavaSparkContext sc = new JavaSparkContext(conf);
-			sc.setLogLevel("ERROR");
-
-			try
-			{
-				pmc = setupPointMatchesFromInterestPoints( xmlURI, sc, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds );
-			}
-			finally
-			{
-				sc.close();
-			}
-		}
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
 		else
-			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal);
+			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal, vsComparisonPairs);
 
 		if ( pmc == null )
 		{
@@ -430,9 +411,22 @@ public class Solver extends AbstractRegistration
 
 	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
-			final ArrayList< ViewId > viewIdsGlobal )
+			final ArrayList< ViewId > viewIdsGlobal,
+			final Set< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
+
+		if ( vsComparisonPairs != null )
+		{
+			final int before = results.size();
+			results = results.stream().filter( psr ->
+			{
+				final int vsA = psr.pair().getA().getViews().iterator().next().getViewSetupId();
+				final int vsB = psr.pair().getB().getViews().iterator().next().getViewSetupId();
+				return vsComparisonPairs.contains( new ValuePair<>( Math.min(vsA,vsB), Math.max(vsA,vsB) ) );
+			}).collect( Collectors.toList() );
+			System.out.println( "vsComparisons filter: kept " + results.size() + " of " + before + " stitching pairs." );
+		}
 
 		// filter bad hashes here
 		final int numLinksBefore = results.size();
@@ -470,7 +464,8 @@ public class Solver extends AbstractRegistration
 			final List< ViewId > viewIdsGlobal,
 			final Map< ViewId, ? extends Map< String, Double > > labelMap,
 			final Collection< Group< ViewId > > groups,
-			final Set< ViewId > fixedViewIds )
+			final Set< ViewId > fixedViewIds,
+			final Set< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		System.out.println( "Setting up corresponding interest points with Spark ... " );
 

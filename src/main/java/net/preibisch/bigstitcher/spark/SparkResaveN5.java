@@ -115,8 +115,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Option(names = { "-o", "--n5Path" }, description = "N5/OME-ZARR path for saving, (default: 'folder of the xml'/dataset.n5 or e.g. s3://myBucket/data.n5)")
 	private String n5PathURIString = null;
 
-	@Option(names = { "--downsampleS0" }, description = "Skip writing the s0/full-resolution level and only generate downsampling pyramid levels; requires existing s0 datasets for all selected views (default: false)")
-	private boolean downsampleS0 = false;
+	@Option(names = { "--only-downsample-existing-s0" }, description = "Skip writing the s0/full-resolution level and only generate downsampling pyramid levels; requires existing s0 datasets for all selected views (default: false)")
+	private boolean multiscalePyramidFromExistingS0 = false;
 
 	@Option(names = { "--useSharding" },
 			description = "Enable Zarr v3 sharding using blockScale as shard size factor (default: enabled for ZARR v3, disabled for N5/ZARR v2)")
@@ -242,7 +242,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 			return null;
 		}
 
-		if (downsampleS0)
+		if (multiscalePyramidFromExistingS0)
 		{
 			validateExistingS0Datasets(
 					n5Writer,
@@ -265,7 +265,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 					if ( storageFormat == StorageFormat.N5 )
 					{
-						if (downsampleS0)
+						if (multiscalePyramidFromExistingS0)
 						{
 							mrInfo = setupBdvDatasetsN5SkippingS0(
 									n5Writer,
@@ -292,7 +292,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 					{
 						System.out.println( Arrays.toString( blockSize ) );
 						VoxelDimensions vx = dataGlobal.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getVoxelSize();
-						if (downsampleS0)
+						if (multiscalePyramidFromExistingS0)
 						{
 							System.out.println( "Save view setups downsampling" );
 							mrInfo = setupBdvDatasetsOMEZARRResaveRawSkippingS0(
@@ -346,7 +346,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		// Save s0 level
 		//
-		if ( !downsampleS0 )
+		if ( !multiscalePyramidFromExistingS0)
 			time = processSNBlocks(
 					sc,
 					gridS0,
