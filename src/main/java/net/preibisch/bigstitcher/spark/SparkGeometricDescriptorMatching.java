@@ -133,20 +133,20 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "--splitTimepoints" }, description = "group all angles/channels/illums/tiles that belong to the same timepoint as one View, e.g. for stabilization across time (default: false)")
 	protected boolean splitTimepoints = false;
 
-	@Option(names = { "-rit", "--ransacIterations" }, description = "max number of ransac iterations (default: 10,000 for descriptors, 200 for ICP)")
+	@Option(names = { "-rit", "--ransacIterations" }, description = "max number of RANSAC iterations (default: 10,000 for descriptors, 200 for ICP)")
 	protected Integer ransacIterations = null;
 
-	@Option(names = { "-rme", "--ransacMaxError" }, description = "ransac max error in pixels (default: 5.0 for descriptors, 2.5 for ICP)")
+	@Option(names = { "-rme", "--ransacMaxError" }, description = "RANSAC max error in pixels (default: 5.0 for descriptors, 2.5 for ICP)")
 	protected Double ransacMaxError = null;
 
 	// TODOL ignored by ICP
-	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.1)")
+	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "RANSAC min inlier ratio (default: 0.1)")
 	protected Double ransacMinInlierRatio = 0.1;
 
-	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "ransac minimal number of required inliers (default: 12)")
+	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "RANSAC minimal number of required inliers (default: 12)")
 	protected Integer ransacMinNumInliers = 12;
 
-	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "ransac perform multiconsensus matching (default: false)")
+	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "RANSAC perform multiconsensus matching (default: false)")
 	protected boolean ransacMultiConsensus = false;
 
 	@Option(names = { "--ransacMaxTrust" }, description = "RANSAC max trust")
