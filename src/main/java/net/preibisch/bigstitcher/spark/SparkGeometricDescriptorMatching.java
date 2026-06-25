@@ -149,6 +149,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "ransac perform multiconsensus matching (default: false)")
 	protected boolean ransacMultiConsensus = false;
 
+	@Option(names = { "--ransacMaxTrust" }, description = "RANSAC max trust")
+	final Double ransacMaxTrust = 3.0;
+
+	@Option(names = { "--ransacFilter" }, description = "RANSAC filter (default: true - to disable use --no-ransacFilter)", negatable = true)
+	protected boolean ransacFilter = true;
+
 	@Option(names = { "-ime", "--icpMaxError" }, description = "ICP max error in pixels (default: 5.0)")
 	protected Double icpMaxError = 5.0;
 
@@ -246,26 +252,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 
 		final URI xmlURI = this.xmlURI;
-		final boolean matchAcrossLabels = this.matchAcrossLabels;
-		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
-		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
-		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
-		final int ransacMinNumInliers = this.ransacMinNumInliers;
-		final boolean ransacMultiConsensus = this.ransacMultiConsensus;
-		final double icpMaxError = this.icpMaxError;
 		final int icpMaxIterations = this.icpIterations;
-		final boolean icpUseRANSAC = this.icpUseRANSAC;
-		final Method registrationMethod = this.registrationMethod;
 		final double ratioOfDistance = this.significance;
-		final boolean limitSearchRadius = ( this.searchRadius == null ) ? false : true;
-		final double searchRadius = ( this.searchRadius == null ) ? 0 : this.searchRadius;
-		final int redundancy = this.redundancy;
-		final int numNeighbors = this.numNeighbors;
-		final double interestPointMergeDistance = this.interestPointMergeDistance;
+		final boolean limitSearchRadius = this.searchRadius != null && this.searchRadius > 0;
+		final double searchRadius = !limitSearchRadius ? 0 : this.searchRadius;
 		final int centerOfMassTypeInt = this.centerOfMassType.ordinal();
-		final TransformationModel transformationModel = this.transformationModel;
-		final RegularizationModel regularizationModel = this.regularizationModel;
 		final double lambda = this.regularizationLambda;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
@@ -341,7 +333,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 							System.out.println( Group.pvid( element.getKey() ) + ", '" + subElement.getKey() + "' : " + subElement.getValue().size() );
 				}
 
-				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, ransacMinNumInliers, ransacIterations, ransacMultiConsensus );
+				final RANSACParameters rp = new RANSACParameters( ransacMaxEpsilon, ransacMinInlierRatio, ransacMinNumInliers, ransacIterations, ransacMultiConsensus );
 				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 				final MatcherPairwise< InterestPoint > matcher = createMatcherInstance(
@@ -454,7 +446,15 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				groupedInterestpoints.put( task.vB, ipGrouping.group( task.vB ) );
 				IOFunctions.println( task.vA + " <=> " + task.vB + ": Grouping interestpoints for " + task.vB + " (" + ipGrouping.countBefore() + " >>> " + ipGrouping.countAfter() + ")" );
 
-				final RANSACParameters rp = new RANSACParameters( (float)ransacMaxEpsilon, (float)ransacMinInlierRatio, ransacMinNumInliers, ransacIterations, ransacMultiConsensus );
+				final RANSACParameters rp = new RANSACParameters(
+						ransacMaxEpsilon,
+						ransacMinInlierRatio,
+						ransacMinNumInliers,
+						ransacIterations,
+						ransacMultiConsensus,
+						ransacMaxTrust,
+						ransacFilter
+				);
 				final Model< ? > model = createModelInstance(transformationModel, regularizationModel, lambda);
 
 				final MatcherPairwise< GroupedInterestPoint< ViewId > > matcher = createMatcherInstance(
@@ -632,8 +632,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final GeometricHashingParameters gp = new GeometricHashingParameters(
 					model,
 					GeometricHashingParameters.differenceThreshold,
-					(float)ratioOfDistance,
-					(int)redundancy );
+					ratioOfDistance,
+					redundancy );
 
 			matcher = new GeometricHashingPairwise<>( rp, gp );
 		}

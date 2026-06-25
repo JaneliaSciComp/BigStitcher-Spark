@@ -92,8 +92,8 @@
         <bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
         <bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-        <multiview-reconstruction.version>9.0.1</multiview-reconstruction.version>
-        <BigStitcher.version>3.0.0</BigStitcher.version>
+        <multiview-reconstruction.version>9.0.8</multiview-reconstruction.version>
+        <BigStitcher.version>3.0.6</BigStitcher.version>
 
         <!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
         <n5.version>4.0.1</n5.version>
@@ -339,6 +339,11 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <dependency>
+            <groupId>ch.epfl.biop</groupId>
+            <artifactId>quick-start-czi-reader</artifactId>
+            <version>0.3.0</version>
+        </dependency>
 
         <!-- multiview-reconstruction test classes for shared test assertions -->
         <dependency>
@@ -353,12 +358,6 @@
                     <artifactId>ijp-kheops</artifactId>
                 </exclusion>
             </exclusions>
-        </dependency>
-
-        <dependency>
-            <groupId>ch.epfl.biop</groupId>
-            <artifactId>quick-start-czi-reader</artifactId>
-            <version>0.3.0</version>
         </dependency>
 
         <!-- JUnit 5 for testing -->
