@@ -98,7 +98,7 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As N5/XML](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing) containing matched interest points (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) (aligned)
 
-For this tutorial I extracted the Stitching dataset into `~/SparkTest/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`.
+For this tutorial I extracted the Stitching dataset into `~/SparkTest/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`. There are two cloud-based copies (to load only) of the Stitching dataset available on [AWS](s3://janelia-bigstitcher-spark/Stitching/dataset.xml) and [Google Storage](gs://janelia-spark-test/I2K-test/dataset.xml).
 
 # Usage<a name="usage">
 
