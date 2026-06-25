@@ -164,9 +164,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "--icpUseRANSAC" }, description = "ICP uses RANSAC at every iteration to filter correspondences (default: false)")
 	protected boolean icpUseRANSAC = false;
 
-	//@Option(names = { "-p", "--pairsPerSparkJob" }, description = "how many pairs of views are processed per spark job (default: 1)")
-	//protected Integer pairsPerSparkJob = 1;
-
 	@Override
 	public Void call() throws Exception
 	{
