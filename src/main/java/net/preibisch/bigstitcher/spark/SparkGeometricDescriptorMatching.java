@@ -249,13 +249,29 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 
 		final URI xmlURI = this.xmlURI;
+		final boolean matchAcrossLabels = this.matchAcrossLabels;
+		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
+		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
+		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
+		final int ransacMinNumInliers = this.ransacMinNumInliers;
+		final boolean ransacMultiConsensus = this.ransacMultiConsensus;
+		final double icpMaxError = this.icpMaxError;
 		final int icpMaxIterations = this.icpIterations;
+		final boolean icpUseRANSAC = this.icpUseRANSAC;
+		final Method registrationMethod = this.registrationMethod;
 		final double ratioOfDistance = this.significance;
-		final boolean limitSearchRadius = this.searchRadius != null && this.searchRadius > 0;
-		final double searchRadius = !limitSearchRadius ? 0 : this.searchRadius;
+		final boolean limitSearchRadius = ( this.searchRadius != null && this.searchRadius > 0);
+		final double searchRadius = limitSearchRadius ? 0 : this.searchRadius;
+		final int redundancy = this.redundancy;
+		final int numNeighbors = this.numNeighbors;
+		final double interestPointMergeDistance = this.interestPointMergeDistance;
+		final TransformationModel transformationModel = this.transformationModel;
+		final RegularizationModel regularizationModel = this.regularizationModel;
 		final int centerOfMassTypeInt = this.centerOfMassType.ordinal();
 		final double lambda = this.regularizationLambda;
+		final double ransacMaxTrust = this.ransacMaxTrust;
+		final boolean ransacFilter = this.ransacFilter;
 
 		final SparkConf conf = new SparkConf().setAppName("SparkGeometricDescriptorRegistration");
 
