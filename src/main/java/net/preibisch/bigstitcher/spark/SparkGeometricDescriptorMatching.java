@@ -262,7 +262,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final Method registrationMethod = this.registrationMethod;
 		final double ratioOfDistance = this.significance;
 		final boolean limitSearchRadius = ( this.searchRadius != null && this.searchRadius > 0);
-		final double searchRadius = limitSearchRadius ? 0 : this.searchRadius;
+		final double searchRadius = limitSearchRadius ? this.searchRadius : 0;
 		final int redundancy = this.redundancy;
 		final int numNeighbors = this.numNeighbors;
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
