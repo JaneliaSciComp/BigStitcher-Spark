@@ -377,7 +377,7 @@ public class Solver extends AbstractRegistration
 							new SimpleBoundingBoxOverlap<>(
 									dataGlobal.getSequenceDescription().getViewSetups(),
 									dataGlobal.getViewRegistrations().getViewRegistrations() ) ),
-					new ConvergenceStrategy( Double.MAX_VALUE ),
+					new ConvergenceStrategy( Double.MAX_VALUE, maxIterations, maxPlateauwidth ),
 					fixedViewIds,
 					groups );
 		}
