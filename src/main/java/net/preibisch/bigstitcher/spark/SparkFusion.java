@@ -570,7 +570,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			// time inside Spark, everything crashes
 			new N5FSWriter(null);
 		}
-		catch (Exception e ) {}
+		catch (Exception ignored ) {}
 
 		final SparkConf conf = new SparkConf().setAppName("SparkFusion");
 
@@ -753,7 +753,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							coefficients = null;
 						}
 
-						//final RandomAccessibleInterval img;
 						final BlockSupplier blockSupplier;
 						final FinalInterval interval = new FinalInterval( bbMin, bbMax );
 
