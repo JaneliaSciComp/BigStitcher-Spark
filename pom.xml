@@ -99,7 +99,7 @@
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
 		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
 		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
-		<bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
+		<bigdataviewer-core.version>10.6.12-SNAPSHOT</bigdataviewer-core.version>
 		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
 		<multiview-reconstruction.version>9.0.1</multiview-reconstruction.version>
@@ -483,6 +483,11 @@
                                         implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/org.janelia.saalfeldlab.n5.serialization.NameConfig$Name</resource>
                                 </transformer>
+                                <!-- Merge META-INF/services/* (Java SPI) instead of letting one jar's
+                                     copy win. Needed for grpc's io.grpc.NameResolverProvider /
+                                     LoadBalancerProvider, which several grpc jars each register. -->
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                             <!--<minimizeJar>true</minimizeJar> -->
                             <filters>

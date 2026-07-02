@@ -21,6 +21,8 @@ import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 
 import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
@@ -529,6 +531,29 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final SpimData2 dataFusion =
 					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, viewIdToPath, setups, tps );
+
+			// When --preserveAnisotropy is set, the fused volume's z axis was downsampled by
+			// anisotropyFactor (see the bounding-box adjustment above), so each output z-voxel
+			// covers anisotropyFactor units of physical space. createNewSpimDataForFusion() only
+			// creates identity ViewRegistrations, so encode that z-scaling into the affine here -
+			// otherwise BDV would display the volume with z squashed by anisotropyFactor. This is
+			// the BDV equivalent of the OME-NGFF z-scale used in the non-BDV path.
+			if ( preserveAnisotropy )
+			{
+				final AffineTransform3D anisotropyTransform = new AffineTransform3D();
+				anisotropyTransform.set(
+						1.0, 0.0, 0.0, 0.0,
+						0.0, 1.0, 0.0, 0.0,
+						0.0, 0.0, anisotropyFactor, 0.0 );
+
+				for ( final ViewRegistration vr : dataFusion.getViewRegistrations().getViewRegistrationsOrdered() )
+				{
+					vr.preconcatenateTransform( new ViewTransformAffine( "preserve anisotropy (z-scale)", anisotropyTransform.copy() ) );
+					vr.updateModel();
+				}
+
+				System.out.println( "Encoded anisotropy factor " + anisotropyFactor + " (z-scale) into the ViewRegistration affine transforms of " + xmlOutURI );
+			}
 
 			final XmlIoSpimData2 ioFusion = new XmlIoSpimData2();
 
