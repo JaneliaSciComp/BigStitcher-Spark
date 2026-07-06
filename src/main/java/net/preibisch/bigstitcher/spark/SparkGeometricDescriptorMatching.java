@@ -74,7 +74,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
-import scala.Tuple2;
+import scala.Tuple3;
 
 public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
@@ -266,7 +266,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD< ArrayList< Tuple2< ArrayList< PointMatchGeneric< InterestPoint > >, MatchingTask<ViewId> > > > rddResults;
+		// Tuple3: (inlier correspondences, parallel consensus-set IDs, matching task).
+		// setIds is parallel to the correspondences list (null/-1 = single-consensus).
+		final JavaRDD< ArrayList< Tuple3< ArrayList< PointMatchGeneric< InterestPoint > >, ArrayList< Integer >, MatchingTask<ViewId> > > > rddResults;
 
 		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
 		{
@@ -360,7 +362,11 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 				service.shutdown();
 				*/
-				return new ArrayList<>( Arrays.asList( new Tuple2<>( new ArrayList<>( result.getInliers() ), task ) ) );
+				// carry the multi-consensus set IDs (parallel to the inliers) so they can be persisted; null = single-consensus
+				final ArrayList< Integer > setIds =
+						( result.getInlierSetIds() == null ) ? null : new ArrayList<>( result.getInlierSetIds() );
+
+				return new ArrayList<>( Arrays.asList( new Tuple3<>( new ArrayList<>( result.getInliers() ), setIds, task ) ) );
 			});
 		}
 		else
@@ -475,9 +481,16 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				//		MatcherPairwiseTools.computePairs( Arrays.asList( task.getPair() ), groupedInterestpoints, matcher, matchAcrossLabels );
 
 				final HashMap< Pair< ViewId, ViewId >, ArrayList<PointMatchGeneric<InterestPoint>> > mapResults = new HashMap<>();
+				// parallel to mapResults: the consensus-set ID of each correspondence (-1 = single-consensus)
+				final HashMap< Pair< ViewId, ViewId >, ArrayList<Integer> > mapSetIds = new HashMap<>();
 
-				for ( final PointMatchGeneric<GroupedInterestPoint<ViewId>> pm : result.getInliers() )// resultGroup.get( 0 ).getB().getInliers() )
+				final List<PointMatchGeneric<GroupedInterestPoint<ViewId>>> inliers = result.getInliers();
+				final List<Integer> resultSetIds = result.getInlierSetIds(); // null = single-consensus
+
+				for ( int idx = 0; idx < inliers.size(); ++idx )// resultGroup.get( 0 ).getB().getInliers() )
 				{
+					final PointMatchGeneric<GroupedInterestPoint<ViewId>> pm = inliers.get( idx );
+
 					GroupedInterestPoint<ViewId> p1 = pm.getPoint1();
 					GroupedInterestPoint<ViewId> p2 = pm.getPoint2();
 
@@ -488,6 +501,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					final InterestPoint ip2 = new InterestPoint( p2.getId(), p2.getL() );
 					final PointMatchGeneric<InterestPoint> pmNew = new PointMatchGeneric<>( ip1, ip2 );
 
+					// get setId from list or default to -1 if null/out of bounds
+					final int setId = ( resultSetIds != null && resultSetIds.size() > idx ) ? resultSetIds.get( idx ) : -1;
+
 					final ValuePair<ViewId, ViewId> pv = new ValuePair<>( v1, v2 );
 
 					ArrayList<PointMatchGeneric<InterestPoint>> list = mapResults.get( pv );
@@ -495,16 +511,15 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					if ( list == null )
 					{
 						list = new ArrayList<>();
-						list.add( pmNew );
 						mapResults.put(pv, list);
+						mapSetIds.put(pv, new ArrayList<>() );
 					}
-					else
-					{
-						list.add( pmNew );
-					}
+
+					list.add( pmNew );
+					mapSetIds.get( pv ).add( setId );
 				}
 
-				final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>>> resultsLocal = new ArrayList<>();
+				final ArrayList<Tuple3<ArrayList<PointMatchGeneric<InterestPoint>>, ArrayList<Integer>, MatchingTask<ViewId>>> resultsLocal = new ArrayList<>();
 
 				System.out.println( task.vA + " <=> " + task.vB + ": The following correspondences were found per ViewId: ");
 				for ( final Entry< Pair< ViewId, ViewId >, ArrayList<PointMatchGeneric<InterestPoint>> > entry : mapResults.entrySet( ))
@@ -516,7 +531,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					else
 					{
 						System.out.println( "\t" + task.vA + " <=> " + task.vB + ": " + Group.pvid( entry.getKey().getA() ) + "<->" + Group.pvid( entry.getKey().getB() )  + ": " + entry.getValue().size() + " correspondences." );
-						resultsLocal.add( new Tuple2<>( new ArrayList<>( entry.getValue() ), new MatchingTask<>( entry.getKey().getA(), entry.getKey().getB(), task.labelA, task.labelB ) ) );
+						resultsLocal.add( new Tuple3<>( new ArrayList<>( entry.getValue() ), new ArrayList<>( mapSetIds.get( entry.getKey() ) ), new MatchingTask<>( entry.getKey().getA(), entry.getKey().getB(), task.labelA, task.labelB ) ) );
 					}
 				}
 
@@ -529,7 +544,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		rddResults.cache();
 		rddResults.count();
 
-		final List<ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>>>> results = rddResults.collect();
+		final List<ArrayList<Tuple3<ArrayList<PointMatchGeneric<InterestPoint>>, ArrayList<Integer>, MatchingTask<ViewId>>>> results = rddResults.collect();
 
 		// add the corresponding detections and output result
 		if ( clearCorrespondences )
@@ -537,19 +552,20 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		else
 			System.out.println( "Adding corresponding interest points (be sure to use --clearCorrespondences if you run multiple times, you are not using it right now) ...");
 
-		for ( final ArrayList<Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>>> tupleList : results )
-			for ( final Tuple2<ArrayList<PointMatchGeneric<InterestPoint>>, MatchingTask<ViewId>> tuple : tupleList )
+		for ( final ArrayList<Tuple3<ArrayList<PointMatchGeneric<InterestPoint>>, ArrayList<Integer>, MatchingTask<ViewId>>> tupleList : results )
+			for ( final Tuple3<ArrayList<PointMatchGeneric<InterestPoint>>, ArrayList<Integer>, MatchingTask<ViewId>> tuple : tupleList )
 			{
-				final ViewId vA = tuple._2().vA;
-				final ViewId vB = tuple._2().vB;
+				final ViewId vA = tuple._3().vA;
+				final ViewId vB = tuple._3().vB;
 
-				final String labelA = tuple._2().labelA;
-				final String labelB = tuple._2().labelB;
-	
+				final String labelA = tuple._3().labelA;
+				final String labelB = tuple._3().labelB;
+
 				final InterestPoints listA = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vA ).getInterestPointList( labelA );
 				final InterestPoints listB = dataGlobal.getViewInterestPoints().getViewInterestPoints().get( vB ).getInterestPointList( labelB );
-	
-				MatcherPairwiseTools.addCorrespondences( tuple._1(), vA, vB, labelA, labelB, listA, listB );
+
+				// tuple._2() carries the consensus-set IDs parallel to the correspondences (null = single-consensus)
+				MatcherPairwiseTools.addCorrespondences( tuple._1(), tuple._2(), vA, vB, labelA, labelB, listA, listB );
 			}
 
 		if (!dryRun)
