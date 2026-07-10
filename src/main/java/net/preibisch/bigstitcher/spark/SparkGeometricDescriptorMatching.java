@@ -249,7 +249,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final boolean matchAcrossLabels = this.matchAcrossLabels;
 		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
-		final double ransacMaxEpsilon = this.ransacMaxError;
+		final double ransacMaxEpsilon = this.ransacMaxError == null ? RANSACParameters.max_epsilon : this.ransacMaxError;
 		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
 		final int ransacMinNumInliers = this.ransacMinNumInliers;
 		final boolean ransacMultiConsensus = this.ransacMultiConsensus;
