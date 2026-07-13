@@ -27,3 +27,6 @@ duplicate-transformation
 split-images
 stitching
 transform-points
+estimate-flatfield
+correct-flatfield
+overlay-landmarks

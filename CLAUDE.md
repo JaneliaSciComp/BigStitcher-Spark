@@ -235,8 +235,17 @@ XML path and data type are stored in container metadata by `CreateFusionContaine
 ./fusion -o out.zarr -s ZARR2 --localSparkBindAddress
 ```
 
-### `-s` cannot be auto-detected for `.zarr`
-Must explicitly specify `ZARR` (v3) or `ZARR2` (v2). Tests should default to `ZARR2` to avoid sharding setup unless that's the focus.
+### Storage format auto-detection from the path extension
+The convention for tools that guess the storage type from `-o`/output path is:
+`.zarr` → `ZARR` (v3), `.zarr2` → `ZARR2` (v2), `.n5` → `N5`, `.h5`/`.hdf5` → `HDF5`.
+Check `.zarr2` **before** `.zarr` so the longer suffix wins. `-s` always overrides.
+`BasicFlatfieldEstimation` uses this auto-detection and mirrors the resave tool's
+`-c/--compression` (default Zstandard), `-cl/--compressionLevel`, `--blockSize`,
+`--blockScale`, and `--useSharding` (auto-on for ZARR v3) options.
+
+Note: some older commands still require an explicit `-s` and do not auto-detect
+`.zarr` — check the individual command. Tests should default to `ZARR2` to avoid
+sharding setup unless sharding is the focus.
 
 ### Simulated beads aren't at the origin
 `SimulateUtil.setUp()` distributes 200 beads through the volume. Test pixel-value assertions at coordinates known to contain data, not at `(0,0,0,0,0)`. To find good coords, scan for non-zero pixels first.
