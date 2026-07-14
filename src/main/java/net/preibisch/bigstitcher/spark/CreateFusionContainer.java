@@ -70,15 +70,15 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
 
-	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+	@Option(names = {"-s", "--storage"}, showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset storage type: ZARR (=OME-ZARR v3, supports sharding), ZARR2 (=OME-ZARR v2, no sharding), N5, "
 					+ "or HDF5 (ONLY for local, multithreaded Spark). Note: with the default ZARR (v3), sharding is auto-enabled "
 					+ "unless --useSharding=false is set. Use ZARR2 for OME-ZARR v2 (no sharding). (default: ZARR / OME-ZARR v3)")
 	private StorageFormat storageType = null;
 
-	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+	@Option(names = {"-c", "--compression"}, showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Dataset compression")
-	private Compressions compressionType = null;
+	private Compressions compressionType = Compressions.Zstandard;
 
 	@Option(names = {"-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
 	private Integer compressionLevel = null;
@@ -92,9 +92,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = "--blockSize", description = "blockSize (default: 128,128,128)")
 	private String blockSizeString = "128,128,128";
 
-	@Option(names = {"-d", "--dataType"}, defaultValue = "FLOAT32", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+	@Option(names = {"-d", "--dataType"}, showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Data type, UINT8 [0...255], UINT16 [0...65535] and FLOAT32 are supported, when choosing UINT8 or UINT16 you must define min and max intensity (default: FLOAT32)")
-	private DataTypeFusion dataTypeFusion = null;
+	private DataTypeFusion dataTypeFusion = DataTypeFusion.FLOAT32;
 
 	@Option(names = { "--minIntensity" }, description = "optionally adjust min intensity for scaling values to the desired range for UINT8 and UINT16 output, (default: 0)")
 	private Double minIntensity = null;
@@ -179,7 +179,26 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 
 		this.outPathURI =  URITools.toURI( outputPathURIString );
-		System.out.println( "ZARR/N5/HDF5 container: " + outPathURI );
+
+		if (storageType == null) {
+			if ( outputPathURIString.toLowerCase().endsWith( ".zarr" ) )
+				storageType = StorageFormat.ZARR;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".zarr2" ) )
+				storageType = StorageFormat.ZARR2;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".n5" ) )
+				storageType = StorageFormat.N5;
+			else if ( outputPathURIString.toLowerCase().endsWith( ".h5" ) || outPathURI.toString().toLowerCase().endsWith( ".hdf5" ) )
+				storageType = StorageFormat.HDF5;
+			else
+			{
+				System.out.println( "Unable to guess format from URI '" + outPathURI + "', please specify using '-s'");
+				return null;
+			}
+
+			System.out.println( "Guessed format " + storageType + " will be used to open URI '" + outPathURI + "', you can override it using '-s'");
+		} else {
+			System.out.println( "Format " + storageType + " will be used to create " + outPathURI );
+		}
 
 		if ( storageType == StorageFormat.HDF5 && !URITools.isFile( outPathURI ) )
 		{
@@ -323,14 +342,10 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 		else
 		{
-			dt = null;
-			minIntensity = maxIntensity = null;
+			throw new IllegalArgumentException( "Unsupported data type: " + dataTypeFusion );
 		}
 
 		System.out.println( "Data type: " + dt );
-
-		if ( dt == null || compression == null )
-			return null;
 
 		//
 		// set up downsampling
@@ -375,8 +390,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		}
 		else
 		{
-			System.out.println( "Unsupported format: " + storageType );
-			return null;
+			throw new IllegalArgumentException( "Unsupported format: " + storageType );
 		}
 
 		// if there is a group different from the root, create it

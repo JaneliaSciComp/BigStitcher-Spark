@@ -113,9 +113,9 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 	@Option(names = { "-s", "--storage" }, description = "output storage type: ZARR (v3) | ZARR2 (v2) | N5 | HDF5 (default: guess from path: .zarr=ZARR v3, .zarr2=ZARR2 v2, .n5=N5, .h5/.hdf5=HDF5)")
 	protected StorageFormat storageType = null;
 
-	@Option(names = { "-c", "--compression" }, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+	@Option(names = { "-c", "--compression" }, showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "dataset compression")
-	protected Compressions compressionType = null;
+	protected Compressions compressionType = Compressions.Zstandard;
 
 	@Option(names = { "-cl", "--compressionLevel" }, description = "compression level, if supported by the codec (default: gzip 1, Zstandard 3, xz 6)")
 	protected Integer compressionLevel = null;
@@ -217,7 +217,7 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 			}
 
 			// random subsample to maxViews
-			if ( maxViews != null && frames.size() > maxViews )
+			if ( maxViews != null && maxViews > 0 && frames.size() > maxViews )
 			{
 				Collections.shuffle( frames, new java.util.Random( seed ) );
 				while ( frames.size() > maxViews )

@@ -23,6 +23,8 @@ package net.preibisch.bigstitcher.spark.flatfield;
 
 import java.io.Serializable;
 
+import org.apache.commons.lang3.builder.ToStringBuilder;
+
 /**
  * Immutable parameter holder for the BaSiC flatfield / darkfield estimation
  * (see {@link BasicFlatfield}). Defaults mirror the Julia reference
@@ -149,5 +151,20 @@ public class BasicFlatfieldParams implements Serializable
 		}
 
 		return new float[] { lam, lamDf };
+	}
+
+	@Override
+	public String toString() {
+		return new ToStringBuilder(this)
+				.append("estimateDarkfield", estimateDarkfield)
+				.append("lambda", lambda)
+				.append("lambdaDarkfield", lambdaDarkfield)
+				.append("maxIterations", maxIterations)
+				.append("optimizationTol", optimizationTol)
+				.append("reweightTol", reweightTol)
+				.append("maxReweightIterations", maxReweightIterations)
+				.append("epsilon", epsilon)
+				.append("workingSize", workingSize)
+				.toString();
 	}
 }

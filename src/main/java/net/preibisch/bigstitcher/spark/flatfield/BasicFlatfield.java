@@ -75,6 +75,7 @@ public class BasicFlatfield
 		if ( N == 0 )
 			throw new IllegalArgumentException( "BaSiC: empty image list" );
 
+		System.out.printf("Estimate darkfield/flatfield from %d images using %s\n", images.size(), params );
 		final RandomAccessibleInterval< ? extends RealType< ? > > first = images.get( 0 );
 		if ( first.numDimensions() != 2 )
 			throw new IllegalArgumentException( "BaSiC: frames must be 2D, got " + first.numDimensions() + "D" );
@@ -86,6 +87,8 @@ public class BasicFlatfield
 		final int H = ( ws > 0 ) ? ws : H_orig;
 		final int W = ( ws > 0 ) ? ws : W_orig;
 		final int HW = H * W;
+
+		System.out.printf( "Image size used for darkfield/flatfield (%d, %d) -> (%d, %d)\n", H_orig, W_orig, H, W );
 
 		// ── Load frames into row-major float planes, optionally resize ────────────
 		final float[][] D = new float[ N ][];
@@ -109,6 +112,9 @@ public class BasicFlatfield
 		final double globalMean = sum / ( ( double ) HW * N );
 		if ( globalMean < EPS )
 			throw new IllegalArgumentException( "BaSiC: image stack is all-zero" );
+
+		System.out.printf( "Normalize images using global mean: %f\n", globalMean );
+
 		for ( int k = 0; k < N; ++k )
 			for ( int p = 0; p < HW; ++p )
 				D[ k ][ p ] /= ( float ) globalMean;
@@ -149,6 +155,8 @@ public class BasicFlatfield
 		final float rho = 1.5f;
 		final float ent1 = 1f;
 		final float ent2 = 10f;
+
+		System.out.printf( "Spectral norm: %f, Frobenius norm: %f\n", normTwo, normD );
 
 		// Upper bound for darkfield: mean of per-pixel minima over frames (D[0] after sort)
 		float darkfieldLimit;
@@ -288,6 +296,8 @@ public class BasicFlatfield
 		final double[] frameScales = new double[ N ];
 		for ( int k = 0; k < N; ++k )
 			frameScales[ k ] = A1_coeff[ k ];
+
+		System.out.println("Finished BaSiC flatfield/darkfield estimation");
 
 		return new BasicFlatfieldResult( flatImg, darkImg, frameScales, B1_offsetFinal );
 	}

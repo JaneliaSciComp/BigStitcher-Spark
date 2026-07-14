@@ -328,17 +328,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			return null;
 		}
 
-		final boolean bdv = fusionFormat.toLowerCase().contains( "BDV" );
+		final boolean bdv = fusionFormat.toLowerCase().contains( "bdv" );
 
 		final URI xmlURI = driverVolumeWriter.getAttribute( getContainerGroupPath(), "Bigstitcher-Spark/InputXML", URI.class );
 
 		final SpimData2 dataGlobal = Spark.getJobSpimData2( xmlURI, 0 );
-
-		if ( dataGlobal == null )
-		{
-			System.out.println( "Could not load XML from:" + xmlURI );
-			return null;
-		}
 
 		if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
 		{
