@@ -138,7 +138,8 @@ public class BasicFlatfieldParams implements Serializable
 				mw = LAMBDA_CALIBRATION_SIZE;
 			}
 
-			final float[] dct = Dct2D.dct2( meanForLambda, mh, mw );
+			final float[] dct = new float[ mh * mw ];
+			Dct2D.dct2( meanForLambda, dct, mh, mw );
 			double l1 = 0.0;
 			for ( final float v : dct )
 				l1 += Math.abs( v );

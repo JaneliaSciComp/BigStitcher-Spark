@@ -42,9 +42,12 @@ import org.jtransforms.dct.DoubleDCT_2D;
  * energy-preserving (Parseval) and the DC coefficient of a constant {@code c}
  * plane is {@code c*sqrt(H*W)}.
  * <p>
- * <b>Lazy plan reuse (like FFTW):</b> the {@link DoubleDCT_2D} plan is built once
- * per {@code (H,W)} and cached, then reused across the thousands of transforms in
- * one estimation run — this is where almost all of the speed-up comes from.
+ * <b>Allocation-free in the hot loop:</b> the transforms write into a
+ * caller-provided {@code out} array (which may alias the input), and the internal
+ * {@code double[]} JTransforms scratch is cached per {@code (H,W)} plan (as a
+ * {@link ThreadLocal}, so it is safe under concurrent use while still avoiding
+ * per-call allocation). The {@link DoubleDCT_2D}/{@link DoubleDCT_1D} plan itself
+ * is also built once per {@code (H,W)} and reused (like an FFTW plan).
  * <p>
  * Data layout: row-major with the fast axis being the width {@code W}, i.e.
  * {@code data[h*W + w]} ({@code rows=H}, {@code columns=W}). This matches how
@@ -54,86 +57,99 @@ public final class Dct2D
 {
 	private Dct2D() {}
 
-	/** Cached transform plans, keyed by (H,W). Built lazily, reused across calls. */
-	private static final Map< Long, DoubleDCT_2D > PLANS = new ConcurrentHashMap<>();
+	/** Cached transform plans (JTransforms plan + scratch), keyed by (H,W). */
+	private static final Map< Long, Plan > PLANS = new ConcurrentHashMap<>();
 
-	/** Cached 1D plans for degenerate 2D planes where one axis has length 1. */
-	private static final Map< Integer, DoubleDCT_1D > PLANS_1D = new ConcurrentHashMap<>();
+	private static final class Plan
+	{
+		final DoubleDCT_2D dct2; // non-null unless a degenerate (1-wide or 1x1) plane
+		final DoubleDCT_1D dct1; // non-null iff exactly one axis has length 1 (and not 1x1)
+		final ThreadLocal< double[] > scratch;
 
-	private static DoubleDCT_2D plan( final int H, final int W )
+		Plan( final int H, final int W )
+		{
+			final int n = H * W;
+			if ( H == 1 && W == 1 )
+			{
+				dct2 = null;
+				dct1 = null; // identity
+			}
+			else if ( H == 1 || W == 1 )
+			{
+				dct2 = null;
+				dct1 = new DoubleDCT_1D( n );
+			}
+			else
+			{
+				dct2 = new DoubleDCT_2D( H, W );
+				dct1 = null;
+			}
+			scratch = ThreadLocal.withInitial( () -> new double[ n ] );
+		}
+
+		void forward( final double[] a )
+		{
+			if ( dct2 != null )
+				dct2.forward( a, true );   // scaled == orthonormal DCT-II
+			else if ( dct1 != null )
+				dct1.forward( a, true );
+			// else 1x1: identity
+		}
+
+		void inverse( final double[] a )
+		{
+			if ( dct2 != null )
+				dct2.inverse( a, true );   // scaled == orthonormal DCT-III
+			else if ( dct1 != null )
+				dct1.inverse( a, true );
+			// else 1x1: identity
+		}
+	}
+
+	private static Plan plan( final int H, final int W )
 	{
 		final long key = ( ( ( long ) H ) << 32 ) | ( W & 0xffffffffL );
-		return PLANS.computeIfAbsent( key, k -> new DoubleDCT_2D( H, W ) );
-	}
-
-	private static DoubleDCT_1D plan1D( final int N )
-	{
-		return PLANS_1D.computeIfAbsent( N, DoubleDCT_1D::new );
+		return PLANS.computeIfAbsent( key, k -> new Plan( H, W ) );
 	}
 
 	/**
-	 * Forward orthonormal 2D DCT-II.
+	 * Forward orthonormal 2D DCT-II, written into {@code out}.
 	 *
-	 * @param x row-major plane, length {@code H*W}
-	 * @param H number of rows (slow axis)
-	 * @param W number of columns (fast axis)
-	 * @return orthonormal DCT-II coefficients, new array of length {@code H*W}
+	 * @param x   row-major input plane, length {@code H*W}
+	 * @param out destination for the coefficients, length {@code H*W}; may be the
+	 *            same array as {@code x} (in-place)
+	 * @param H   number of rows (slow axis)
+	 * @param W   number of columns (fast axis)
 	 */
-	public static float[] dct2( final float[] x, final int H, final int W )
+	public static void dct2( final float[] x, final float[] out, final int H, final int W )
 	{
-		final double[] a = new double[ H * W ];
+		final Plan p = plan( H, W );
+		final double[] a = p.scratch.get();
 		for ( int i = 0; i < a.length; ++i )
 			a[ i ] = x[ i ];
-
-		if ( H == 1 && W == 1 )
-		{
-			// identity
-		}
-		else if ( H == 1 || W == 1 )
-		{
-			plan1D( H * W ).forward( a, true ); // scaled == orthonormal DCT-II
-		}
-		else
-		{
-			plan( H, W ).forward( a, true ); // scaled == orthonormal DCT-II
-		}
-
-		final float[] out = new float[ H * W ];
-		for ( int i = 0; i < out.length; ++i )
+		p.forward( a );
+		for ( int i = 0; i < a.length; ++i )
 			out[ i ] = ( float ) a[ i ];
-		return out;
 	}
 
 	/**
-	 * Inverse orthonormal 2D DCT (DCT-III), the exact inverse of {@link #dct2}.
+	 * Inverse orthonormal 2D DCT (DCT-III), the exact inverse of {@link #dct2},
+	 * written into {@code out}.
 	 *
-	 * @param y row-major coefficient plane, length {@code H*W}
-	 * @param H number of rows
-	 * @param W number of columns
-	 * @return reconstructed plane, new array of length {@code H*W}
+	 * @param y   row-major coefficient plane, length {@code H*W}
+	 * @param out destination for the reconstruction, length {@code H*W}; may be the
+	 *            same array as {@code y} (in-place)
+	 * @param H   number of rows
+	 * @param W   number of columns
 	 */
-	public static float[] idct2( final float[] y, final int H, final int W )
+	public static void idct2( final float[] y, final float[] out, final int H, final int W )
 	{
-		final double[] a = new double[ H * W ];
+		final Plan p = plan( H, W );
+		final double[] a = p.scratch.get();
 		for ( int i = 0; i < a.length; ++i )
 			a[ i ] = y[ i ];
-
-		if ( H == 1 && W == 1 )
-		{
-			// identity
-		}
-		else if ( H == 1 || W == 1 )
-		{
-			plan1D( H * W ).inverse( a, true ); // scaled == orthonormal DCT-III
-		}
-		else
-		{
-			plan( H, W ).inverse( a, true ); // scaled == orthonormal DCT-III
-		}
-
-		final float[] out = new float[ H * W ];
-		for ( int i = 0; i < out.length; ++i )
+		p.inverse( a );
+		for ( int i = 0; i < a.length; ++i )
 			out[ i ] = ( float ) a[ i ];
-		return out;
 	}
 }

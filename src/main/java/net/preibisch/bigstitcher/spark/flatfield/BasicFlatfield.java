@@ -25,12 +25,17 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
+import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.RealRandomAccess;
+import net.imglib2.RealRandomAccessible;
 import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
+import net.imglib2.realtransform.AffineGet;
+import net.imglib2.realtransform.AffineRealRandomAccessible;
 import net.imglib2.realtransform.AffineTransform2D;
 import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.numeric.RealType;
@@ -69,7 +74,8 @@ public class BasicFlatfield
 	 */
 	public static BasicFlatfieldResult estimate(
 			final List< RandomAccessibleInterval< ? extends RealType< ? > > > images,
-			final BasicFlatfieldParams params )
+			final BasicFlatfieldParams params,
+			final Random rng )
 	{
 		long start = System.currentTimeMillis();
 		final int N = images.size();
@@ -99,7 +105,7 @@ public class BasicFlatfield
 			if ( frame.dimension( 0 ) != W_orig || frame.dimension( 1 ) != H_orig )
 				throw new IllegalArgumentException( "BaSiC: all frames must share the same size" );
 
-			final float[] plane = toPlane( frame, W_orig, H_orig );
+			final float[] plane = toPlane( frame );
 			D[ k ] = ( ws > 0 && ( H_orig != H || W_orig != W ) )
 					? resize( plane, H_orig, W_orig, H, W )
 					: plane;
@@ -171,7 +177,8 @@ public class BasicFlatfield
 		final boolean estimateDarkfield = params.estimateDarkfield;
 
 		// ── Optimisation variables ─────────────────────────────────────────────────
-		float[] W_hat = Dct2D.dct2( meanImg, H, W );      // flatfield DCT coefficients
+		final float[] W_hat = new float[ HW ];            // flatfield DCT coefficients
+		Dct2D.dct2( meanImg, W_hat, H, W );
 		final float[][] E = new float[ N ][ HW ];         // sparse residual
 		final float[] A1_coeff = new float[ N ];          // per-frame illumination scale
 		Arrays.fill( A1_coeff, 1f );
@@ -194,7 +201,8 @@ public class BasicFlatfield
 
 		final float[] flatfieldPrev = new float[ HW ];
 		Arrays.fill( flatfieldPrev, 1f );
-		final float[] darkfieldPrev = new float[ HW ]; // zeros
+		final float[] darkfieldPrev = new float[ HW ];
+		for  ( int k = 0; k < darkfieldPrev.length; ++k ) darkfieldPrev[k] = (float) rng.nextGaussian();
 
 		float B1_offsetFinal = 0f;
 
@@ -339,12 +347,12 @@ public class BasicFlatfield
 			// R_W := mean over frames of E
 			meanOverFrames( E, R_W, HW, N );
 			// W_hat += dct2(R_W / ent1); shrink by lambda/(ent1*mu)
-			final float[] rwScaled = new float[ HW ];
+			// (scale and transform R_W in place; R_W is refilled by meanOverFrames each iter)
 			for ( int p = 0; p < HW; ++p )
-				rwScaled[ p ] = R_W[ p ] / ent1;
-			final float[] dctRW = Dct2D.dct2( rwScaled, H, W );
+				R_W[ p ] /= ent1;
+			Dct2D.dct2( R_W, R_W, H, W );
 			for ( int p = 0; p < HW; ++p )
-				W_hat[ p ] += dctRW[ p ];
+				W_hat[ p ] += R_W[ p ];
 			shrink( W_hat, lambda / ( ent1 * mu ) );
 
 			// recompute f and A1_hat
@@ -533,12 +541,13 @@ public class BasicFlatfield
 		for ( int p = 0; p < HW; ++p )
 			A_offset[ p ] = A1_offset[ p ] - B_offset[ p ];
 
-		// Smooth and sparsify via DCT + image-domain shrink
+		// Smooth and sparsify via DCT + image-domain shrink.
+		// Reuse A1_offset as the DCT-coefficient scratch (it is no longer needed here).
 		final float thr = lambdaDarkfield / ( ent2 * mu );
-		final float[] W_off = Dct2D.dct2( A_offset, H, W );
-		shrink( W_off, thr );
-		final float[] recon = Dct2D.idct2( W_off, H, W );
-		System.arraycopy( recon, 0, A_offset, 0, HW );
+		final float[] wOff = A1_offset;
+		Dct2D.dct2( A_offset, wOff, H, W );
+		shrink( wOff, thr );
+		Dct2D.idct2( wOff, A_offset, H, W );
 		shrink( A_offset, thr );
 		for ( int p = 0; p < HW; ++p )
 			A_offset[ p ] += B_offset[ p ];
@@ -608,12 +617,12 @@ public class BasicFlatfield
 			out[ p ] *= inv;
 	}
 
-	/** out := max(idct2(coeffs), 0) */
+	/** out := max(idct2(coeffs), 0). {@code out} must differ from {@code coeffs}. */
 	private static void idct2Nonneg( final float[] coeffs, final float[] out, final int H, final int W )
 	{
-		final float[] r = Dct2D.idct2( coeffs, H, W );
+		Dct2D.idct2( coeffs, out, H, W );
 		for ( int p = 0; p < out.length; ++p )
-			out[ p ] = Math.max( r[ p ], 0f );
+			out[ p ] = Math.max( out[ p ], 0f );
 	}
 
 	/** In-place soft-threshold: x = sign(x)*max(|x|-t, 0). */
@@ -729,21 +738,14 @@ public class BasicFlatfield
 	// ─── I/O + resize helpers ──────────────────────────────────────────────────────
 
 	/** Read a 2D RAI into a row-major float[H*W] plane (fast axis = W = X). */
-	private static float[] toPlane( final RandomAccessibleInterval< ? extends RealType< ? > > frame, final int W, final int H )
+	private static float[] toPlane( final RandomAccessibleInterval< ? extends RealType< ? > > frame )
 	{
-		final float[] plane = new float[ H * W ];
-		final RandomAccess< ? extends RealType< ? > > ra = frame.randomAccess();
-		final long minX = frame.min( 0 );
-		final long minY = frame.min( 1 );
-		for ( int y = 0; y < H; ++y )
-		{
-			ra.setPosition( minY + y, 1 );
-			final int rowOff = y * W;
-			for ( int x = 0; x < W; ++x )
-			{
-				ra.setPosition( minX + x, 0 );
-				plane[ rowOff + x ] = ra.get().getRealFloat();
-			}
+		int size = (int) (frame.dimension(0) * frame.dimension(1));
+		final float[] plane = new float[ size ];
+		Cursor< ? extends RealType< ? > > fc = frame.cursor();
+		int planeIndex = 0;
+		while ( fc.hasNext() ) {
+			plane[ planeIndex++ ] = fc.next().getRealFloat();
 		}
 		return plane;
 	}
@@ -767,11 +769,12 @@ public class BasicFlatfield
 		final AffineTransform2D t = new AffineTransform2D();
 		t.set(
 				sx, 0, 0.5 * ( sx - 1.0 ),
-				0, sy, 0.5 * ( sy - 1.0 ) );
+				0, sy, 0.5 * ( sy - 1.0 )
+		);
 
-		final var interp = Views.interpolate( Views.extendBorder( img ), new NLinearInterpolatorFactory< FloatType >() );
-		final var transformed = RealViews.affineReal( interp, t );
-		final var ra = transformed.realRandomAccess();
+		final RealRandomAccessible< FloatType > interp = Views.interpolate( Views.extendBorder( img ), new NLinearInterpolatorFactory<>() );
+		final AffineRealRandomAccessible< FloatType, AffineGet > transformed = RealViews.affineReal(interp, t);
+		final RealRandomAccess<FloatType> ra = transformed.realRandomAccess();
 
 		final float[] out = new float[ newH * newW ];
 		for ( int y = 0; y < newH; ++y )

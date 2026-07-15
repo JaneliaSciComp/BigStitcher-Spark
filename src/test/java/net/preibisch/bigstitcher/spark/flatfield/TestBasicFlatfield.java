@@ -48,8 +48,10 @@ public class TestBasicFlatfield
 		for ( int i = 0; i < x.length; ++i )
 			x[ i ] = rnd.nextFloat() * 10f - 5f;
 
-		final float[] coeffs = Dct2D.dct2( x, H, W );
-		final float[] back = Dct2D.idct2( coeffs, H, W );
+		final float[] coeffs = new float[ H * W ];
+		Dct2D.dct2( x, coeffs, H, W );
+		final float[] back = new float[ H * W ];
+		Dct2D.idct2( coeffs, back, H, W );
 
 		for ( int i = 0; i < x.length; ++i )
 			assertEquals( x[ i ], back[ i ], 1e-4f, "idct2(dct2(x)) must equal x at index " + i );
@@ -76,7 +78,8 @@ public class TestBasicFlatfield
 		final float[] x = new float[ H * W ];
 		java.util.Arrays.fill( x, c );
 
-		final float[] coeffs = Dct2D.dct2( x, H, W );
+		final float[] coeffs = new float[ H * W ];
+		Dct2D.dct2( x, coeffs, H, W );
 
 		assertEquals( c * Math.sqrt( H * W ), coeffs[ 0 ], 1e-4f, "DC coefficient of constant field" );
 		// all other coefficients ~ 0
@@ -88,7 +91,8 @@ public class TestBasicFlatfield
 		final float[] y = new float[ H * W ];
 		for ( int i = 0; i < y.length; ++i )
 			y[ i ] = rnd.nextFloat();
-		final float[] cy = Dct2D.dct2( y, H, W );
+		final float[] cy = new float[ H * W ];
+		Dct2D.dct2( y, cy, H, W );
 		double eIn = 0, eOut = 0;
 		for ( int i = 0; i < y.length; ++i ) { eIn += y[ i ] * y[ i ]; eOut += cy[ i ] * cy[ i ]; }
 		assertEquals( eIn, eOut, 1e-3, "orthonormal DCT preserves energy (Parseval)" );
@@ -147,7 +151,7 @@ public class TestBasicFlatfield
 		}
 
 		final BasicFlatfieldParams params = BasicFlatfieldParams.defaults();
-		final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params );
+		final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params, rnd );
 
 		final float[] estFlat = toArray( result.flatfield, H, W );
 		final float[] estDark = toArray( result.darkfield, H, W );
@@ -180,8 +184,10 @@ public class TestBasicFlatfield
 		for ( int i = 0; i < x.length; ++i )
 			x[ i ] = ( float ) ( Math.sin( ( i + 1 ) * 0.37 ) + 0.125 * i );
 
-		final float[] coeffs = Dct2D.dct2( x, H, W );
-		final float[] back = Dct2D.idct2( coeffs, H, W );
+		final float[] coeffs = new float[ H * W ];
+		Dct2D.dct2( x, coeffs, H, W );
+		final float[] back = new float[ H * W ];
+		Dct2D.idct2( coeffs, back, H, W );
 
 		for ( int i = 0; i < x.length; ++i )
 			assertEquals( x[ i ], back[ i ], 1e-4f, H + "x" + W + " DCT round-trip at index " + i );

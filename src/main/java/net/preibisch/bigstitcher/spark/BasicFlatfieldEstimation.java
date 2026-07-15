@@ -240,7 +240,7 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 			}
 
 			System.out.println( "  estimating from " + frames.size() + " frame(s)..." );
-			final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params );
+			final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params, rng );
 
 			if ( dryRun )
 			{
