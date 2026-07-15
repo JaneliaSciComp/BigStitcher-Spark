@@ -241,7 +241,8 @@ The convention for tools that guess the storage type from `-o`/output path is:
 Check `.zarr2` **before** `.zarr` so the longer suffix wins. `-s` always overrides.
 `BasicFlatfieldEstimation` uses this auto-detection and mirrors the resave tool's
 `-c/--compression` (default Zstandard), `-cl/--compressionLevel`, `--blockSize`,
-`--blockScale`, and `--useSharding` (auto-on for ZARR v3) options.
+`--blockScale`, and `--useSharding` options. For 2D flatfield outputs,
+`--useSharding` defaults to false even for ZARR v3.
 
 Note: some older commands still require an explicit `-s` and do not auto-detect
 `.zarr` — check the individual command. Tests should default to `ZARR2` to avoid

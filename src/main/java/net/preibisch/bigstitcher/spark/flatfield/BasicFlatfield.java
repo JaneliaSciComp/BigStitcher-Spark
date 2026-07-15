@@ -71,6 +71,7 @@ public class BasicFlatfield
 			final List< RandomAccessibleInterval< ? extends RealType< ? > > > images,
 			final BasicFlatfieldParams params )
 	{
+		long start = System.currentTimeMillis();
 		final int N = images.size();
 		if ( N == 0 )
 			throw new IllegalArgumentException( "BaSiC: empty image list" );
@@ -141,11 +142,11 @@ public class BasicFlatfield
 			meanImg[ p ] = ( float ) ( s / N );
 		}
 
-		// ── Auto-lambda ───────────────────────────────────────────────────────────
+		// ── Auto-lambdaFlatfield ───────────────────────────────────────────────────────────
 		final float[] lambdas = params.deriveLambdas( meanImg, H, W );
-		final float lambda = lambdas[ 0 ];
+		final float lambdaFlatfield = lambdas[ 0 ];
 		final float lambdaDarkfield = lambdas[ 1 ];
-		System.out.println( "BaSiC auto-params: lambda=" + lambda + " lambdaDarkfield=" + lambdaDarkfield );
+		System.out.println( "BaSiC auto-params: lambdaFlatfield=" + lambdaFlatfield + " lambdaDarkfield=" + lambdaDarkfield );
 
 		// ── Spectral norm for penalty initialisation ──────────────────────────────
 		final float normTwo = ( float ) spectralNorm( D, HW, N );
@@ -211,7 +212,7 @@ public class BasicFlatfield
 					D, W_coeff, f, A1_hat, R_W, R1, Z,
 					B1_coeff, B_offset, A1_offset,
 					H, W, N, muInit, muBar, rho, ent1, ent2,
-					lambda, lambdaDarkfield, darkfieldLimit,
+					lambdaFlatfield, lambdaDarkfield, darkfieldLimit,
 					estimateDarkfield, params.maxIterations, params.optimizationTol, normD );
 
 			B1_offsetFinal = B1_offset;
@@ -297,7 +298,7 @@ public class BasicFlatfield
 		for ( int k = 0; k < N; ++k )
 			frameScales[ k ] = A1_coeff[ k ];
 
-		System.out.println("Finished BaSiC flatfield/darkfield estimation");
+		System.out.printf("Finished BaSiC flatfield/darkfield estimation in %f secs\n", (System.currentTimeMillis() - start) / 1000.0);
 
 		return new BasicFlatfieldResult( flatImg, darkImg, frameScales, B1_offsetFinal );
 	}

@@ -46,10 +46,18 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.img.n5.N5ImageLoader;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
+import mpicbg.spim.data.sequence.SetupImgLoader;
+import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.ViewSetup;
 import mpicbg.spim.data.sequence.VoxelDimensions;
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.type.NativeType;
+import net.imglib2.type.numeric.RealType;
+import net.imglib2.util.Cast;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
+import net.preibisch.bigstitcher.spark.flatfield.BasicFlatfield;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -86,6 +94,10 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 	public enum MissingFields { ERROR, SKIP, COPY }
 
 	public enum OutputDataType { SAME, FLOAT32 }
+
+	public enum BaselineDrift { IGNORE, ZERO, MEAN }
+
+	public enum BaselineGranularity { VIEW, SLICE }
 
 	@Option(names = { "--fields" }, required = true, description = "container path holding the estimated fields (channelX/illuminationY/flatfield|darkfield), as written by BasicFlatfieldEstimation")
 	private String fieldsPathURIString = null;
@@ -124,6 +136,22 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 	@Option(names = { "--missingFields" }, defaultValue = "ERROR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "behavior when a view's (channel,illumination) group has no estimated field: ERROR | SKIP | COPY")
 	private MissingFields missingFields = MissingFields.ERROR;
+
+	@Option(names = { "--baselineDrift" }, defaultValue = "IGNORE", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "temporal baseline drift correction (BaSiC 'basefluor'): IGNORE (current behavior) | ZERO (remove each view's baseline) | MEAN (level each view to the per-(channel,illumination) group mean)")
+	private BaselineDrift baselineDrift = BaselineDrift.IGNORE;
+
+	@Option(names = { "--baselineGranularity" }, defaultValue = "SLICE", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "baseline granularity: SLICE (one value per z-plane, removes depth-dependent drift) | VIEW (one value per view)")
+	private BaselineGranularity baselineGranularity = BaselineGranularity.SLICE;
+
+	@Option(names = { "--baselinePercentile" }, defaultValue = "50.0", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "percentile of shading-corrected pixels used as the background estimate (50 = median; lower for crowded fluorescence)")
+	private double baselinePercentile = 50.0;
+
+	@Option(names = { "--baselineScale" }, defaultValue = "128", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "coarse XY size (square) for the baseline estimate; z is kept full (<=0 = full resolution)")
+	private int baselineScale = 128;
 
 	// resolved after probing/CLI merge; must be effectively final for the Spark closures
 	private transient URI fieldsURI;
@@ -357,6 +385,29 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 
 		final URI xmlURIf = this.xmlURI;
 
+		// -- Phase 0: baseline (temporal drift) estimation (only when != IGNORE) --
+		final Map< String, double[] > baselineDeltas; // key = tp + "_" + setup -> per-z delta (null = none)
+		if ( baselineDrift != BaselineDrift.IGNORE )
+		{
+			baselineDeltas = computeBaselineDeltas(
+					sc,
+					viewIdsToProcess,
+					xmlURIf,
+					fieldsURIf,
+					fieldsFormatf,
+					baselineDrift.name(),
+					baselineGranularity == BaselineGranularity.SLICE
+							? net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.BaselineGranularity.SLICE
+							: net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.BaselineGranularity.VIEW,
+					baselinePercentile,
+					baselineScale,
+					n5Writer );
+		}
+		else
+		{
+			baselineDeltas = null;
+		}
+
 		// -- Phase B: Spark s0 correction --
 		processSNBlocks(
 				sc,
@@ -374,6 +425,8 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 					final ViewId vId = N5ApiTools.gridBlockToViewId( gridBlock );
 					final DataType dt = outDataTypes.get( vId.getViewSetupId() );
 
+					final double[] delta = ( baselineDeltas == null ) ? null : baselineDeltas.get( viewKey( vId ) );
+
 					FlatfieldApply.correctS0Block(
 							dataLocal,
 							n5Lcl,
@@ -382,7 +435,8 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 							fieldsURIf,
 							fieldsFormatf,
 							N5ApiTools.gridToDatasetBdv( 0, storage ),
-							gridBlock );
+							gridBlock,
+							delta );
 
 					n5Lcl.close();
 				} );
@@ -593,6 +647,241 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 		{
 			n5.close();
 		}
+	}
+
+	// ─── baseline (temporal drift) — Phase 0 ─────────────────────────────────────
+
+	/** Serializable ViewId key: "<timepoint>_<viewsetup>". */
+	private static String viewKey( final ViewId v )
+	{
+		return v.getTimePointId() + "_" + v.getViewSetupId();
+	}
+
+	/** (channel,illumination) group key of a view, matching the fields container layout. */
+	private static String groupKeyOf( final SpimData2 data, final ViewId v )
+	{
+		final ViewDescription vd = data.getSequenceDescription().getViewDescription( v );
+		final ViewSetup vs = vd.getViewSetup();
+		final int ch = ( vs.getChannel() != null ) ? vs.getChannel().getId() : 0;
+		final int il = ( vs.getIllumination() != null ) ? vs.getIllumination().getId() : 0;
+		return "channel" + ch + "/illumination" + il;
+	}
+
+	/**
+	 * Phase 0. Distribute a coarse-XY, full-z pass over the selected views; for each
+	 * view compute a per-view baseline ({@code double[]}: length=depth for SLICE,
+	 * length 1 for VIEW), collect to the driver, compute per-(channel,illumination)
+	 * group {@code refMean} (mean of all baseline entries in the group), and turn each
+	 * view's baseline into the per-z delta to subtract at s0 (per drift mode). Writes
+	 * QC (per-view baselines + per-group refMean) to the output container and logs a
+	 * per-group drift summary.
+	 *
+	 * @return map {@code viewKey -> per-z delta}; {@code null} deltas are omitted.
+	 */
+	private static Map< String, double[] > computeBaselineDeltas(
+			final JavaSparkContext sc,
+			final List< ViewId > viewIds,
+			final URI xmlURIf,
+			final URI fieldsURIf,
+			final StorageFormat fieldsFormatf,
+			final String driftMode,
+			final net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.BaselineGranularity granularity,
+			final double percentile,
+			final int coarseScale,
+			final N5Writer n5Writer ) throws Exception
+	{
+		final long t0 = System.currentTimeMillis();
+		System.out.println( "Phase 0: estimating baseline drift (mode=" + driftMode
+				+ ", granularity=" + granularity + ", percentile=" + percentile + ", scale=" + coarseScale + ")..." );
+
+		final List< int[] > viewList = viewIds.stream()
+				.map( v -> new int[] { v.getTimePointId(), v.getViewSetupId() } )
+				.collect( Collectors.toList() );
+
+		final int nPartitions = Math.min( Math.max( sc.defaultParallelism(), 1 ), Math.max( 1, viewList.size() ) );
+		final JavaRDD< int[] > rdd = sc.parallelize( viewList, nPartitions );
+
+		// each task: load coarse-XY full-z, shading-correct, percentile -> baseline
+		final List< ValuePair< String, double[] > > perViewBaseline =
+				rdd.map( vi ->
+				{
+					final ViewId viewId = new ViewId( vi[ 0 ], vi[ 1 ] );
+					final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURIf );
+
+					final double[] baseline = computeCoarseBaseline(
+							dataLocal, viewId, fieldsURIf, fieldsFormatf, granularity, percentile, coarseScale );
+
+					return new ValuePair<>( viewKey( viewId ), baseline );
+				} ).collect();
+
+		// driver-side: map + per-group refMean
+		final Map< String, double[] > baselines = new HashMap<>();
+		for ( final ValuePair< String, double[] > e : perViewBaseline )
+			baselines.put( e.getA(), e.getB() );
+
+		// group views by (channel,illumination) to compute the temporal mean per group
+		final SpimData2 dataGlobal = Spark.getSparkJobSpimData2( xmlURIf );
+		final Map< String, List< ViewId > > groups = new java.util.LinkedHashMap<>();
+		for ( final ViewId v : viewIds )
+			groups.computeIfAbsent( groupKeyOf( dataGlobal, v ), k -> new java.util.ArrayList<>() ).add( v );
+
+		final Map< String, Double > groupRefMean = new HashMap<>();
+		for ( final Map.Entry< String, List< ViewId > > g : groups.entrySet() )
+		{
+			final List< double[] > groupBaselines = g.getValue().stream()
+					.map( v -> baselines.get( viewKey( v ) ) )
+					.filter( b -> b != null )
+					.collect( Collectors.toList() );
+			final double refMean =
+					net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.groupRefMean( groupBaselines );
+			groupRefMean.put( g.getKey(), refMean );
+
+			// drift summary (min/mean/max over all baseline entries in the group)
+			double min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY, sum = 0.0;
+			long cnt = 0;
+			for ( final double[] b : groupBaselines )
+				for ( final double val : b )
+				{
+					min = Math.min( min, val );
+					max = Math.max( max, val );
+					sum += val;
+					++cnt;
+				}
+			final double mean = ( cnt == 0 ) ? 0.0 : sum / cnt;
+			System.out.printf( "  group %s: baseline min=%.3f mean=%.3f max=%.3f refMean=%.3f (%d view(s), %d entries)%n",
+					g.getKey(), ( cnt == 0 ? 0.0 : min ), mean, ( cnt == 0 ? 0.0 : max ), refMean, g.getValue().size(), cnt );
+		}
+
+		// build per-view delta (per drift mode)
+		final Map< String, double[] > deltas = new HashMap<>();
+		for ( final ViewId v : viewIds )
+		{
+			final double[] bView = baselines.get( viewKey( v ) );
+			final double refMean = groupRefMean.getOrDefault( groupKeyOf( dataGlobal, v ), 0.0 );
+			final double[] delta =
+					net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.baselineDelta( driftMode, bView, refMean );
+			if ( delta != null )
+				deltas.put( viewKey( v ), delta );
+		}
+
+		// QC / provenance in the output container
+		try
+		{
+			n5Writer.setAttribute( "/", "BaselineDrift", driftMode );
+			n5Writer.setAttribute( "/", "BaselineGranularity", granularity.name() );
+			n5Writer.setAttribute( "/", "BaselinePercentile", percentile );
+			n5Writer.setAttribute( "/", "BaselineScale", coarseScale );
+
+			final Map< String, double[] > qcBaselines = new java.util.LinkedHashMap<>();
+			for ( final ViewId v : viewIds )
+			{
+				final double[] b = baselines.get( viewKey( v ) );
+				if ( b != null )
+					qcBaselines.put( viewKey( v ), b );
+			}
+			n5Writer.setAttribute( "/", "BaselinePerView", qcBaselines );
+			n5Writer.setAttribute( "/", "BaselineGroupRefMean", groupRefMean );
+		}
+		catch ( final Exception e )
+		{
+			System.out.println( "WARNING: could not write baseline QC attributes (" + e + ")." );
+		}
+
+		System.out.println( "Phase 0 done, took " + ( System.currentTimeMillis() - t0 ) + " ms." );
+		return deltas;
+	}
+
+	/**
+	 * Load a coarse-XY (down to {@code coarseScale}), full-z copy of a view, resize the
+	 * group's flat/dark fields to the coarse X/Y, shading-correct, and compute the
+	 * per-plane (SLICE) or whole-view (VIEW) percentile baseline. z is kept at full
+	 * resolution. {@code coarseScale <= 0} keeps full XY.
+	 */
+	private static < T extends RealType< T > & NativeType< T > > double[] computeCoarseBaseline(
+			final SpimData2 data,
+			final ViewId viewId,
+			final URI fieldsURI,
+			final StorageFormat fieldsFormat,
+			final net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.BaselineGranularity granularity,
+			final double percentile,
+			final int coarseScale )
+	{
+		final String groupKey = groupKeyOf( data, viewId );
+
+		final SetupImgLoader< ? > imgLoader =
+				data.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );
+		final RandomAccessibleInterval< T > img = Cast.unchecked( imgLoader.getImage( viewId.getTimePointId() ) );
+
+		final int viewW = ( int ) img.dimension( 0 );
+		final int viewH = ( int ) img.dimension( 1 );
+		final int viewD = ( int ) img.dimension( 2 );
+
+		// target coarse XY (keep aspect via the larger side; z full)
+		final int coarseW, coarseH;
+		if ( coarseScale <= 0 || ( viewW <= coarseScale && viewH <= coarseScale ) )
+		{
+			coarseW = viewW;
+			coarseH = viewH;
+		}
+		else
+		{
+			final double scale = ( double ) coarseScale / Math.max( viewW, viewH );
+			coarseW = Math.max( 1, ( int ) Math.round( viewW * scale ) );
+			coarseH = Math.max( 1, ( int ) Math.round( viewH * scale ) );
+		}
+
+		// materialize the coarse-XY full-z volume (average-free bilinear XY resize per plane)
+		final RandomAccessibleInterval< net.imglib2.type.numeric.real.FloatType > coarse =
+				coarseXYVolume( img, viewW, viewH, viewD, coarseW, coarseH );
+
+		// fields resized to the coarse XY (reuses the cached, resize-capable loader)
+		final FlatfieldApply.Field2D field = net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.loadFieldCached(
+				fieldsURI, fieldsFormat, groupKey, coarseW, coarseH );
+
+		return net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply.computeViewBaseline(
+				coarse, field, granularity, percentile );
+	}
+
+	/**
+	 * Build a coarse-XY, full-z {@code FloatType} copy of a 3D view by bilinearly
+	 * resizing each z-plane independently to {@code coarseW x coarseH} (reusing
+	 * {@link BasicFlatfield#resize}). Returns a zero-min {@code ArrayImg}.
+	 */
+	private static < T extends RealType< T > > RandomAccessibleInterval< net.imglib2.type.numeric.real.FloatType > coarseXYVolume(
+			final RandomAccessibleInterval< T > img,
+			final int viewW,
+			final int viewH,
+			final int viewD,
+			final int coarseW,
+			final int coarseH )
+	{
+		final float[] data = new float[ coarseW * coarseH * viewD ];
+		final net.imglib2.RandomAccess< T > ra = img.randomAccess();
+		final long minX = img.min( 0 ), minY = img.min( 1 ), minZ = img.min( 2 );
+
+		final float[] plane = new float[ viewW * viewH ];
+		for ( int z = 0; z < viewD; ++z )
+		{
+			ra.setPosition( minZ + z, 2 );
+			for ( int y = 0; y < viewH; ++y )
+			{
+				ra.setPosition( minY + y, 1 );
+				final int rowOff = y * viewW;
+				for ( int x = 0; x < viewW; ++x )
+				{
+					ra.setPosition( minX + x, 0 );
+					plane[ rowOff + x ] = ( float ) ra.get().getRealDouble();
+				}
+			}
+
+			final float[] resized = ( coarseW == viewW && coarseH == viewH )
+					? plane.clone()
+					: BasicFlatfield.resize( plane, viewH, viewW, coarseH, coarseW );
+
+			System.arraycopy( resized, 0, data, z * coarseW * coarseH, coarseW * coarseH );
+		}
+
+		return net.imglib2.img.array.ArrayImgs.floats( data, coarseW, coarseH, viewD );
 	}
 
 	// ─── Spark orchestration (mirrors SparkResaveN5) ─────────────────────────────

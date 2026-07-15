@@ -42,7 +42,7 @@ public class BasicFlatfieldParams implements Serializable
 	public final boolean estimateDarkfield;
 
 	/** flatfield regularization strength; 0 = auto-derive. */
-	public final float lambda;
+	public final float lambdaFlatfield;
 
 	/** darkfield regularization strength; 0 = auto-derive. */
 	public final float lambdaDarkfield;
@@ -67,7 +67,7 @@ public class BasicFlatfieldParams implements Serializable
 
 	public BasicFlatfieldParams(
 			final boolean estimateDarkfield,
-			final float lambda,
+			final float lambdaFlatfield,
 			final float lambdaDarkfield,
 			final int maxIterations,
 			final float optimizationTol,
@@ -77,7 +77,7 @@ public class BasicFlatfieldParams implements Serializable
 			final int workingSize )
 	{
 		this.estimateDarkfield = estimateDarkfield;
-		this.lambda = lambda;
+		this.lambdaFlatfield = lambdaFlatfield;
 		this.lambdaDarkfield = lambdaDarkfield;
 		this.maxIterations = maxIterations;
 		this.optimizationTol = optimizationTol;
@@ -92,7 +92,7 @@ public class BasicFlatfieldParams implements Serializable
 	{
 		return new BasicFlatfieldParams(
 				true,    // estimateDarkfield
-				0f,      // lambda (auto)
+				0f,      // lambdaFlatfield (auto)
 				0f,      // lambdaDarkfield (auto)
 				500,     // maxIterations
 				1e-6f,   // optimizationTol
@@ -118,7 +118,7 @@ public class BasicFlatfieldParams implements Serializable
 	 */
 	public float[] deriveLambdas( final float[] meanImg, final int H, final int W )
 	{
-		float lam = lambda;
+		float lam = lambdaFlatfield;
 		float lamDf = lambdaDarkfield;
 
 		if ( lam == 0f || lamDf == 0f )
@@ -157,7 +157,7 @@ public class BasicFlatfieldParams implements Serializable
 	public String toString() {
 		return new ToStringBuilder(this)
 				.append("estimateDarkfield", estimateDarkfield)
-				.append("lambda", lambda)
+				.append("lambdaFlatfield", lambdaFlatfield)
 				.append("lambdaDarkfield", lambdaDarkfield)
 				.append("maxIterations", maxIterations)
 				.append("optimizationTol", optimizationTol)

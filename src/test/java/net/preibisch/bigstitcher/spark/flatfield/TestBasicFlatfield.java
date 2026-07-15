@@ -56,6 +56,14 @@ public class TestBasicFlatfield
 	}
 
 	@Test
+	public void testDctRoundTripWithDegenerateAxis()
+	{
+		assertDctRoundTrip( 1, 1 );
+		assertDctRoundTrip( 1, 7 );
+		assertDctRoundTrip( 7, 1 );
+	}
+
+	@Test
 	public void testDctOrthonormalScaling()
 	{
 		// Orthonormal DCT-II: the DC coefficient of a constant image equals
@@ -165,6 +173,19 @@ public class TestBasicFlatfield
 	}
 
 	// ─── helpers ────────────────────────────────────────────────────────────────
+
+	private static void assertDctRoundTrip( final int H, final int W )
+	{
+		final float[] x = new float[ H * W ];
+		for ( int i = 0; i < x.length; ++i )
+			x[ i ] = ( float ) ( Math.sin( ( i + 1 ) * 0.37 ) + 0.125 * i );
+
+		final float[] coeffs = Dct2D.dct2( x, H, W );
+		final float[] back = Dct2D.idct2( coeffs, H, W );
+
+		for ( int i = 0; i < x.length; ++i )
+			assertEquals( x[ i ], back[ i ], 1e-4f, H + "x" + W + " DCT round-trip at index " + i );
+	}
 
 	private static float[] toArray( final RandomAccessibleInterval< FloatType > img, final int H, final int W )
 	{

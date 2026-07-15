@@ -56,27 +56,6 @@ public abstract class AbstractSelectableViews extends AbstractBasic implements C
 	public ArrayList< ViewId > loadViewIds( final SpimData2 dataGlobal ) throws IllegalArgumentException
 	{
 		return loadViewIds(dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
-		/*Import.validateInputParameters(vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
-
-		// select views to process
-		ArrayList< ViewId > viewIdsGlobal =
-				Import.createViewIds(
-						dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
-
-		if ( viewIdsGlobal.size() == 0 )
-		{
-			throw new IllegalArgumentException( "No views to be processed." );
-		}
-		else
-		{
-			System.out.println( "The following ViewIds will be processed: ");
-			Collections.sort( viewIdsGlobal );
-			for ( final ViewId v : viewIdsGlobal )
-				System.out.print( "[" + v.getTimePointId() + "," + v.getViewSetupId() + "] " );
-			System.out.println();
-		}
-
-		return viewIdsGlobal;*/
 	}
 
 	public static ArrayList< ViewId > loadViewIds(

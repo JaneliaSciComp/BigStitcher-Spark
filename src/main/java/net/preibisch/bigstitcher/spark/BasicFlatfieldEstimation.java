@@ -73,21 +73,25 @@ import util.URITools;
 public class BasicFlatfieldEstimation extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = 1L;
+	private static final long MAX_N5_BLOCK_ELEMENTS = Integer.MAX_VALUE;
 
-	@Option(names = { "--maxViews" }, description = "max frames (z-slices) to use per group; random subsample (default: all)")
-	protected Integer maxViews = null;
+	@Option(names = { "--numViewSetups" }, description = "number of view setups to randomly select per (channel,illumination) group to draw frames from; combine with --channelId/--tileId/-vi etc. to restrict the candidate pool (default: all view setups in the group)")
+	protected Integer numViewSetups = null;
 
-	@Option(names = { "--seed" }, description = "RNG seed for random sub-sampling, for reproducibility (default: 42)")
+	@Option(names = { "--numFrames" }, description = "total number of frames (z-slices) to randomly select per group from the chosen view setups (default: all frames)")
+	protected Integer numFrames = null;
+
+	@Option(names = { "--seed" }, description = "RNG seed for random sub-sampling of view setups and frames, for reproducibility (default: 42)")
 	protected Long seed = 42L;
 
 	@Option(names = { "--workingSize" }, description = "downsample size (square) for estimation; 0 = full resolution (default: 128)")
-	protected Integer workingSize = 0;
+	protected Integer workingSize = 128;
 
 	@Option(names = { "--estimateDarkfield" }, description = "estimate the additive darkfield (default: true)")
 	protected Boolean estimateDarkfield = true;
 
-	@Option(names = { "--lambda" }, description = "flatfield regularization strength; 0 = auto (default: 0)")
-	protected Double lambda = 0.0;
+	@Option(names = { "--lambdaFlatfield" }, description = "flatfield regularization strength; 0 = auto (default: 0)")
+	protected Double lambdaFlatfield = 0.0;
 
 	@Option(names = { "--lambdaDarkfield" }, description = "darkfield regularization strength; 0 = auto (default: 0)")
 	protected Double lambdaDarkfield = 0.0;
@@ -126,8 +130,8 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 	@Option(names = { "--blockScale" }, description = "shard-size factor (X,Y) when ZARR v3 sharding is enabled: shard size = blockSize * blockScale (default: 16,16)")
 	protected String blockScaleString = "16,16";
 
-	@Option(names = { "--useSharding" }, description = "enable Zarr v3 sharding using blockScale as shard size factor (default: enabled for ZARR v3, disabled otherwise)")
-	protected Boolean useSharding = null; // null = auto-detect
+	@Option(names = { "--useSharding" }, description = "enable Zarr v3 sharding using blockScale as shard size factor (default: false)")
+	protected Boolean useSharding = null; // null = default false
 
 	@Override
 	public Void call() throws Exception
@@ -159,10 +163,13 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		final Compression compression = N5Util.getCompression( this.compressionType, this.compressionLevel );
 		final int[] blockSize = Import.csvStringToIntArray( blockSizeString );
 		final int[] blockScale = Import.csvStringToIntArray( blockScaleString );
+		validateBlockSizeOption( "--blockSize", blockSize, 2 );
+		validateBlockSizeOption( "--blockScale", blockScale, 2 );
 
-		// auto-detect sharding: enabled for ZARR v3, disabled otherwise
+		// Flatfield outputs are 2D calibration fields. Normal chunks are the safer
+		// default; sharding can create very large merge blocks for little benefit.
 		if ( useSharding == null )
-			useSharding = ( storageType == StorageFormat.ZARR );
+			useSharding = false;
 
 		if ( useSharding && storageType != StorageFormat.ZARR )
 		{
@@ -187,7 +194,7 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 
 		final BasicFlatfieldParams params = new BasicFlatfieldParams(
 				estimateDarkfield,
-				lambda.floatValue(),
+				lambdaFlatfield.floatValue(),
 				lambdaDarkfield.floatValue(),
 				maxIterations,
 				optTol.floatValue(),
@@ -207,8 +214,15 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 
 			System.out.println( "\n=== Group " + groupKey + " (" + groupViews.size() + " view(s)) ===" );
 
-			// build frames: every z-slice of every group view is one frame that shares the profile
-			final List< RandomAccessibleInterval< ? extends RealType< ? > > > frames = loadFrames( spimData, groupViews );
+			final java.util.Random rng = new java.util.Random( seed );
+
+			// (1) randomly select numViewSetups view setups from this group's candidate pool
+			final List< ViewId > selectedViews = selectViewSetups( groupViews, numViewSetups, rng );
+
+			System.out.println( "\n=== Group " + groupKey + " selected views: " + selectedViews + " ===" );
+
+			// (2) build frames: every z-slice of every selected view is one frame that shares the profile
+			final List< RandomAccessibleInterval< ? extends RealType< ? > > > frames = loadFrames( spimData, selectedViews );
 
 			if ( frames.isEmpty() )
 			{
@@ -216,11 +230,11 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 				continue;
 			}
 
-			// random subsample to maxViews
-			if ( maxViews != null && maxViews > 0 && frames.size() > maxViews )
+			// (3) randomly subsample to numFrames total frames
+			if ( numFrames != null && numFrames > 0 && frames.size() > numFrames )
 			{
-				Collections.shuffle( frames, new java.util.Random( seed ) );
-				while ( frames.size() > maxViews )
+				Collections.shuffle( frames, rng );
+				while ( frames.size() > numFrames )
 					frames.remove( frames.size() - 1 );
 				System.out.println( "  sub-sampled to " + frames.size() + " frame(s)." );
 			}
@@ -262,6 +276,37 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 			groups.computeIfAbsent( key, k -> new ArrayList<>() ).add( v );
 		}
 		return groups;
+	}
+
+	/**
+	 * Randomly select {@code numViewSetups} distinct view setups from a group's
+	 * candidate views and return all their ViewIds (all timepoints of the chosen
+	 * setups). Returns the input unchanged when {@code numViewSetups} is null/<=0 or
+	 * the group has that many or fewer distinct setups.
+	 */
+	private static List< ViewId > selectViewSetups( final List< ViewId > groupViews, final Integer numViewSetups, final java.util.Random rng )
+	{
+		// distinct view setups present in this group (preserve encounter order)
+		final Map< Integer, List< ViewId > > bySetup = new LinkedHashMap<>();
+		for ( final ViewId v : groupViews )
+			bySetup.computeIfAbsent( v.getViewSetupId(), k -> new ArrayList<>() ).add( v );
+
+		final List< Integer > setupIds = new ArrayList<>( bySetup.keySet() );
+
+		if ( numViewSetups == null || numViewSetups <= 0 || setupIds.size() <= numViewSetups )
+		{
+			System.out.println( "  using all " + setupIds.size() + " view setup(s) in the group." );
+			return groupViews;
+		}
+
+		Collections.shuffle( setupIds, rng );
+		final List< Integer > chosen = setupIds.subList( 0, numViewSetups );
+		final List< ViewId > selected = new ArrayList<>();
+		for ( final Integer sid : chosen )
+			selected.addAll( bySetup.get( sid ) );
+
+		System.out.println( "  randomly selected " + chosen.size() + " of " + setupIds.size() + " view setup(s): " + chosen );
+		return selected;
 	}
 
 	/**
@@ -336,10 +381,11 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 			// The whole (small) field is written in a single saveRegion call, so there is no
 			// concurrent partial-shard write to worry about.
 			final long[] dims = new long[] { field.dimension( 0 ), field.dimension( 1 ) };
-			final int[] shardSize = new int[] { blockSize[ 0 ] * blockScale[ 0 ], blockSize[ 1 ] * blockScale[ 1 ] };
+			final int[] shardSize = shardSize( blockSize, blockScale );
+			validateN5BlockElementCount( "Zarr v3 shard", shardSize );
 			final DatasetAttributes attributes = ZarrV3DatasetAttributes.builder( dims, DataType.FLOAT32 )
-					.blockSize( shardSize )   // shard dimensions
-					.chunkSize( blockSize )   // inner chunk size within shards
+					.blockSize( shardSize ) // shard dimensions
+					.chunkSize( blockSize ) // inner chunk size within shards
 					.compression( compression )
 					.shardIndexDataCodecInfos( new Crc32cChecksumCodec() )
 					.build();
@@ -348,12 +394,13 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		}
 		else
 		{
+			validateN5BlockElementCount( "N5/Zarr chunk", blockSize );
 			N5Utils.save( field, n5Writer, dataset, blockSize, compression );
 		}
 
 		// params + QC as attributes
 		n5Writer.setAttribute( dataset, "estimateDarkfield", params.estimateDarkfield );
-		n5Writer.setAttribute( dataset, "lambda", params.lambda );
+		n5Writer.setAttribute( dataset, "lambda", params.lambdaFlatfield);
 		n5Writer.setAttribute( dataset, "lambdaDarkfield", params.lambdaDarkfield );
 		n5Writer.setAttribute( dataset, "maxIterations", params.maxIterations );
 		n5Writer.setAttribute( dataset, "optimizationTol", params.optimizationTol );
@@ -363,6 +410,40 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		n5Writer.setAttribute( dataset, "workingSize", params.workingSize );
 		n5Writer.setAttribute( dataset, "baseline", result.baseline );
 		n5Writer.setAttribute( dataset, "numFrames", result.frameScales.length );
+	}
+
+	static void validateBlockSizeOption( final String option, final int[] values, final int numDimensions )
+	{
+		if ( values == null || values.length != numDimensions )
+			throw new IllegalArgumentException( option + " must contain exactly " + numDimensions + " comma-separated positive integers." );
+		for ( final int value : values )
+			if ( value <= 0 )
+				throw new IllegalArgumentException( option + " must contain only positive integers, got " + Arrays.toString( values ) );
+	}
+
+	static int[] shardSize( final int[] blockSize, final int[] blockScale )
+	{
+		final int[] shardSize = new int[ blockSize.length ];
+		for ( int d = 0; d < blockSize.length; ++d )
+		{
+			final long value = ( long ) blockSize[ d ] * blockScale[ d ];
+			if ( value > Integer.MAX_VALUE )
+				throw new IllegalArgumentException( "Zarr v3 shard size overflows int in dimension " + d + ": "
+						+ blockSize[ d ] + " * " + blockScale[ d ] );
+			shardSize[ d ] = ( int ) value;
+		}
+		return shardSize;
+	}
+
+	static void validateN5BlockElementCount( final String label, final int[] blockSize )
+	{
+		long elements = 1;
+		for ( final int size : blockSize )
+			elements *= size;
+		if ( elements > MAX_N5_BLOCK_ELEMENTS )
+			throw new IllegalArgumentException( label + " size " + Arrays.toString( blockSize )
+					+ " contains " + elements + " elements, which exceeds N5's maximum block allocation of "
+					+ MAX_N5_BLOCK_ELEMENTS + ". Reduce --blockSize/--blockScale or disable sharding." );
 	}
 
 	public static void main( final String... args ) throws SpimDataException

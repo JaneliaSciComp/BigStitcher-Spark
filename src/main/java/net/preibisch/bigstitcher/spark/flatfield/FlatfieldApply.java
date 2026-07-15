@@ -22,6 +22,7 @@
 package net.preibisch.bigstitcher.spark.flatfield;
 
 import java.net.URI;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -98,6 +99,10 @@ public class FlatfieldApply
 	 * @param fieldsFormat  estimation container storage format
 	 * @param gridBlockToDataset s0 dataset naming function
 	 * @param gridBlock     the extended grid block (gridBlock[3] encodes the ViewId)
+	 * @param delta         per-z baseline delta (in shading-corrected units) subtracted
+	 *                      before rounding/clamping; index by absolute z. Length 1 means
+	 *                      one whole-view value used for every z. {@code null} disables it
+	 *                      (byte-identical to no-baseline behavior).
 	 */
 	public static < T extends RealType< T > & NativeType< T >, O extends RealType< O > & NativeType< O > > void correctS0Block(
 			final SpimData2 data,
@@ -107,7 +112,8 @@ public class FlatfieldApply
 			final URI fieldsURI,
 			final StorageFormat fieldsFormat,
 			final java.util.function.Function< long[][], String > gridBlockToDataset,
-			final long[][] gridBlock )
+			final long[][] gridBlock,
+			final double[] delta )
 	{
 		final ViewId viewId = N5ApiTools.gridBlockToViewId( gridBlock );
 		final String dataset = gridBlockToDataset.apply( gridBlock );
@@ -157,7 +163,8 @@ public class FlatfieldApply
 		final ArrayImg< O, ? > corrected3d = applyCorrection(
 				src, field,
 				( int ) blockOffset3d[ 0 ], ( int ) blockOffset3d[ 1 ],
-				outputDataType );
+				outputDataType,
+				delta, ( int ) blockOffset3d[ 2 ] );
 
 		// write
 		final RandomAccessibleInterval< O > toWrite;
@@ -181,13 +188,36 @@ public class FlatfieldApply
 	 * {@code clamp(round((raw-dark)/flat), 0, dtypeMax)} (round/clamp skipped for
 	 * floating output); output is 0 where {@code flat <= FLAT_EPS}.
 	 */
-	@SuppressWarnings("unchecked")
 	public static < T extends RealType< T >, O extends RealType< O > & NativeType< O > > ArrayImg< O, ? > applyCorrection(
 			final RandomAccessibleInterval< T > src,
 			final Field2D field,
 			final int blockOffsetX,
 			final int blockOffsetY,
 			final DataType outputDataType )
+	{
+		return applyCorrection( src, field, blockOffsetX, blockOffsetY, outputDataType, null, 0 );
+	}
+
+	/**
+	 * As {@link #applyCorrection(RandomAccessibleInterval, Field2D, int, int, DataType)},
+	 * but additionally subtracts a per-z baseline {@code delta} (in shading-corrected
+	 * units) before rounding/clamping:
+	 * {@code v = clamp(round( (raw-dark)/flat - delta[z] ), min, max )}.
+	 * <p>
+	 * {@code delta} indexes by <em>absolute</em> z; {@code blockOffsetZ} is the world
+	 * z of this block's min corner. If {@code delta} has length 1 it is treated as a
+	 * single whole-view value used for every z (VIEW granularity). {@code delta == null}
+	 * disables the subtraction (byte-identical to the no-baseline path).
+	 */
+	@SuppressWarnings("unchecked")
+	public static < T extends RealType< T >, O extends RealType< O > & NativeType< O > > ArrayImg< O, ? > applyCorrection(
+			final RandomAccessibleInterval< T > src,
+			final Field2D field,
+			final int blockOffsetX,
+			final int blockOffsetY,
+			final DataType outputDataType,
+			final double[] delta,
+			final int blockOffsetZ )
 	{
 		final int bx = ( int ) src.dimension( 0 );
 		final int by = ( int ) src.dimension( 1 );
@@ -228,7 +258,7 @@ public class FlatfieldApply
 			}
 			else
 			{
-				v = ( raw - dark ) / flat;
+				v = ( raw - dark ) / flat - deltaAt( delta, blockOffsetZ + pos[ 2 ] );
 				if ( !isFloat )
 					v = Math.rint( v );
 				if ( v < 0.0 )
@@ -242,6 +272,21 @@ public class FlatfieldApply
 		}
 
 		return out;
+	}
+
+	/**
+	 * Baseline delta for absolute plane {@code z}. Returns 0 when {@code delta} is
+	 * null/empty. Length-1 arrays (VIEW granularity) return their single entry for
+	 * all z; otherwise indexed by z and clamped to the array bounds.
+	 */
+	static double deltaAt( final double[] delta, final int z )
+	{
+		if ( delta == null || delta.length == 0 )
+			return 0.0;
+		if ( delta.length == 1 )
+			return delta[ 0 ];
+		final int idx = z < 0 ? 0 : ( z >= delta.length ? delta.length - 1 : z );
+		return delta[ idx ];
 	}
 
 	private static RandomAccessibleInterval< ? > createArrayImg( final DataType dataType, final int bx, final int by, final int bz )
@@ -350,6 +395,190 @@ public class FlatfieldApply
 			}
 		}
 		return plane;
+	}
+
+	// ─── baseline (temporal drift) estimation ───────────────────────────────────
+
+	/** Granularity of the per-view baseline estimate. */
+	public enum BaselineGranularity { VIEW, SLICE }
+
+	/**
+	 * Robust percentile of a {@code float[]} using linear interpolation between the
+	 * two closest ranks (NumPy 'linear' / MATLAB default). {@code p} is in [0,100];
+	 * 50 = median. NaN entries are ignored. Returns 0 for an empty/all-NaN input.
+	 * <p>
+	 * This estimator works for both fluorescence (sparse bright signal over a dark
+	 * background: the median lands on the dark floor) and brightfield (bright
+	 * majority: the median lands on the field level). No data-type switch is needed.
+	 * The input array is copied (not mutated).
+	 */
+	public static double percentile( final float[] values, final double p )
+	{
+		if ( values == null || values.length == 0 )
+			return 0.0;
+
+		// copy + drop NaNs
+		float[] v = values.clone();
+		int n = 0;
+		for ( int i = 0; i < v.length; ++i )
+			if ( !Float.isNaN( v[ i ] ) )
+				v[ n++ ] = v[ i ];
+		if ( n == 0 )
+			return 0.0;
+		if ( n < v.length )
+			v = Arrays.copyOf( v, n );
+
+		Arrays.sort( v );
+
+		if ( n == 1 )
+			return v[ 0 ];
+
+		final double pp = p < 0.0 ? 0.0 : ( p > 100.0 ? 100.0 : p );
+		final double rank = ( pp / 100.0 ) * ( n - 1 ); // 0-based fractional rank
+		final int lo = ( int ) Math.floor( rank );
+		final int hi = ( int ) Math.ceil( rank );
+		if ( lo == hi )
+			return v[ lo ];
+		final double frac = rank - lo;
+		return v[ lo ] * ( 1.0 - frac ) + v[ hi ] * frac;
+	}
+
+	/**
+	 * Shading-correct a coarse-XY, full-z copy of a view and compute its baseline as
+	 * a per-plane (SLICE) or whole-view (VIEW) percentile of {@code (raw-dark)/flat}.
+	 * <p>
+	 * The 2D {@code field} must already be resized to the coarse view's X/Y size (see
+	 * {@link #loadFieldCached}). Where {@code flat <= FLAT_EPS} the pixel is dropped
+	 * from the estimate. Returns a {@code double[]} of length = view depth (SLICE) or
+	 * length 1 (VIEW), representing the baseline in shading-corrected units.
+	 *
+	 * @param coarse       coarse-XY, full-z view (X,Y,Z), zero- or arbitrary-min
+	 * @param field        flatfield/darkfield resized to the coarse X/Y size
+	 * @param granularity  {@link BaselineGranularity#SLICE} or {@code VIEW}
+	 * @param percentile   background estimator percentile in [0,100] (50 = median)
+	 */
+	public static < T extends RealType< T > > double[] computeViewBaseline(
+			final RandomAccessibleInterval< T > coarse,
+			final Field2D field,
+			final BaselineGranularity granularity,
+			final double percentile )
+	{
+		final int cw = ( int ) coarse.dimension( 0 );
+		final int ch = ( int ) coarse.dimension( 1 );
+		final int cd = ( int ) coarse.dimension( 2 );
+
+		if ( field.w != cw || field.h != ch )
+			throw new IllegalArgumentException( "Field size " + field.w + "x" + field.h
+					+ " must match coarse view size " + cw + "x" + ch + " for baseline estimation." );
+
+		final net.imglib2.RandomAccess< T > ra = coarse.randomAccess();
+		final long minX = coarse.min( 0 );
+		final long minY = coarse.min( 1 );
+		final long minZ = coarse.min( 2 );
+
+		if ( granularity == BaselineGranularity.SLICE )
+		{
+			final double[] b = new double[ cd ];
+			final float[] plane = new float[ cw * ch ];
+			for ( int z = 0; z < cd; ++z )
+			{
+				ra.setPosition( minZ + z, 2 );
+				int cnt = 0;
+				for ( int y = 0; y < ch; ++y )
+				{
+					ra.setPosition( minY + y, 1 );
+					final int rowOff = y * cw;
+					for ( int x = 0; x < cw; ++x )
+					{
+						final int fIdx = rowOff + x;
+						final float flat = field.flat[ fIdx ];
+						if ( flat <= FLAT_EPS )
+							continue;
+						ra.setPosition( minX + x, 0 );
+						final double raw = ra.get().getRealDouble();
+						final double dark = ( field.dark != null ) ? field.dark[ fIdx ] : 0.0;
+						plane[ cnt++ ] = ( float ) ( ( raw - dark ) / flat );
+					}
+				}
+				b[ z ] = ( cnt == 0 ) ? 0.0 : percentile( Arrays.copyOf( plane, cnt ), percentile );
+			}
+			return b;
+		}
+		else // VIEW
+		{
+			final float[] all = new float[ cw * ch * cd ];
+			int cnt = 0;
+			for ( int z = 0; z < cd; ++z )
+			{
+				ra.setPosition( minZ + z, 2 );
+				for ( int y = 0; y < ch; ++y )
+				{
+					ra.setPosition( minY + y, 1 );
+					final int rowOff = y * cw;
+					for ( int x = 0; x < cw; ++x )
+					{
+						final int fIdx = rowOff + x;
+						final float flat = field.flat[ fIdx ];
+						if ( flat <= FLAT_EPS )
+							continue;
+						ra.setPosition( minX + x, 0 );
+						final double raw = ra.get().getRealDouble();
+						final double dark = ( field.dark != null ) ? field.dark[ fIdx ] : 0.0;
+						all[ cnt++ ] = ( float ) ( ( raw - dark ) / flat );
+					}
+				}
+			}
+			final double val = ( cnt == 0 ) ? 0.0 : percentile( Arrays.copyOf( all, cnt ), percentile );
+			return new double[] { val };
+		}
+	}
+
+	/**
+	 * Compute the per-z baseline delta to subtract for a view, per drift mode:
+	 * <ul>
+	 *   <li>IGNORE: {@code null} (no subtraction).</li>
+	 *   <li>ZERO:   {@code b_view} (remove the view's own baseline fully).</li>
+	 *   <li>MEAN:   {@code b_view - refMean} (level the view to the group mean).</li>
+	 * </ul>
+	 * VIEW granularity carries {@code b_view.length == 1}; the block op reuses that
+	 * single value for every z.
+	 *
+	 * @param mode     one of "IGNORE", "ZERO", "MEAN"
+	 * @param bView    the view baseline (SLICE: length=depth; VIEW: length 1)
+	 * @param refMean  group temporal-mean baseline (used only for MEAN)
+	 */
+	public static double[] baselineDelta( final String mode, final double[] bView, final double refMean )
+	{
+		if ( mode == null || mode.equalsIgnoreCase( "IGNORE" ) || bView == null )
+			return null;
+		if ( mode.equalsIgnoreCase( "ZERO" ) )
+			return bView.clone();
+		if ( mode.equalsIgnoreCase( "MEAN" ) )
+		{
+			final double[] d = new double[ bView.length ];
+			for ( int i = 0; i < bView.length; ++i )
+				d[ i ] = bView[ i ] - refMean;
+			return d;
+		}
+		throw new IllegalArgumentException( "Unknown baseline drift mode '" + mode + "'." );
+	}
+
+	/** Mean of all entries across all baseline arrays in a group (the "temporal mean"). */
+	public static double groupRefMean( final Iterable< double[] > baselines )
+	{
+		double sum = 0.0;
+		long cnt = 0;
+		for ( final double[] b : baselines )
+		{
+			if ( b == null )
+				continue;
+			for ( final double v : b )
+			{
+				sum += v;
+				++cnt;
+			}
+		}
+		return ( cnt == 0 ) ? 0.0 : sum / cnt;
 	}
 
 	/** Clear the per-JVM field cache (used by tests). */
