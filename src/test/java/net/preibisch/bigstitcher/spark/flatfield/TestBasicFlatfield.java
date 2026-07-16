@@ -132,8 +132,11 @@ public class TestBasicFlatfield
 			for ( int x = 0; x < W; ++x )
 				gtDark[ y * W + x ] = ( float ) ( 10.0 + 25.0 * ( ( double ) x / W ) );
 
+		final BasicFlatfieldParams params = BasicFlatfieldParams.defaults();
+
 		// build frames: base intensity * scale * flatfield + darkfield + noise + sparse foreground
-		final List< RandomAccessibleInterval< ? extends RealType< ? > > > frames = new ArrayList<>();
+		int frameIndex = 0;
+		BasicFlatfield.FramesStack frameStack = BasicFlatfield.createFramesStack( H, W, params.workingSize, params.workingSize, N );
 		for ( int k = 0; k < N; ++k )
 		{
 			final double scale = 40.0 + 80.0 * rnd.nextDouble();
@@ -141,17 +144,16 @@ public class TestBasicFlatfield
 			for ( int p = 0; p < H * W; ++p )
 			{
 				double val = scale * gtFlat[ p ] + gtDark[ p ];
-				val += rnd.nextGaussian() * 1.0; // read noise
+				val += rnd.nextGaussian(); // read noise
 				// sparse bright specks to exercise the sparse-residual term
 				if ( rnd.nextDouble() < 0.01 )
 					val += 50.0 + 100.0 * rnd.nextDouble();
 				frame[ p ] = ( float ) Math.max( val, 0.0 );
 			}
-			frames.add( ArrayImgs.floats( frame, W, H ) );
+			frameStack.setFrame( frameIndex++, ArrayImgs.floats( frame, W, H ) );
 		}
 
-		final BasicFlatfieldParams params = BasicFlatfieldParams.defaults();
-		final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params, rnd );
+		final BasicFlatfieldResult result = BasicFlatfield.estimate( frameStack, params, rnd );
 
 		final float[] estFlat = toArray( result.flatfield, H, W );
 		final float[] estDark = toArray( result.darkfield, H, W );

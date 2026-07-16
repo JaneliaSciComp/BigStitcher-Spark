@@ -29,15 +29,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-
-import org.janelia.saalfeldlab.n5.Compression;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
-import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
+import java.util.Random;
+import java.util.stream.IntStream;
 
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.SetupImgLoader;
@@ -55,6 +48,14 @@ import net.preibisch.bigstitcher.spark.flatfield.BasicFlatfieldResult;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import org.janelia.saalfeldlab.n5.Compression;
+import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.codec.checksum.Crc32cChecksumCodec;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
+import org.janelia.saalfeldlab.n5.universe.StorageFormat;
+import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3DatasetAttributes;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
@@ -207,6 +208,7 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		final Map< String, List< ViewId > > groups = groupByChannelIllumination( spimData, views );
 		System.out.println( "Estimating flatfield/darkfield for " + groups.size() + " (channel,illumination) group(s)." );
 
+		final Random rng = new Random( seed );
 		for ( final Entry< String, List< ViewId > > group : groups.entrySet() )
 		{
 			final String groupKey = group.getKey();
@@ -214,15 +216,13 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 
 			System.out.println( "\n=== Group " + groupKey + " (" + groupViews.size() + " view(s)) ===" );
 
-			final java.util.Random rng = new java.util.Random( seed );
-
 			// (1) randomly select numViewSetups view setups from this group's candidate pool
 			final List< ViewId > selectedViews = selectViewSetups( groupViews, numViewSetups, rng );
 
 			System.out.println( "\n=== Group " + groupKey + " selected views: " + selectedViews + " ===" );
 
 			// (2) build frames: every z-slice of every selected view is one frame that shares the profile
-			final List< RandomAccessibleInterval< ? extends RealType< ? > > > frames = loadFrames( spimData, selectedViews );
+			final BasicFlatfield.FramesStack frames = loadFrames( spimData, selectedViews, rng, numFrames, workingSize );
 
 			if ( frames.isEmpty() )
 			{
@@ -230,16 +230,10 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 				continue;
 			}
 
-			// (3) randomly subsample to numFrames total frames
-			if ( numFrames != null && numFrames > 0 && frames.size() > numFrames )
-			{
-				Collections.shuffle( frames, rng );
-				while ( frames.size() > numFrames )
-					frames.remove( frames.size() - 1 );
-				System.out.println( "  sub-sampled to " + frames.size() + " frame(s)." );
-			}
-
 			System.out.println( "  estimating from " + frames.size() + " frame(s)..." );
+
+			writeField( n5Writer, groupKey + "/frames", frames.asImage(), params, null, compression, new int[] {128,128,128}, new int[]{1,1,1}, false);
+
 			final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params, rng );
 
 			if ( dryRun )
@@ -316,11 +310,16 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 	 * differing X/Y size in a group are skipped with a warning.
 	 */
 	@SuppressWarnings({ "unchecked", "rawtypes" })
-	private static List< RandomAccessibleInterval< ? extends RealType< ? > > > loadFrames( final SpimData2 spimData, final List< ViewId > groupViews )
+	private static BasicFlatfield.FramesStack loadFrames( final SpimData2 spimData,
+														  final List< ViewId > groupViews,
+														  final Random rng,
+														  final Integer nframesPerView,
+														  final Integer workingSize)
 	{
-		final List< RandomAccessibleInterval< ? extends RealType< ? > > > frames = new ArrayList<>();
-		long[] frameSize = null;
-
+		int nViews = groupViews.size();
+		BasicFlatfield.FramesStack framesStack = null;
+		int frameIndex = 0;
+		int viewDims = 0;
 		for ( final ViewId v : groupViews )
 		{
 			final SetupImgLoader< ? > sil = spimData.getSequenceDescription().getImgLoader().getSetupImgLoader( v.getViewSetupId() );
@@ -328,40 +327,62 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 
 			if ( !( imgRaw.randomAccess().get() instanceof RealType ) )
 			{
-				System.out.println( "  view " + v.getViewSetupId() + " is not a RealType image, skipping." );
-				continue;
+				throw new IllegalArgumentException( "  view " + v.getViewSetupId() + " is not a RealType image" );
 			}
+
 			final RandomAccessibleInterval< ? extends RealType< ? > > img = ( RandomAccessibleInterval ) imgRaw;
 
-			final long sx = img.dimension( 0 );
-			final long sy = img.dimension( 1 );
-			if ( frameSize == null )
-				frameSize = new long[] { sx, sy };
-			else if ( frameSize[ 0 ] != sx || frameSize[ 1 ] != sy )
+			if (framesStack == null) {
+				viewDims = img.numDimensions();
+				int sx = (int) img.dimension( 0  );
+				int sy = (int) img.dimension( 1  );
+				int sz = viewDims == 2 ? 1 : (int) img.dimension( 2 ) ;
+				int frameSize = workingSize == null ? 0 : workingSize;
+				int nframes;
+				if (viewDims == 2) {
+					nframes = nViews;
+				} else if (viewDims == 3) {
+					if ( nframesPerView != null && nframesPerView > 0 && nframesPerView < sz ) {
+						nframes = nViews * nframesPerView;
+					} else {
+						nframes = nViews * sz;
+					}
+				} else {
+					throw new IllegalArgumentException( "view " + v.getViewSetupId() + " has " + img.numDimensions() + " dimensions. Currently it only supports 2 or 3 dimensions." );
+				}
+				framesStack = BasicFlatfield.createFramesStack(sx, sy, frameSize, frameSize, nframes);
+			}
+
+			if ( img.numDimensions() != viewDims )
 			{
-				System.out.println( "  view " + v.getViewSetupId() + " has different X/Y size " + sx + "x" + sy
-						+ " (expected " + frameSize[ 0 ] + "x" + frameSize[ 1 ] + "), skipping." );
-				continue;
+				System.out.println("Warning: all views are expected to have the same dimensions: " + viewDims + " vs. " + img.numDimensions());
 			}
 
 			if ( img.numDimensions() == 2 )
 			{
-				frames.add( img );
+				framesStack.setFrame(frameIndex++, img);
 			}
-			else if ( img.numDimensions() == 3 )
+			else // numDimensions == 3 otherwise it would've thrown IllegalArgument already
 			{
-				final long zMin = img.min( 2 );
-				final long zMax = img.max( 2 );
-				for ( long z = zMin; z <= zMax; ++z )
-					frames.add( Views.hyperSlice( img, 2, z ) );
-			}
-			else
-			{
-				System.out.println( "  view " + v.getViewSetupId() + " has " + img.numDimensions() + " dims, skipping." );
+				int[] zs;
+				int zSize = (int) img.dimension(2);
+				if ( nframesPerView != null && nframesPerView > 0 && nframesPerView < zSize )
+				{
+					System.out.println( "  Sample " + nframesPerView + " out of " + zSize + " frame(s) from " + v );
+					zs = rng.ints(nframesPerView, 0, zSize).toArray();
+				}
+				else
+				{
+					System.out.println( "  Select all " + zSize + " frame(s) from " + v );
+					zs = IntStream.range(0, zSize).toArray();
+				}
+				for ( int z : zs ) {
+					framesStack.setFrame(frameIndex++, Views.hyperSlice( img, 2, z ));
+				}
 			}
 		}
 
-		return frames;
+		return framesStack;
 	}
 
 	private static void writeField(
@@ -408,8 +429,10 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		n5Writer.setAttribute( dataset, "maxReweightIterations", params.maxReweightIterations );
 		n5Writer.setAttribute( dataset, "epsilon", params.epsilon );
 		n5Writer.setAttribute( dataset, "workingSize", params.workingSize );
-		n5Writer.setAttribute( dataset, "baseline", result.baseline );
-		n5Writer.setAttribute( dataset, "numFrames", result.frameScales.length );
+		if (result != null) {
+			n5Writer.setAttribute( dataset, "baseline", result.baseline );
+			n5Writer.setAttribute( dataset, "numFrames", result.frameScales.length );
+		}
 	}
 
 	static void validateBlockSizeOption( final String option, final int[] values, final int numDimensions )

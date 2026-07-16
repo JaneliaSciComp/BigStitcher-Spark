@@ -63,6 +63,101 @@ public class BasicFlatfield
 {
 	private static final float EPS = 1e-7f; // ~ eps(Float32) scale used for guards
 
+	public static class FramesStack {
+		final int sourceWidth;
+		final int sourceHeight;
+		final int frameWidth;
+		final int frameHeight;
+		final int nFrames;
+		final int frameSize;
+		final float[][] stack;
+
+		private FramesStack(int sourceWidth, int sourceHeight, int workingSize, int nFrames) {
+			this.sourceWidth = sourceWidth;
+			this.sourceHeight = sourceHeight;
+			this.frameWidth = workingSize > 0 && workingSize < sourceWidth ? workingSize : sourceWidth;
+			this.frameHeight = workingSize > 0 && workingSize < sourceHeight ? workingSize : sourceHeight;
+			this.nFrames = nFrames;
+			this.frameSize = frameWidth	* frameHeight;
+			stack = new float[nFrames][];
+		}
+
+		public void setFrame(int frameIndex, RandomAccessibleInterval< ? extends RealType< ? > > frame) {
+			if ( frame.dimension( 0 ) != sourceWidth || frame.dimension( 1 ) != sourceHeight )
+				throw new IllegalArgumentException( "all frames must have the same size " +
+						frame.dimension( 0 ) + " x " + frame.dimension(1) +
+						" != " +
+						sourceWidth + " x " + sourceHeight );
+
+			stack[frameIndex] = getFrame(frame, frameWidth, frameHeight);
+		}
+
+		public boolean isEmpty() {
+			return nFrames == 0;
+		}
+
+		public int size()  {
+			return nFrames;
+		}
+
+		float[] avg( )
+		{
+			final float[] avg = new float[ frameSize ];
+			for ( int p = 0; p < frameSize; ++p )
+			{
+				double s = 0.0;
+				for ( int k = 0; k < nFrames; ++k )
+					s += stack[ k ][ p ];
+				avg[ p ] = ( float ) ( s / nFrames );
+			}
+			return avg;
+		}
+
+		double mean() {
+			double sum = 0.0;
+			for ( int k = 0; k < nFrames; ++k )
+				for ( int p = 0; p < frameSize; ++p )
+					sum += stack[ k ][ p ];
+			return sum / ( ( double ) frameSize * nFrames );
+		}
+
+		void divide(double v) {
+			for ( int k = 0; k < nFrames; ++k )
+				for ( int p = 0; p < frameSize; ++p )
+					stack[ k ][ p ] /= ( float ) v;
+		}
+
+		void sort()
+		{
+			// ── Per-pixel sort along the frame axis (matches MATLAB sort(D,3)) ────────
+			final float[] col = new float[ nFrames ];
+			for ( int p = 0; p < frameSize; ++p )
+			{
+				for ( int k = 0; k < nFrames; ++k )
+					col[ k ] = stack[ k ][ p ];
+
+				Arrays.sort( col );
+
+				for ( int k = 0; k < nFrames; ++k )
+					stack[ k ][ p ] = col[ k ];
+			}
+		}
+
+		public RandomAccessibleInterval< FloatType > asImage() {
+			float[] imgArray = new float[ frameSize * nFrames ];
+			for (int k  = 0; k < nFrames; ++k ) {
+				for ( int p = 0; p < frameSize; ++p ) {
+					imgArray[ frameSize * k + p ] = stack[ k ][ p ];
+				}
+			}
+			return ArrayImgs.floats( imgArray, frameWidth, frameHeight, nFrames );
+		}
+	}
+
+	public static FramesStack createFramesStack( int imageWidth, int imageHeight, int frameWidth, int frameHeight, int nFrames ) {
+		return new FramesStack(imageWidth, imageHeight, frameWidth, nFrames);
+	}
+
 	/**
 	 * Estimate flatfield and darkfield from a stack of 2D frames.
 	 *
@@ -73,22 +168,19 @@ public class BasicFlatfield
 	 *         and darkfield baseline
 	 */
 	public static BasicFlatfieldResult estimate(
-			final List< RandomAccessibleInterval< ? extends RealType< ? > > > images,
+			final FramesStack images,
 			final BasicFlatfieldParams params,
 			final Random rng )
 	{
 		long start = System.currentTimeMillis();
-		final int N = images.size();
+		final int N = images.nFrames;
 		if ( N == 0 )
 			throw new IllegalArgumentException( "BaSiC: empty image list" );
 
-		System.out.printf("Estimate darkfield/flatfield from %d images using %s\n", images.size(), params );
-		final RandomAccessibleInterval< ? extends RealType< ? > > first = images.get( 0 );
-		if ( first.numDimensions() != 2 )
-			throw new IllegalArgumentException( "BaSiC: frames must be 2D, got " + first.numDimensions() + "D" );
+		System.out.printf("Estimate darkfield/flatfield from %d images using %s\n", images.nFrames, params );
 
-		final int H_orig = ( int ) first.dimension( 1 ); // rows (Y)
-		final int W_orig = ( int ) first.dimension( 0 ); // cols (X)
+		final int H_orig = images.sourceHeight;
+		final int W_orig = images.sourceWidth;
 
 		final int ws = params.workingSize;
 		final int H = ( ws > 0 ) ? ws : H_orig;
@@ -98,55 +190,20 @@ public class BasicFlatfield
 		System.out.printf( "Image size used for darkfield/flatfield (%d, %d) -> (%d, %d)\n", H_orig, W_orig, H, W );
 
 		// ── Load frames into row-major float planes, optionally resize ────────────
-		final float[][] D = new float[ N ][];
-		for ( int k = 0; k < N; ++k )
-		{
-			final RandomAccessibleInterval< ? extends RealType< ? > > frame = images.get( k );
-			if ( frame.dimension( 0 ) != W_orig || frame.dimension( 1 ) != H_orig )
-				throw new IllegalArgumentException( "BaSiC: all frames must share the same size" );
-
-			final float[] plane = toPlane( frame );
-			D[ k ] = ( ws > 0 && ( H_orig != H || W_orig != W ) )
-					? resize( plane, H_orig, W_orig, H, W )
-					: plane;
-		}
+		final float[][] D = images.stack;
 
 		// ── Normalize so working values hover around 1 ────────────────────────────
-		double sum = 0.0;
-		for ( int k = 0; k < N; ++k )
-			for ( int p = 0; p < HW; ++p )
-				sum += D[ k ][ p ];
-		final double globalMean = sum / ( ( double ) HW * N );
+		final double globalMean = images.mean();
 		if ( globalMean < EPS )
 			throw new IllegalArgumentException( "BaSiC: image stack is all-zero" );
 
 		System.out.printf( "Normalize images using global mean: %f\n", globalMean );
+		images.divide( globalMean );
 
-		for ( int k = 0; k < N; ++k )
-			for ( int p = 0; p < HW; ++p )
-				D[ k ][ p ] /= ( float ) globalMean;
-
-		// ── Per-pixel sort along the frame axis (matches MATLAB sort(D,3)) ────────
-		// After sorting, D[0][p] is the per-pixel minimum across frames.
-		final float[] col = new float[ N ];
-		for ( int p = 0; p < HW; ++p )
-		{
-			for ( int k = 0; k < N; ++k )
-				col[ k ] = D[ k ][ p ];
-			Arrays.sort( col );
-			for ( int k = 0; k < N; ++k )
-				D[ k ][ p ] = col[ k ];
-		}
+		images.sort();
 
 		// mean_img[p]: spatial mean over all frames
-		final float[] meanImg = new float[ HW ];
-		for ( int p = 0; p < HW; ++p )
-		{
-			double s = 0.0;
-			for ( int k = 0; k < N; ++k )
-				s += D[ k ][ p ];
-			meanImg[ p ] = ( float ) ( s / N );
-		}
+		final float[] meanImg = images.avg();
 
 		// ── Auto-lambdaFlatfield ───────────────────────────────────────────────────────────
 		final float[] lambdas = params.deriveLambdas( meanImg, H, W );
@@ -155,8 +212,8 @@ public class BasicFlatfield
 		System.out.println( "BaSiC auto-params: lambdaFlatfield=" + lambdaFlatfield + " lambdaDarkfield=" + lambdaDarkfield );
 
 		// ── Spectral norm for penalty initialisation ──────────────────────────────
-		final float normTwo = ( float ) spectralNorm( D, HW, N );
-		final float normD = ( float ) frobeniusNorm( D, HW, N );
+		final float normTwo = ( float ) spectralNorm( D, rng, HW );
+		final float normD = ( float ) frobeniusNorm( D, HW );
 		final float muInit = 12.5f / normTwo;
 		final float muBar = muInit * 1e7f;
 		final float rho = 1.5f;
@@ -202,7 +259,8 @@ public class BasicFlatfield
 		final float[] flatfieldPrev = new float[ HW ];
 		Arrays.fill( flatfieldPrev, 1f );
 		final float[] darkfieldPrev = new float[ HW ];
-		for  ( int k = 0; k < darkfieldPrev.length; ++k ) darkfieldPrev[k] = (float) rng.nextGaussian();
+		for  ( int k = 0; k < darkfieldPrev.length; ++k )
+			darkfieldPrev[k] = (float) rng.nextGaussian();
 
 		float B1_offsetFinal = 0f;
 
@@ -295,8 +353,12 @@ public class BasicFlatfield
 			darkfield[ p ] *= ( float ) globalMean;
 
 		// ── Resize outputs back to original dimensions if working_size was used ────
-		final float[] flatOut = ( H_orig != H || W_orig != W ) ? resize( flatfield, H, W, H_orig, W_orig ) : flatfield;
-		final float[] darkOut = ( H_orig != H || W_orig != W ) ? resize( darkfield, H, W, H_orig, W_orig ) : darkfield;
+		final float[] flatOut = H_orig != H || W_orig != W
+				? resize( flatfield, H, W, H_orig, W_orig )
+				: flatfield;
+		final float[] darkOut = H_orig != H || W_orig != W
+				? resize( darkfield, H, W, H_orig, W_orig )
+				: darkfield;
 
 		// wrap as ArrayImg<FloatType> in (X=W, Y=H) imglib2 order
 		final ArrayImg< FloatType, FloatArray > flatImg = ArrayImgs.floats( flatOut, W_orig, H_orig );
@@ -650,14 +712,12 @@ public class BasicFlatfield
 		return ( float ) ( s / x.length );
 	}
 
-	private static double frobeniusNorm( final float[][] D, final int HW, final int N )
+	private static double frobeniusNorm( final float[][] D, final int HW )
 	{
 		double s = 0.0;
-		for ( int k = 0; k < N; ++k )
-		{
-			final float[] Dk = D[ k ];
-			for ( int p = 0; p < HW; ++p )
-				s += ( double ) Dk[ p ] * Dk[ p ];
+		for (final float[] Dk : D) {
+			for (int p = 0; p < HW; ++p)
+				s += (double) Dk[p] * Dk[p];
 		}
 		return Math.sqrt( s );
 	}
@@ -666,9 +726,10 @@ public class BasicFlatfield
 	 * Largest singular value of the flattened (HW x N) stack D, via power
 	 * iteration on the NxN Gram matrix G = D^T D. sigma_max = sqrt(lambda_max(G)).
 	 */
-	private static double spectralNorm( final float[][] D, final int HW, final int N )
+	private static double spectralNorm( final float[][] D, final Random rng, final int HW )
 	{
 		// G[i][j] = sum_p D[i][p] * D[j][p]  (frame-major: D[k] is a frame plane)
+		final int N = D.length;
 		final double[][] G = new double[ N ][ N ];
 		for ( int i = 0; i < N; ++i )
 		{
@@ -686,9 +747,8 @@ public class BasicFlatfield
 
 		// power iteration for the largest eigenvalue of G
 		double[] v = new double[ N ];
-		final Random rnd = new Random( 42L );
 		for ( int i = 0; i < N; ++i )
-			v[ i ] = rnd.nextDouble() + 1e-3;
+			v[ i ] = rng.nextDouble() + 1e-3;
 		normalize( v );
 
 		double eig = 0.0;
@@ -738,16 +798,22 @@ public class BasicFlatfield
 	// ─── I/O + resize helpers ──────────────────────────────────────────────────────
 
 	/** Read a 2D RAI into a row-major float[H*W] plane (fast axis = W = X). */
-	private static float[] toPlane( final RandomAccessibleInterval< ? extends RealType< ? > > frame )
+	private static float[] getFrame( final RandomAccessibleInterval< ? extends RealType< ? > > image,
+									 final int frameWidth, final int frameHeight )
 	{
-		int size = (int) (frame.dimension(0) * frame.dimension(1));
+		final int H_orig = ( int ) image.dimension( 1 ); // rows (Y)
+		final int W_orig = ( int ) image.dimension( 0 ); // cols (X)
+
+		int size = H_orig * W_orig;
 		final float[] plane = new float[ size ];
-		Cursor< ? extends RealType< ? > > fc = frame.cursor();
+		Cursor< ? extends RealType< ? > > fc = image.cursor();
 		int planeIndex = 0;
 		while ( fc.hasNext() ) {
 			plane[ planeIndex++ ] = fc.next().getRealFloat();
 		}
-		return plane;
+		return frameWidth != W_orig || frameHeight != H_orig
+				? resize( plane, H_orig, W_orig, frameHeight, frameWidth )
+				: plane;
 	}
 
 	/**
@@ -763,13 +829,21 @@ public class BasicFlatfield
 		// wrap as (X=W, Y=H)
 		final ArrayImg< FloatType, FloatArray > img = ArrayImgs.floats( in, W, H );
 
-		final double sx = ( double ) W / newW;
-		final double sy = ( double ) H / newH;
+		// affineReal(source, t) expects t to map SOURCE -> TARGET coordinates
+		// (it inverts internally so target pixel x reads source at t^-1(x)).
+		// We want the standard "align pixel centers / scale by size ratio"
+		// mapping:  source = (target + 0.5) * (W/newW) - 0.5.
+		// The forward (source -> target) transform is therefore:
+		//   target = source * (newW/W) + (0.5*(newW/W) - 0.5)
+		final double scaleX = ( double ) newW / W;
+		final double scaleY = ( double ) newH / H;
+		final double transX = 0.5 * scaleX - 0.5;
+		final double transY = 0.5 * scaleY - 0.5;
 
 		final AffineTransform2D t = new AffineTransform2D();
 		t.set(
-				sx, 0, 0.5 * ( sx - 1.0 ),
-				0, sy, 0.5 * ( sy - 1.0 )
+				scaleX, 0, transX,
+				0, scaleY, transY
 		);
 
 		final RealRandomAccessible< FloatType > interp = Views.interpolate( Views.extendBorder( img ), new NLinearInterpolatorFactory<>() );
