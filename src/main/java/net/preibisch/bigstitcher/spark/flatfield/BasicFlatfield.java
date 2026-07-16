@@ -222,13 +222,18 @@ public class BasicFlatfield
 
 		System.out.printf( "Spectral norm: %f, Frobenius norm: %f\n", normTwo, normD );
 
-		// Upper bound for darkfield: mean of per-pixel minima over frames (D[0] after sort)
+		// Upper bound for darkfield: global minimum of the (sorted, normalized) stack.
+		// MATLAB/Fiji BaSiC uses B1_uplimit = min(D(:)); since D is sorted ascending
+		// along frames, D[0] holds the per-pixel minima and min(D[0]) == min(D(:)).
+		// (The Julia reference deviates here, using mean(D[:,:,1]); that looser bound
+		// lets B1_offset grow larger and shifts the darkfield DC level up.)
 		float darkfieldLimit;
 		{
-			double s = 0.0;
+			float m = Float.POSITIVE_INFINITY;
 			for ( int p = 0; p < HW; ++p )
-				s += D[ 0 ][ p ];
-			darkfieldLimit = ( float ) ( s / HW );
+				if ( D[ 0 ][ p ] < m )
+					m = D[ 0 ][ p ];
+			darkfieldLimit = m;
 		}
 
 		final boolean estimateDarkfield = params.estimateDarkfield;

@@ -232,8 +232,6 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 
 			System.out.println( "  estimating from " + frames.size() + " frame(s)..." );
 
-			writeField( n5Writer, groupKey + "/frames", frames.asImage(), params, null, compression, new int[] {128,128,128}, new int[]{1,1,1}, false);
-
 			final BasicFlatfieldResult result = BasicFlatfield.estimate( frames, params, rng );
 
 			if ( dryRun )
@@ -429,10 +427,8 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		n5Writer.setAttribute( dataset, "maxReweightIterations", params.maxReweightIterations );
 		n5Writer.setAttribute( dataset, "epsilon", params.epsilon );
 		n5Writer.setAttribute( dataset, "workingSize", params.workingSize );
-		if (result != null) {
-			n5Writer.setAttribute( dataset, "baseline", result.baseline );
-			n5Writer.setAttribute( dataset, "numFrames", result.frameScales.length );
-		}
+		n5Writer.setAttribute( dataset, "baseline", result.baseline );
+		n5Writer.setAttribute( dataset, "numFrames", result.frameScales.length );
 	}
 
 	static void validateBlockSizeOption( final String option, final int[] values, final int numDimensions )
