@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Random;
 
 import net.imglib2.Cursor;
-import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealRandomAccess;
 import net.imglib2.RealRandomAccessible;
@@ -34,8 +33,6 @@ import net.imglib2.img.array.ArrayImg;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
-import net.imglib2.realtransform.AffineGet;
-import net.imglib2.realtransform.AffineRealRandomAccessible;
 import net.imglib2.realtransform.AffineTransform2D;
 import net.imglib2.realtransform.RealViews;
 import net.imglib2.type.numeric.RealType;
@@ -239,8 +236,11 @@ public class BasicFlatfield
 		final boolean estimateDarkfield = params.estimateDarkfield;
 
 		// ── Optimisation variables ─────────────────────────────────────────────────
+		// NOTE: W_hat / A_offset / A1_coeff are reset at the start of every
+		// reweighting iteration (MATLAB/Fiji re-initialize the whole model per call
+		// to inexact_alm_rspca_l1; only the reweight coefficients persist). No
+		// warm-start here — the first ALM iteration rebuilds W_hat from meanImg.
 		final float[] W_hat = new float[ HW ];            // flatfield DCT coefficients
-		Dct2D.dct2( meanImg, W_hat, H, W );
 		final float[][] E = new float[ N ][ HW ];         // sparse residual
 		final float[] A1_coeff = new float[ N ];          // per-frame illumination scale
 		Arrays.fill( A1_coeff, 1f );
@@ -250,7 +250,7 @@ public class BasicFlatfield
 			Arrays.fill( W_coeff[ k ], 1f );
 
 		// ── Pre-allocated buffers ──────────────────────────────────────────────────
-		float[] f = new float[ HW ];                      // spatial flatfield = max(idct2(W_hat),0)
+		float[] f = new float[ HW ];                      // spatial flatfield = idct2(W_hat)
 		final float[][] A1_hat = new float[ N ][ HW ];    // low-rank model prediction
 		final float[] R_W = new float[ HW ];              // mean-over-frames W-update residual
 		final float[][] R1 = new float[ N ][ HW ];        // D - E: the "clean" low-rank part
@@ -271,7 +271,12 @@ public class BasicFlatfield
 
 		for ( int rw = 1; rw <= params.maxReweightIterations; ++rw )
 		{
-			// reset Lagrange multiplier and sparse residual together
+			// Re-initialize the model exactly as MATLAB/Fiji do on each call to
+			// inexact_alm_rspca_l1: W_hat=0, A_offset=0, A1_coeff=1, Y1=0, E=0.
+			// Only W_coeff (the reweighting weights) carries across iterations.
+			Arrays.fill( W_hat, 0f );
+			Arrays.fill( A_offset, 0f );
+			Arrays.fill( A1_coeff, 1f );
 			for ( int k = 0; k < N; ++k )
 			{
 				Arrays.fill( Y1[ k ], 0f );
@@ -289,16 +294,16 @@ public class BasicFlatfield
 			B1_offsetFinal = B1_offset;
 
 			// Add scalar darkfield component accumulated during ALM iterations
+			// (MATLAB: A_offset += B1_offset * W_idct_hat, un-clamped flatfield)
 			if ( estimateDarkfield )
 			{
-				// f currently holds max(idct2(W_hat),0) from the last ALM iteration
-				idct2Nonneg( W_hat, f, H, W );
+				Dct2D.idct2( W_hat, f, H, W );
 				for ( int p = 0; p < HW; ++p )
 					A_offset[ p ] += B1_offset * f[ p ];
 			}
 
 			// ── Reweighting convergence check (normalized L1) ─────────────────────
-			idct2Nonneg( W_hat, f, H, W );
+			Dct2D.idct2( W_hat, f, H, W );
 			final float meanA1 = mean( A1_coeff );
 			for ( int p = 0; p < HW; ++p )
 				ffCurr[ p ] = f[ p ] * meanA1;
@@ -341,9 +346,10 @@ public class BasicFlatfield
 			updateWeights( W_coeff, E, f, A1_coeff, A_offset, params.epsilon, H, W, N );
 		}
 
-		// ── Final flatfield: non-negative, normalised to mean = 1 ─────────────────
+		// ── Final flatfield: idct2(W_hat) normalised to mean = 1 (MATLAB does not
+		// clamp the flatfield to >= 0) ────────────────────────────────────────────
 		final float[] flatfield = new float[ HW ];
-		idct2Nonneg( W_hat, flatfield, H, W );
+		Dct2D.idct2( W_hat, flatfield, H, W );
 		float flatMean = mean( flatfield );
 		if ( flatMean < EPS )
 			flatMean = 1f;
@@ -398,8 +404,8 @@ public class BasicFlatfield
 
 		for ( int iter = 1; iter <= maxIterations; ++iter )
 		{
-			// f = max(idct2(W_hat), 0)
-			idct2Nonneg( W_hat, f, H, W );
+			// f = idct2(W_hat)  (MATLAB W_idct_hat; no non-negativity clamp)
+			Dct2D.idct2( W_hat, f, H, W );
 			// A1_hat = f * A1_coeff[k] + A_offset
 			buildA1Hat( A1_hat, f, A1_coeff, A_offset, HW, N );
 
@@ -423,7 +429,7 @@ public class BasicFlatfield
 			shrink( W_hat, lambda / ( ent1 * mu ) );
 
 			// recompute f and A1_hat
-			idct2Nonneg( W_hat, f, H, W );
+			Dct2D.idct2( W_hat, f, H, W );
 			buildA1Hat( A1_hat, f, A1_coeff, A_offset, HW, N );
 
 			// ── Update E (sparse residual) ────────────────────────────────────────
@@ -684,14 +690,6 @@ public class BasicFlatfield
 			out[ p ] *= inv;
 	}
 
-	/** out := max(idct2(coeffs), 0). {@code out} must differ from {@code coeffs}. */
-	private static void idct2Nonneg( final float[] coeffs, final float[] out, final int H, final int W )
-	{
-		Dct2D.idct2( coeffs, out, H, W );
-		for ( int p = 0; p < out.length; ++p )
-			out[ p ] = Math.max( out[ p ], 0f );
-	}
-
 	/** In-place soft-threshold: x = sign(x)*max(|x|-t, 0). */
 	private static void shrink( final float[] x, final float t )
 	{
@@ -822,9 +820,20 @@ public class BasicFlatfield
 	}
 
 	/**
-	 * Bilinear resize of a row-major HxW plane to newH x newW using imglib2's
-	 * {@link NLinearInterpolatorFactory}. Coordinate mapping follows the standard
-	 * "align pixel centers / scale by size ratio" convention.
+	 * Resize a row-major HxW plane to newH x newW using imglib2's
+	 * {@link RealViews#affineReal} with an {@link NLinearInterpolatorFactory}
+	 * (bilinear).
+	 * <p>
+	 * {@code affineReal(source, t)} treats {@code t} as the source&rarr;target
+	 * transform (it inverts internally, so target pixel {@code x} samples the source
+	 * at {@code t}<sup>-1</sup>{@code (x)}). We use the standard "align pixel centers
+	 * / scale by size ratio" mapping {@code source = (target + 0.5)*(W/newW) - 0.5},
+	 * whose forward form is {@code target = source*(newW/W) + (0.5*newW/W - 0.5)}.
+	 * <p>
+	 * Caveat: bilinear does <b>not</b> anti-alias when downsampling frames by a large
+	 * factor (e.g. 920&rarr;128) — to suppress aliasing there, low-pass first (e.g.
+	 * {@code Gauss3}) before sampling. This does not match the Fiji BaSiC plugin's
+	 * resize exactly.
 	 */
 	public static float[] resize( final float[] in, final int H, final int W, final int newH, final int newW )
 	{
@@ -834,12 +843,6 @@ public class BasicFlatfield
 		// wrap as (X=W, Y=H)
 		final ArrayImg< FloatType, FloatArray > img = ArrayImgs.floats( in, W, H );
 
-		// affineReal(source, t) expects t to map SOURCE -> TARGET coordinates
-		// (it inverts internally so target pixel x reads source at t^-1(x)).
-		// We want the standard "align pixel centers / scale by size ratio"
-		// mapping:  source = (target + 0.5) * (W/newW) - 0.5.
-		// The forward (source -> target) transform is therefore:
-		//   target = source * (newW/W) + (0.5*(newW/W) - 0.5)
 		final double scaleX = ( double ) newW / W;
 		final double scaleY = ( double ) newH / H;
 		final double transX = 0.5 * scaleX - 0.5;
@@ -851,9 +854,9 @@ public class BasicFlatfield
 				0, scaleY, transY
 		);
 
-		final RealRandomAccessible< FloatType > interp = Views.interpolate( Views.extendBorder( img ), new NLinearInterpolatorFactory<>() );
-		final AffineRealRandomAccessible< FloatType, AffineGet > transformed = RealViews.affineReal(interp, t);
-		final RealRandomAccess<FloatType> ra = transformed.realRandomAccess();
+		final RealRandomAccessible< FloatType > interp =
+				Views.interpolate( Views.extendBorder( img ), new NLinearInterpolatorFactory<>() );
+		final RealRandomAccess< FloatType > ra = RealViews.affineReal( interp, t ).realRandomAccess();
 
 		final float[] out = new float[ newH * newW ];
 		for ( int y = 0; y < newH; ++y )
