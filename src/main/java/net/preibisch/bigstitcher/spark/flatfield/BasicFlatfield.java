@@ -21,6 +21,8 @@
  */
 package net.preibisch.bigstitcher.spark.flatfield;
 
+import java.io.Serial;
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Random;
 
@@ -61,11 +63,14 @@ import net.imglib2.view.Views;
  * in {@code double} for stability; storage is {@code float} to match the
  * reference and halve memory.
  */
-public class BasicFlatfield
-{
+public class BasicFlatfield implements Serializable {
+	@Serial private static final long serialVersionUID = 4447561278341415136L;
 	private static final float EPS = 1e-7f; // ~ eps(Float32) scale used for guards
 
-	public static class FramesStack {
+	public static class FramesStack implements Serializable {
+
+		@Serial private static final long serialVersionUID = -8158738164143145328L;
+
 		final int sourceWidth;
 		final int sourceHeight;
 		final int frameWidth;
@@ -74,14 +79,27 @@ public class BasicFlatfield
 		final int frameSize;
 		final float[][] stack;
 
-		private FramesStack(int sourceWidth, int sourceHeight, int workingSize, int nFrames) {
+		private FramesStack(int sourceWidth, int sourceHeight,
+							int workingFrameWidth, int workingFrameHeight,
+							int nFrames) {
 			this.sourceWidth = sourceWidth;
 			this.sourceHeight = sourceHeight;
-			this.frameWidth = workingSize > 0 && workingSize < sourceWidth ? workingSize : sourceWidth;
-			this.frameHeight = workingSize > 0 && workingSize < sourceHeight ? workingSize : sourceHeight;
+			this.frameWidth = workingFrameWidth > 0 && workingFrameWidth < sourceWidth ? workingFrameWidth : sourceWidth;
+			this.frameHeight = workingFrameHeight > 0 && workingFrameHeight < sourceHeight ? workingFrameHeight : sourceHeight;
 			this.nFrames = nFrames;
 			this.frameSize = frameWidth	* frameHeight;
 			stack = new float[nFrames][];
+		}
+
+		/** Direct constructor used when concatenating already-loaded frame stacks. */
+		private FramesStack(int sourceWidth, int sourceHeight, int frameWidth, int frameHeight, float[][] stack) {
+			this.sourceWidth = sourceWidth;
+			this.sourceHeight = sourceHeight;
+			this.frameWidth = frameWidth;
+			this.frameHeight = frameHeight;
+			this.nFrames = stack.length;
+			this.frameSize = frameWidth * frameHeight;
+			this.stack = stack;
 		}
 
 		public void setFrame(int frameIndex, RandomAccessibleInterval< ? extends RealType< ? > > frame) {
@@ -141,19 +159,40 @@ public class BasicFlatfield
 			}
 		}
 
-		public RandomAccessibleInterval< FloatType > asImage() {
-			float[] imgArray = new float[ frameSize * nFrames ];
-			for (int k  = 0; k < nFrames; ++k ) {
-				for ( int p = 0; p < frameSize; ++p ) {
-					imgArray[ frameSize * k + p ] = stack[ k ][ p ];
-				}
-			}
-			return ArrayImgs.floats( imgArray, frameWidth, frameHeight, nFrames );
-		}
 	}
 
 	public static FramesStack createFramesStack( int imageWidth, int imageHeight, int frameWidth, int frameHeight, int nFrames ) {
-		return new FramesStack(imageWidth, imageHeight, frameWidth, nFrames);
+		return new FramesStack(imageWidth, imageHeight, frameWidth, frameHeight, nFrames);
+	}
+
+	/**
+	 * Concatenate two frame stacks into a new stack containing the frames of both.
+	 * Both stacks must share the same (working) frame size; the frames themselves
+	 * are not copied, only their references. Used as the reduce operator when frames
+	 * are loaded in parallel on Spark workers and then merged on the driver.
+	 */
+	public static FramesStack concat(final FramesStack a, final FramesStack b )
+	{
+		if ( a == null || a.isEmpty() )
+			return b;
+		if ( b == null || b.isEmpty() )
+			return a;
+
+		if ( a.frameWidth != b.frameWidth || a.frameHeight != b.frameHeight )
+			throw new IllegalArgumentException( "cannot combine frame stacks with different frame sizes: " +
+					a.frameWidth + " x " + a.frameHeight + " != " +
+					b.frameWidth + " x " + b.frameHeight );
+
+		if ( a.sourceWidth != b.sourceWidth || a.sourceHeight != b.sourceHeight )
+			System.out.println( "Warning: combining frame stacks with different source sizes " +
+					a.sourceWidth + " x " + a.sourceHeight + " and " +
+					b.sourceWidth + " x " + b.sourceHeight );
+
+		final float[][] merged = new float[ a.nFrames + b.nFrames ][];
+		System.arraycopy( a.stack, 0, merged, 0, a.nFrames );
+		System.arraycopy( b.stack, 0, merged, a.nFrames, b.nFrames );
+
+		return new FramesStack( a.sourceWidth, a.sourceHeight, a.frameWidth, a.frameHeight, merged );
 	}
 
 	private static class BasicEstimateData
@@ -652,9 +691,8 @@ public class BasicFlatfield
 		// Reuse A1_offset as the DCT-coefficient scratch (it is no longer needed here).
 		final float thr = lambdaDarkfield / ( ent2 * mu );
 
-		final float[] wOff = A1_offset;
-		shrink( Dct2D.dct2( A_offset, wOff, H, W ), thr );
-		shrink( Dct2D.idct2( wOff, A_offset, H, W ), thr );
+		shrink( Dct2D.dct2( A_offset, A1_offset, H, W ), thr );
+		shrink( Dct2D.idct2(A1_offset, A_offset, H, W ), thr );
 
 		add( A_offset, B_offset );
 
@@ -798,9 +836,9 @@ public class BasicFlatfield
 	{
 		double sum = 0.0;
 		long n = 0;
-		for ( int k = 0; k < stack.length; ++k )
-			for ( int p = 0; p < stack[k].length; ++p ) {
-				sum += stack[k][p];
+		for (float[] frame : stack)
+			for (float v : frame) {
+				sum += v;
 				n++;
 			}
 		return n == 0 ? 0 : sum / ( ( double ) n );

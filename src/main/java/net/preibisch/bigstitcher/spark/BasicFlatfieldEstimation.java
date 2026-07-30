@@ -47,7 +47,11 @@ import net.preibisch.bigstitcher.spark.flatfield.BasicFlatfieldParams;
 import net.preibisch.bigstitcher.spark.flatfield.BasicFlatfieldResult;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
+import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
@@ -209,6 +213,21 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 		System.out.println( "Estimating flatfield/darkfield for " + groups.size() + " (channel,illumination) group(s)." );
 
 		final Random rng = new Random( seed );
+
+		final SparkConf conf = new SparkConf().setAppName( "SparkFlatfieldEstimation" );
+		if ( localSparkBindAddress )
+		{
+			conf.set( "spark.driver.bindAddress", "127.0.0.1" );
+			conf.set( "spark.driver.host", "localhost" );
+			org.apache.spark.util.Utils.setCustomHostname( "localhost" );
+		}
+		final JavaSparkContext sc = new JavaSparkContext( conf );
+		sc.setLogLevel( "ERROR" );
+
+		final URI xmlURI = this.xmlURI;
+		final Integer numFramesFinal = this.numFrames;
+		final Integer workingSizeFinal = this.workingSize;
+
 		for ( final Entry< String, List< ViewId > > group : groups.entrySet() )
 		{
 			final String groupKey = group.getKey();
@@ -221,10 +240,29 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 
 			System.out.println( "\n=== Group " + groupKey + " selected views: " + selectedViews + " ===" );
 
-			// (2) build frames: every z-slice of every selected view is one frame that shares the profile
-			final BasicFlatfield.FramesStack frames = loadFrames( spimData, selectedViews, rng, numFrames, workingSize );
+			// (2) dispatch the (I/O-heavy) frame loading to Spark workers: each worker
+			// loads all frames of one view into a FramesStack; the driver then reduces
+			// the per-view stacks into a single aggregated stack via FramesStack.combine.
+			final long groupSeed = seed;
+			final List< int[] > serializedViews = Spark.serializeViewIdsForRDD( selectedViews );
 
-			if ( frames.isEmpty() )
+			final JavaRDD< int[] > viewsRDD =
+					sc.parallelize( serializedViews, Math.min( Spark.maxPartitions, serializedViews.size() ) );
+
+			final BasicFlatfield.FramesStack frames = viewsRDD
+					.map( svId ->
+					{
+						final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+						final ViewId viewId = Spark.deserializeViewId( svId );
+						// per-view deterministic seed so parallel loading stays reproducible
+						final long viewSeed = groupSeed
+								^ ( ( ( long ) svId[ 0 ] ) * 0x9E3779B97F4A7C15L )
+								^ ( ( ( long ) svId[ 1 ] ) * 0xC2B2AE3D27D4EB4FL );
+						return loadFramesForView( dataLocal, viewId, viewSeed, numFramesFinal, workingSizeFinal );
+					} )
+					.reduce( BasicFlatfield::concat);
+
+			if ( frames == null || frames.isEmpty() )
 			{
 				System.out.println( "  no frames for group " + groupKey + ", skipping." );
 				continue;
@@ -244,6 +282,8 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 			writeField( n5Writer, groupKey + "/darkfield", result.darkfield, params, result, compression, blockSize, blockScale, useSharding );
 			System.out.println( "  wrote " + groupKey + "/flatfield and " + groupKey + "/darkfield" );
 		}
+
+		sc.close();
 
 		if ( storageType == StorageFormat.HDF5 )
 			n5Writer.close();
@@ -302,85 +342,63 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 	}
 
 	/**
-	 * Load all views of a group and split each into 2D frames. A 3D view yields
-	 * one frame per z-slice (all share the same illumination profile); a 2D view
-	 * yields a single frame. All frames must share the same X/Y size, so views of
-	 * differing X/Y size in a group are skipped with a warning.
+	 * Load a single view into 2D frames. A 3D view yields one frame per z-slice (or
+	 * a random {@code nframesPerView} sample of them); a 2D view yields a single
+	 * frame. This runs on a Spark worker; the per-view stacks are merged on the
+	 * driver via {@link BasicFlatfield#concat}, which requires all views in a group
+	 * to share the same working frame size.
 	 */
 	@SuppressWarnings({ "unchecked", "rawtypes" })
-	private static BasicFlatfield.FramesStack loadFrames( final SpimData2 spimData,
-														  final List< ViewId > groupViews,
-														  final Random rng,
-														  final Integer nframesPerView,
-														  final Integer workingSize)
+	private static BasicFlatfield.FramesStack loadFramesForView( final SpimData2 spimData,
+																 final ViewId v,
+																 final long seed,
+																 final Integer nframesPerView,
+																 final Integer workingSize )
 	{
-		int nViews = groupViews.size();
-		BasicFlatfield.FramesStack framesStack = null;
-		int frameIndex = 0;
-		int viewDims = 0;
-		for ( final ViewId v : groupViews )
+		final SetupImgLoader< ? > sil = spimData.getSequenceDescription().getImgLoader().getSetupImgLoader( v.getViewSetupId() );
+		final RandomAccessibleInterval< ? > imgRaw = sil.getImage( v.getTimePointId() );
+
+		if ( !( imgRaw.randomAccess().get() instanceof RealType ) )
+			throw new IllegalArgumentException( "  view " + v.getViewSetupId() + " is not a RealType image" );
+
+		final RandomAccessibleInterval< ? extends RealType< ? > > img = ( RandomAccessibleInterval ) imgRaw;
+
+		final int viewDims = img.numDimensions();
+		final int sx = (int) img.dimension( 0 );
+		final int sy = (int) img.dimension( 1 );
+		final int frameSize = workingSize == null ? 0 : workingSize;
+
+		if ( viewDims == 2 )
 		{
-			final SetupImgLoader< ? > sil = spimData.getSequenceDescription().getImgLoader().getSetupImgLoader( v.getViewSetupId() );
-			final RandomAccessibleInterval< ? > imgRaw = sil.getImage( v.getTimePointId() );
-
-			if ( !( imgRaw.randomAccess().get() instanceof RealType ) )
-			{
-				throw new IllegalArgumentException( "  view " + v.getViewSetupId() + " is not a RealType image" );
-			}
-
-			final RandomAccessibleInterval< ? extends RealType< ? > > img = ( RandomAccessibleInterval ) imgRaw;
-
-			if (framesStack == null) {
-				viewDims = img.numDimensions();
-				int sx = (int) img.dimension( 0  );
-				int sy = (int) img.dimension( 1  );
-				int sz = viewDims == 2 ? 1 : (int) img.dimension( 2 ) ;
-				int frameSize = workingSize == null ? 0 : workingSize;
-				int nframes;
-				if (viewDims == 2) {
-					nframes = nViews;
-				} else if (viewDims == 3) {
-					if ( nframesPerView != null && nframesPerView > 0 && nframesPerView < sz ) {
-						nframes = nViews * nframesPerView;
-					} else {
-						nframes = nViews * sz;
-					}
-				} else {
-					throw new IllegalArgumentException( "view " + v.getViewSetupId() + " has " + img.numDimensions() + " dimensions. Currently it only supports 2 or 3 dimensions." );
-				}
-				framesStack = BasicFlatfield.createFramesStack(sx, sy, frameSize, frameSize, nframes);
-			}
-
-			if ( img.numDimensions() != viewDims )
-			{
-				System.out.println("Warning: all views are expected to have the same dimensions: " + viewDims + " vs. " + img.numDimensions());
-			}
-
-			if ( img.numDimensions() == 2 )
-			{
-				framesStack.setFrame(frameIndex++, img);
-			}
-			else // numDimensions == 3 otherwise it would've thrown IllegalArgument already
-			{
-				int[] zs;
-				int zSize = (int) img.dimension(2);
-				if ( nframesPerView != null && nframesPerView > 0 && nframesPerView < zSize )
-				{
-					System.out.println( "  Sample " + nframesPerView + " out of " + zSize + " frame(s) from " + v );
-					zs = rng.ints(nframesPerView, 0, zSize).toArray();
-				}
-				else
-				{
-					System.out.println( "  Select all " + zSize + " frame(s) from " + v );
-					zs = IntStream.range(0, zSize).toArray();
-				}
-				for ( int z : zs ) {
-					framesStack.setFrame(frameIndex++, Views.hyperSlice( img, 2, z ));
-				}
-			}
+			final BasicFlatfield.FramesStack framesStack = BasicFlatfield.createFramesStack( sx, sy, frameSize, frameSize, 1 );
+			framesStack.setFrame( 0, img );
+			return framesStack;
 		}
+		else if ( viewDims == 3 )
+		{
+			final int zSize = (int) img.dimension( 2 );
+			final int[] zs;
+			if ( nframesPerView != null && nframesPerView > 0 && nframesPerView < zSize )
+			{
+				System.out.println( "  Sample " + nframesPerView + " out of " + zSize + " frame(s) from " + v );
+				zs = new Random( seed ).ints( nframesPerView, 0, zSize ).toArray();
+			}
+			else
+			{
+				System.out.println( "  Select all " + zSize + " frame(s) from " + v );
+				zs = IntStream.range( 0, zSize ).toArray();
+			}
 
-		return framesStack;
+			final BasicFlatfield.FramesStack framesStack = BasicFlatfield.createFramesStack( sx, sy, frameSize, frameSize, zs.length );
+			int frameIndex = 0;
+			for ( final int z : zs )
+				framesStack.setFrame( frameIndex++, Views.hyperSlice( img, 2, z ) );
+			return framesStack;
+		}
+		else
+		{
+			throw new IllegalArgumentException( "view " + v.getViewSetupId() + " has " + viewDims + " dimensions. Currently it only supports 2 or 3 dimensions." );
+		}
 	}
 
 	private static void writeField(
