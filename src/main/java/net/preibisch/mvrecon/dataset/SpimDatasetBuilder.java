@@ -54,6 +54,7 @@ import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunct
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.N5Reader;
@@ -200,7 +201,7 @@ public class SpimDatasetBuilder {
 				FileMapEntry fileMapEntry = new FileMapEntry(
 						stackFile.getFilePath().toFile(),
 						vs.getTile().getId() - (stackFile.getTi() * stackFile.nImages), // recreate the image index within the file
-						vs.getChannel().getId());
+						vs.getChannel().getId()-stackFile.getCh());
 				fileMap.put( vdI,  fileMapEntry);
 			}
 
@@ -270,14 +271,20 @@ public class SpimDatasetBuilder {
 						int metadataChannels = retrieve.getChannelCount(series);
 
 						for (int metadataChIndex = 0; metadataChIndex < metadataChannels; metadataChIndex++) {
-							String chName = retrieve.getChannelName(series, metadataChIndex);
+							String metadataChName = retrieve.getChannelName(series, metadataChIndex);
+							String chName;
+							if (StringUtils.isEmpty(metadataChName)) {
+								chName = String.valueOf(stackFile.getCh());
+							} else {
+								chName  = metadataChName;
+							}
 							// currently viewIndex is only based on the number of images and channels
 							// but a correct implementation would also consider timepoints, illuminations and angles
 							// for now I am ignoring them because so far we never needed them.
 							int viewIndex = metadataChIndex * nfiles * seriesCount + sfi * seriesCount + series;
 							Tile tile = new Tile(stackFile.getTi() * seriesCount + series);
 							tile.setLocation(new double[]{oX, oY, oZ});
-							Channel channel = new Channel(metadataChIndex, chName);
+							Channel channel = new Channel(stackFile.getCh() + metadataChIndex, chName);
 							ViewSetup vs = new ViewSetup(
 									viewIndex,
 									String.valueOf(viewIndex),
@@ -310,8 +317,12 @@ public class SpimDatasetBuilder {
 				return val;
 			}
 
-			Length l = metadataRetrieve.getStageLabelX(series);
-			return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
+			try {
+				Length l = metadataRetrieve.getStageLabelX(series);
+				return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
+			} catch (NullPointerException e) {
+				return 0;
+			}
 		}
 
 		private double getOffsetY(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
@@ -325,8 +336,12 @@ public class SpimDatasetBuilder {
 				return val;
 			}
 
-			Length l = metadataRetrieve.getStageLabelY(series);
-			return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
+			try {
+				Length l = metadataRetrieve.getStageLabelY(series);
+				return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
+			} catch (NullPointerException e) {
+				return 0;
+			}
 		}
 
 		private double getOffsetZ(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
@@ -340,8 +355,12 @@ public class SpimDatasetBuilder {
 				return val;
 			}
 
-			Length l = metadataRetrieve.getStageLabelZ(series);
-			return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
+			try {
+				Length l = metadataRetrieve.getStageLabelZ(series);
+				return l != null && l.value(UNITS.MICROMETER) != null ? l.value(UNITS.MICROMETER).doubleValue() : 0;
+			} catch (NullPointerException e) {
+				return 0;
+			}
 		}
 
 		private Double findPositionInGlobalMeta(Map<String, Object> globalMeta, int imageNumber, List<String> patterns) {

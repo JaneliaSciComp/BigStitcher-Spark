@@ -22,7 +22,6 @@
 package net.preibisch.bigstitcher.spark.flatfield;
 
 import java.util.Arrays;
-import java.util.List;
 import java.util.Random;
 
 import net.imglib2.Cursor;
@@ -43,12 +42,18 @@ import net.imglib2.view.Views;
  * BaSiC flatfield / darkfield <b>estimation</b> (Peng et al., <i>Nature
  * Communications</i> 2017). Pure Java, no Spark / CLI.
  * <p>
- * Faithful port of the Julia reference
+ * Port of the Julia reference
  * {@code flatfield-correction/BigFlatFieldIlluminator.jl/src/basic.jl}
  * ({@code basic_estimate}). Estimates a shared low-rank illumination model
  * (flatfield x per-frame scale + darkfield) plus a sparse residual, via an
  * inexact Augmented Lagrangian Multiplier (IALM) inner loop with an outer
  * reweighting loop.
+ * <p>
+ * Matches the Julia reference: darkfield limit = mean of per-pixel minima,
+ * warm-started model state across reweighting iterations, Float32 precision,
+ * the non-negativity projection {@code f = max(idct2(W_hat), 0)}, and a
+ * (non-anti-aliased) bilinear resize. (MATLAB/Fiji differ in these choices —
+ * tighter min(D) limit, per-call re-init, double precision, un-clamped idct.)
  * <p>
  * Data layout convention throughout: a 2D plane of size HxW is a row-major
  * {@code float[H*W]} with the fast axis being W ({@code plane[h*W + w]}). The
@@ -111,11 +116,7 @@ public class BasicFlatfield
 		}
 
 		double mean() {
-			double sum = 0.0;
-			for ( int k = 0; k < nFrames; ++k )
-				for ( int p = 0; p < frameSize; ++p )
-					sum += stack[ k ][ p ];
-			return sum / ( ( double ) frameSize * nFrames );
+			return BasicFlatfield.mean( stack );
 		}
 
 		void divide(double v) {
@@ -155,6 +156,56 @@ public class BasicFlatfield
 		return new FramesStack(imageWidth, imageHeight, frameWidth, nFrames);
 	}
 
+	private static class BasicEstimateData
+	{
+		final int nFrames;
+		final int frameSize;
+		final boolean estimateDarkfield;
+
+		final float[] W_hat;       // flatfield DCT coefficients
+		final float[][] E;         // sparse residual
+		final float[][] A1_hat;    // low-rank model prediction
+
+		final float[] A1_coeff;    // per-frame illumination scale
+		final float[] A_offset;    // spatially varying darkfield
+		final float[][] W_coeff;   // reweighting coefficients
+		final float[][] Z;         // primal feasibility residual
+		final float[][] Y1;        // Lagrange multiplier
+		final float[] f;           // spatial flatfield = idct2(W_hat)
+		final float[] R_W;         // mean-over-frames W-update residual
+		final float[][] R1;        // D - E: the "clean" low-rank part
+		final float[] ffCurr;      // current flatfield for reweight check
+		final float[] B1_coeff;
+		final float[] B_offset;
+		final float[] A1_offset;
+
+		BasicEstimateData(int nFrames, int frameSize, boolean estimateDarkfield ) {
+			this.nFrames = nFrames;
+			this.frameSize = frameSize;
+			this.estimateDarkfield = estimateDarkfield;
+
+			W_hat = new float[ frameSize ];                // flatfield DCT coefficients
+			E = new float[ nFrames ][ frameSize ];         // sparse residual
+			A1_hat = new float[ nFrames ][ frameSize ];    // low-rank model prediction
+			A1_coeff = new float[ nFrames ];               // per-frame illumination scale
+			A_offset = new float[ frameSize ];             // spatially varying darkfield
+			W_coeff = new float[ nFrames ][ frameSize ];   // reweighting coefficients
+			Z = new float[ nFrames ][ frameSize ];         // primal feasibility residual
+			Y1 = new float[ nFrames ][ frameSize ];        // Lagrange multiplier
+			f = new float[ frameSize ];                    // spatial flatfield = idct2(W_hat)
+			R_W = new float[ frameSize ];                  // mean-over-frames W-update residual
+			R1 = new float[ nFrames ][ frameSize ];        // D - E: the "clean" low-rank part
+			ffCurr = new float[ frameSize ];               // current flatfield for reweight check
+			B1_coeff = new float[ estimateDarkfield ? nFrames : 0 ];
+			B_offset = new float[ estimateDarkfield ? frameSize : 0 ];
+			A1_offset = new float[ estimateDarkfield ? frameSize : 0 ];
+
+			Arrays.fill( A1_coeff, 1f );
+			for ( int k = 0; k < nFrames; ++k )
+				Arrays.fill( W_coeff[ k ], 1f );
+
+		}
+	}
 	/**
 	 * Estimate flatfield and darkfield from a stack of 2D frames.
 	 *
@@ -179,15 +230,12 @@ public class BasicFlatfield
 		final int H_orig = images.sourceHeight;
 		final int W_orig = images.sourceWidth;
 
-		final int ws = params.workingSize;
-		final int H = ( ws > 0 ) ? ws : H_orig;
-		final int W = ( ws > 0 ) ? ws : W_orig;
-		final int HW = H * W;
+		final int H = images.frameHeight;
+		final int W = images.frameWidth;
+		final int HW = images.frameSize;
+		final float[][] D = images.stack;
 
 		System.out.printf( "Image size used for darkfield/flatfield (%d, %d) -> (%d, %d)\n", H_orig, W_orig, H, W );
-
-		// ── Load frames into row-major float planes, optionally resize ────────────
-		final float[][] D = images.stack;
 
 		// ── Normalize so working values hover around 1 ────────────────────────────
 		final double globalMean = images.mean();
@@ -219,102 +267,74 @@ public class BasicFlatfield
 
 		System.out.printf( "Spectral norm: %f, Frobenius norm: %f\n", normTwo, normD );
 
-		// Upper bound for darkfield: global minimum of the (sorted, normalized) stack.
-		// MATLAB/Fiji BaSiC uses B1_uplimit = min(D(:)); since D is sorted ascending
-		// along frames, D[0] holds the per-pixel minima and min(D[0]) == min(D(:)).
-		// (The Julia reference deviates here, using mean(D[:,:,1]); that looser bound
-		// lets B1_offset grow larger and shifts the darkfield DC level up.)
-		float darkfieldLimit;
-		{
-			float m = Float.POSITIVE_INFINITY;
-			for ( int p = 0; p < HW; ++p )
-				if ( D[ 0 ][ p ] < m )
-					m = D[ 0 ][ p ];
-			darkfieldLimit = m;
-		}
+		// Upper bound for darkfield: mean of the per-pixel minima over frames
+		// (D[0] after the ascending per-pixel sort), matching the Julia reference
+		// mean(D[:,:,1]). MATLAB/Fiji use the tighter B1_uplimit = min(D(:)); the
+		// looser Julia bound lets B1_offset grow larger, raising the darkfield DC.
+		float darkfieldLimit = mean( D[0] );
 
 		final boolean estimateDarkfield = params.estimateDarkfield;
 
 		// ── Optimisation variables ─────────────────────────────────────────────────
-		// NOTE: W_hat / A_offset / A1_coeff are reset at the start of every
-		// reweighting iteration (MATLAB/Fiji re-initialize the whole model per call
-		// to inexact_alm_rspca_l1; only the reweight coefficients persist). No
-		// warm-start here — the first ALM iteration rebuilds W_hat from meanImg.
-		final float[] W_hat = new float[ HW ];            // flatfield DCT coefficients
-		final float[][] E = new float[ N ][ HW ];         // sparse residual
-		final float[] A1_coeff = new float[ N ];          // per-frame illumination scale
-		Arrays.fill( A1_coeff, 1f );
-		final float[] A_offset = new float[ HW ];         // spatially varying darkfield
-		final float[][] W_coeff = new float[ N ][ HW ];   // reweighting coefficients
-		for ( int k = 0; k < N; ++k )
-			Arrays.fill( W_coeff[ k ], 1f );
+		// The model (W_hat / A_offset / A1_coeff / W_coeff) warm-starts across
+		// reweighting iterations, matching the Julia reference; only Y1 and E are
+		// re-zeroed each reweighting (see the loop below). (MATLAB/Fiji instead
+		// re-initialize the whole model on every inexact_alm_rspca_l1 call.)
+		BasicEstimateData basicEstimateData = new BasicEstimateData( images.nFrames, images.frameSize, estimateDarkfield );
 
 		// ── Pre-allocated buffers ──────────────────────────────────────────────────
-		float[] f = new float[ HW ];                      // spatial flatfield = idct2(W_hat)
-		final float[][] A1_hat = new float[ N ][ HW ];    // low-rank model prediction
-		final float[] R_W = new float[ HW ];              // mean-over-frames W-update residual
-		final float[][] R1 = new float[ N ][ HW ];        // D - E: the "clean" low-rank part
-		final float[][] Z = new float[ N ][ HW ];         // primal feasibility residual
-		final float[][] Y1 = new float[ N ][ HW ];        // Lagrange multiplier
-		final float[] ffCurr = new float[ HW ];           // current flatfield for reweight check
-		final float[] B1_coeff = new float[ estimateDarkfield ? N : 0 ];
-		final float[] B_offset = new float[ estimateDarkfield ? HW : 0 ];
-		final float[] A1_offset = new float[ estimateDarkfield ? HW : 0 ];
 
-		final float[] flatfieldPrev = new float[ HW ];
-		Arrays.fill( flatfieldPrev, 1f );
-		final float[] darkfieldPrev = new float[ HW ];
-		for  ( int k = 0; k < darkfieldPrev.length; ++k )
-			darkfieldPrev[k] = (float) rng.nextGaussian();
+		final float[] flatfieldPrev = new float[ images.frameSize ];
+		ones( flatfieldPrev );
+		final float[] darkfieldPrev = new float[ images.frameSize ];
+		zeros( darkfieldPrev );
 
 		float B1_offsetFinal = 0f;
 
 		for ( int rw = 1; rw <= params.maxReweightIterations; ++rw )
 		{
-			// Re-initialize the model exactly as MATLAB/Fiji do on each call to
-			// inexact_alm_rspca_l1: W_hat=0, A_offset=0, A1_coeff=1, Y1=0, E=0.
-			// Only W_coeff (the reweighting weights) carries across iterations.
-			Arrays.fill( W_hat, 0f );
-			Arrays.fill( A_offset, 0f );
-			Arrays.fill( A1_coeff, 1f );
+			// Reset only the Lagrange multiplier and sparse residual each
+			// reweighting (Julia: Y1 .= 0; E .= 0); the rest warm-starts.
 			for ( int k = 0; k < N; ++k )
 			{
-				Arrays.fill( Y1[ k ], 0f );
-				Arrays.fill( E[ k ], 0f );
+				zeros( basicEstimateData.Y1[ k ] );
+				zeros( basicEstimateData.E[ k ] );
 			}
 
 			final float B1_offset = almLoop(
-					W_hat, E, A1_coeff, A_offset, Y1,
-					D, W_coeff, f, A1_hat, R_W, R1, Z,
-					B1_coeff, B_offset, A1_offset,
-					H, W, N, muInit, muBar, rho, ent1, ent2,
+					images,
+					basicEstimateData,
+					muInit, muBar, rho, ent1, ent2,
 					lambdaFlatfield, lambdaDarkfield, darkfieldLimit,
-					estimateDarkfield, params.maxIterations, params.optimizationTol, normD );
+					params.maxIterations, params.optimizationTol, normD
+			);
 
 			B1_offsetFinal = B1_offset;
 
 			// Add scalar darkfield component accumulated during ALM iterations
 			// (MATLAB: A_offset += B1_offset * W_idct_hat, un-clamped flatfield)
-			if ( estimateDarkfield )
+			if ( basicEstimateData.estimateDarkfield )
 			{
-				Dct2D.idct2( W_hat, f, H, W );
-				for ( int p = 0; p < HW; ++p )
-					A_offset[ p ] += B1_offset * f[ p ];
+				max (Dct2D.idct2( basicEstimateData.W_hat, basicEstimateData.f, H, W ), 0 );
+				for ( int p = 0; p < basicEstimateData.frameSize; ++p )
+					basicEstimateData.A_offset[ p ] += B1_offset * basicEstimateData.f[ p ];
 			}
 
 			// ── Reweighting convergence check (normalized L1) ─────────────────────
-			Dct2D.idct2( W_hat, f, H, W );
-			final float meanA1 = mean( A1_coeff );
-			for ( int p = 0; p < HW; ++p )
-				ffCurr[ p ] = f[ p ] * meanA1;
-			final float ffCurrMean = Math.max( mean( ffCurr ), EPS );
-			for ( int p = 0; p < HW; ++p )
-				ffCurr[ p ] /= ffCurrMean;
+			max( Dct2D.idct2( basicEstimateData.W_hat, basicEstimateData.f, H, W ), 0 );
+
+			final float meanA1 = mean( basicEstimateData.A1_coeff );
+
+			for ( int p = 0; p < basicEstimateData.frameSize; ++p )
+				basicEstimateData.ffCurr[ p ] = basicEstimateData.f[ p ] * meanA1;
+
+			final float ffCurrMean = Math.max( mean( basicEstimateData.ffCurr ), EPS );
+			div( basicEstimateData.ffCurr,  ffCurrMean );
 
 			double madFfNum = 0.0, madFfDen = 0.0;
-			for ( int p = 0; p < HW; ++p )
+			for ( int p = 0; p < basicEstimateData.frameSize; ++p )
 			{
-				madFfNum += Math.abs( ffCurr[ p ] - flatfieldPrev[ p ] );
+				madFfNum += Math.abs( basicEstimateData.ffCurr[ p ] - flatfieldPrev[ p ] );
 				madFfDen += Math.abs( flatfieldPrev[ p ] );
 			}
 			final float madFf = ( float ) ( madFfNum / Math.max( madFfDen, EPS ) );
@@ -325,7 +345,7 @@ public class BasicFlatfield
 				double td = 0.0, den = 0.0;
 				for ( int p = 0; p < HW; ++p )
 				{
-					td += Math.abs( A_offset[ p ] - darkfieldPrev[ p ] );
+					td += Math.abs( basicEstimateData.A_offset[ p ] - darkfieldPrev[ p ] );
 					den += Math.abs( darkfieldPrev[ p ] );
 				}
 				madDf = ( td < 1e-7 ) ? 0f : ( float ) ( td / Math.max( den, 1e-6 ) );
@@ -339,29 +359,29 @@ public class BasicFlatfield
 				break;
 			}
 
-			System.arraycopy( ffCurr, 0, flatfieldPrev, 0, HW );
+			System.arraycopy( basicEstimateData.ffCurr, 0, flatfieldPrev, 0, HW );
 			if ( estimateDarkfield )
-				System.arraycopy( A_offset, 0, darkfieldPrev, 0, HW );
+				System.arraycopy( basicEstimateData.A_offset, 0, darkfieldPrev, 0, HW );
 
-			updateWeights( W_coeff, E, f, A1_coeff, A_offset, params.epsilon, H, W, N );
+			updateWeights( basicEstimateData.W_coeff, basicEstimateData.E, basicEstimateData.f,
+					basicEstimateData.A1_coeff, basicEstimateData.A_offset, params.epsilon, H, W, N );
 		}
 
-		// ── Final flatfield: idct2(W_hat) normalised to mean = 1 (MATLAB does not
-		// clamp the flatfield to >= 0) ────────────────────────────────────────────
+		// ── Final flatfield: max(idct2(W_hat), 0) normalised to mean = 1 (Julia) ──
 		final float[] flatfield = new float[ HW ];
-		Dct2D.idct2( W_hat, flatfield, H, W );
+		max ( Dct2D.idct2( basicEstimateData.W_hat, flatfield, H, W ), 0 );
+
 		float flatMean = mean( flatfield );
 		if ( flatMean < EPS )
 			flatMean = 1f;
-		for ( int p = 0; p < HW; ++p )
-			flatfield[ p ] /= flatMean;
+
+		div(flatfield, flatMean);
 
 		// A_offset was estimated on D = images / globalMean. Convert the additive
 		// darkfield back to source intensity units because applyCorrection subtracts
 		// it from raw pixels.
-		final float[] darkfield = A_offset.clone();
-		for ( int p = 0; p < HW; ++p )
-			darkfield[ p ] *= ( float ) globalMean;
+		final float[] darkfield = basicEstimateData.A_offset.clone();
+		mul( darkfield, (float) globalMean );
 
 		// ── Resize outputs back to original dimensions if working_size was used ────
 		final float[] flatOut = H_orig != H || W_orig != W
@@ -377,7 +397,7 @@ public class BasicFlatfield
 
 		final double[] frameScales = new double[ N ];
 		for ( int k = 0; k < N; ++k )
-			frameScales[ k ] = A1_coeff[ k ];
+			frameScales[ k ] = basicEstimateData.A1_coeff[ k ];
 
 		System.out.printf("Finished BaSiC flatfield/darkfield estimation in %f secs\n", (System.currentTimeMillis() - start) / 1000.0);
 
@@ -387,27 +407,43 @@ public class BasicFlatfield
 	// ─── Inner ALM loop ──────────────────────────────────────────────────────────
 
 	private static float almLoop(
-			final float[] W_hat, final float[][] E, final float[] A1_coeff,
-			final float[] A_offset, final float[][] Y1,
-			final float[][] D, final float[][] W_coeff, final float[] f,
-			final float[][] A1_hat, final float[] R_W, final float[][] R1, final float[][] Z,
-			final float[] B1_coeff, final float[] B_offset, final float[] A1_offset,
-			final int H, final int W, final int N,
+			final FramesStack framesStack,
+			final BasicEstimateData basicEstimateData,
 			final float muInit, final float muBar, final float rho, final float ent1, final float ent2,
-			final float lambda, final float lambdaDarkfield, final float darkfieldLimit,
-			final boolean estimateDarkfield, final int maxIterations, final float optimizationTol,
-			final float normD )
+			final float lambdaFlatfield, final float lambdaDarkfield, final float darkfieldLimit,
+			final int maxIterations, final float optimizationTol, final float normD )
 	{
-		final int HW = H * W;
+		// local aliases into the frame stack / working buffers
+		final int H = framesStack.frameHeight;
+		final int W = framesStack.frameWidth;
+		final int HW = framesStack.frameSize;
+		final int N = framesStack.nFrames;
+		final float[][] D = framesStack.stack;
+		final float[] W_hat = basicEstimateData.W_hat;
+		final float[] f = basicEstimateData.f;
+		final float[] R_W = basicEstimateData.R_W;
+		final float[] A1_coeff = basicEstimateData.A1_coeff;
+		final float[] A_offset = basicEstimateData.A_offset;
+		final float[][] E = basicEstimateData.E;
+		final float[][] A1_hat = basicEstimateData.A1_hat;
+		final float[][] Y1 = basicEstimateData.Y1;
+		final float[][] R1 = basicEstimateData.R1;
+		final float[][] Z = basicEstimateData.Z;
+		final float[][] W_coeff = basicEstimateData.W_coeff;
+		final float[] B_offset = basicEstimateData.B_offset;
+		final float[] A1_offset = basicEstimateData.A1_offset;
+		final float[] B1_coeff = basicEstimateData.B1_coeff;
+		final boolean estimateDarkfield = basicEstimateData.estimateDarkfield;
+
 		float mu = muInit;
 		float B1_offset = 0f;
 
 		for ( int iter = 1; iter <= maxIterations; ++iter )
 		{
-			// f = idct2(W_hat)  (MATLAB W_idct_hat; no non-negativity clamp)
-			Dct2D.idct2( W_hat, f, H, W );
+			// f = max(idct2(W_hat), 0)  (Julia non-negativity projection)
+			max( Dct2D.idct2( W_hat, f, H, W ), 0 );
 			// A1_hat = f * A1_coeff[k] + A_offset
-			buildA1Hat( A1_hat, f, A1_coeff, A_offset, HW, N );
+			buildA1Hat( basicEstimateData );
 
 			// ── Update W_hat ──────────────────────────────────────────────────────
 			// E := D - A1_hat - E + Y1/mu (E used as temporary residual store)
@@ -421,16 +457,20 @@ public class BasicFlatfield
 			meanOverFrames( E, R_W, HW, N );
 			// W_hat += dct2(R_W / ent1); shrink by lambda/(ent1*mu)
 			// (scale and transform R_W in place; R_W is refilled by meanOverFrames each iter)
-			for ( int p = 0; p < HW; ++p )
-				R_W[ p ] /= ent1;
-			Dct2D.dct2( R_W, R_W, H, W );
-			for ( int p = 0; p < HW; ++p )
-				W_hat[ p ] += R_W[ p ];
-			shrink( W_hat, lambda / ( ent1 * mu ) );
+			div( R_W, ent1);
 
-			// recompute f and A1_hat
+			Dct2D.dct2( R_W, R_W, H, W );
+
+			add( W_hat, R_W);
+
+			shrink( W_hat, lambdaFlatfield / ( ent1 * mu ) );
+
+			// recompute f = max(idct2(W_hat), 0) and A1_hat
 			Dct2D.idct2( W_hat, f, H, W );
-			buildA1Hat( A1_hat, f, A1_coeff, A_offset, HW, N );
+
+			max( f, 0 );
+
+			buildA1Hat( basicEstimateData );
 
 			// ── Update E (sparse residual) ────────────────────────────────────────
 			// E := shrink(D - A1_hat + Y1/mu, W_coeff/(ent1*mu))
@@ -471,7 +511,7 @@ public class BasicFlatfield
 				final double meanRk = s / HW;
 				A1_coeff[ k ] = ( float ) Math.max( meanRk / globalR1, 0.0 );
 			}
-			buildA1Hat( A1_hat, f, A1_coeff, A_offset, HW, N );
+			buildA1Hat( basicEstimateData );
 
 			// ── Update darkfield ──────────────────────────────────────────────────
 			if ( estimateDarkfield )
@@ -479,7 +519,7 @@ public class BasicFlatfield
 				B1_offset = updateDarkfield(
 						A_offset, B_offset, A1_offset, B1_coeff,
 						f, R1, A1_coeff, darkfieldLimit, lambdaDarkfield, ent2, mu, H, W, N );
-				buildA1Hat( A1_hat, f, A1_coeff, A_offset, HW, N );
+				buildA1Hat( basicEstimateData );
 			}
 
 			// ── Lagrange multiplier and penalty update ────────────────────────────
@@ -542,18 +582,11 @@ public class BasicFlatfield
 		}
 
 		// safe_gR1: global mean of R1 (over valid... no: over all, matches Julia mean(R1))
-		double gr1 = 0.0;
-		for ( int k = 0; k < N; ++k )
-		{
-			final float[] Rk = R1[ k ];
-			for ( int p = 0; p < HW; ++p )
-				gr1 += Rk[ p ];
-		}
-		gr1 /= ( ( double ) HW * N );
+		double gr1 = mean( R1 );
 		final float safeGR1 = ( Math.abs( gr1 ) < EPS ) ? 1f : ( float ) gr1;
 
 		// B1_coeff[k]: contrast of R1 between high/low regions, normalized by global mean
-		Arrays.fill( B1_coeff, 0f );
+		zeros( B1_coeff );
 		if ( nHigh != 0 && nLow != 0 )
 		{
 			for ( int k = 0; k < N; ++k )
@@ -607,6 +640,7 @@ public class BasicFlatfield
 			A1_offset[ p ] = ( float ) ( s / nValid - meanA1Valid * f[ p ] );
 		}
 		final float a1OffMean = mean( A1_offset );
+
 		for ( int p = 0; p < HW; ++p )
 			A1_offset[ p ] -= a1OffMean;
 
@@ -617,13 +651,12 @@ public class BasicFlatfield
 		// Smooth and sparsify via DCT + image-domain shrink.
 		// Reuse A1_offset as the DCT-coefficient scratch (it is no longer needed here).
 		final float thr = lambdaDarkfield / ( ent2 * mu );
+
 		final float[] wOff = A1_offset;
-		Dct2D.dct2( A_offset, wOff, H, W );
-		shrink( wOff, thr );
-		Dct2D.idct2( wOff, A_offset, H, W );
-		shrink( A_offset, thr );
-		for ( int p = 0; p < HW; ++p )
-			A_offset[ p ] += B_offset[ p ];
+		shrink( Dct2D.dct2( A_offset, wOff, H, W ), thr );
+		shrink( Dct2D.idct2( wOff, A_offset, H, W ), thr );
+
+		add( A_offset, B_offset );
 
 		return B1_offset;
 	}
@@ -663,9 +696,18 @@ public class BasicFlatfield
 
 	// ─── Numeric helpers ─────────────────────────────────────────────────────────
 
-	/** A1_hat[k] = f * A1_coeff[k] + A_offset */
-	private static void buildA1Hat( final float[][] A1_hat, final float[] f, final float[] A1_coeff, final float[] A_offset, final int HW, final int N )
+	/**
+	 * A1_hat[h,w,k] = f[h,w] * A1_coeff[k] + A_offset[h,w]:
+	 * low-rank model (rank-1 flatfield scaled per frame, plus additive darkfield)
+	 */
+	private static void buildA1Hat( final BasicEstimateData basicEstimateData )
 	{
+		int N = basicEstimateData.nFrames;
+		int HW = basicEstimateData.frameSize;
+		final float[][] A1_hat = basicEstimateData.A1_hat;
+		final float[] f = basicEstimateData.f;
+		final float[] A1_coeff = basicEstimateData.A1_coeff;
+		final float[] A_offset = basicEstimateData.A_offset;
 		for ( int k = 0; k < N; ++k )
 		{
 			final float a = A1_coeff[ k ];
@@ -688,6 +730,24 @@ public class BasicFlatfield
 		final float inv = 1f / N;
 		for ( int p = 0; p < HW; ++p )
 			out[ p ] *= inv;
+	}
+
+	private static void add( float[] a, float[] b )
+	{
+		for  ( int p = 0; p < a.length; ++p )
+			a[p] += b[p];
+	}
+
+	private static void div( float[] a, float b )
+	{
+		for  ( int p = 0; p < a.length; ++p )
+			a[p] /= b;
+	}
+
+	private static void mul( float[] a, float b )
+	{
+		for  ( int p = 0; p < a.length; ++p )
+			a[p] *= b;
 	}
 
 	/** In-place soft-threshold: x = sign(x)*max(|x|-t, 0). */
@@ -713,6 +773,37 @@ public class BasicFlatfield
 		for ( final float v : x )
 			s += v;
 		return ( float ) ( s / x.length );
+	}
+
+	private static void max( final float[] a, final float b )
+	{
+		for ( int p = 0; p < a.length; ++p )
+		{
+			if ( a[ p ] < b )
+				a[ p ] = b;
+		}
+	}
+
+	private static void zeros( final float[] x )
+	{
+		Arrays.fill( x, 0f );
+	}
+
+	private static void ones( final float[] x )
+	{
+		Arrays.fill( x, 1f );
+	}
+
+	private static double mean( float[][] stack )
+	{
+		double sum = 0.0;
+		long n = 0;
+		for ( int k = 0; k < stack.length; ++k )
+			for ( int p = 0; p < stack[k].length; ++p ) {
+				sum += stack[k][p];
+				n++;
+			}
+		return n == 0 ? 0 : sum / ( ( double ) n );
 	}
 
 	private static double frobeniusNorm( final float[][] D, final int HW )

@@ -120,16 +120,22 @@ public final class Dct2D
 	 *            same array as {@code x} (in-place)
 	 * @param H   number of rows (slow axis)
 	 * @param W   number of columns (fast axis)
+	 * @return    out
 	 */
-	public static void dct2( final float[] x, final float[] out, final int H, final int W )
+	public static float[] dct2( final float[] x, final float[] out, final int H, final int W )
 	{
 		final Plan p = plan( H, W );
 		final double[] a = p.scratch.get();
+
 		for ( int i = 0; i < a.length; ++i )
 			a[ i ] = x[ i ];
+
 		p.forward( a );
+
 		for ( int i = 0; i < a.length; ++i )
 			out[ i ] = ( float ) a[ i ];
+
+		return out;
 	}
 
 	/**
@@ -141,8 +147,9 @@ public final class Dct2D
 	 *            same array as {@code y} (in-place)
 	 * @param H   number of rows
 	 * @param W   number of columns
+	 * @return    out
 	 */
-	public static void idct2( final float[] y, final float[] out, final int H, final int W )
+	public static float[] idct2( final float[] y, final float[] out, final int H, final int W )
 	{
 		final Plan p = plan( H, W );
 		final double[] a = p.scratch.get();
@@ -151,5 +158,6 @@ public final class Dct2D
 		p.inverse( a );
 		for ( int i = 0; i < a.length; ++i )
 			out[ i ] = ( float ) a[ i ];
+		return out;
 	}
 }
