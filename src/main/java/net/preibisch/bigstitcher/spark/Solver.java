@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -549,6 +550,7 @@ public class Solver extends AbstractRegistration
 		final List< ArrayList< SerializedIPPairwiseResult > > sparkResults = rdd.map( pairTask ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+			System.out.println("Start collecting correspondences for " + pairTask);
 			final ViewId vA = pairTask.viewId();
 			final ViewId vB = pairTask.correspondingViewId();
 			final String vAKey = viewIdKey( pairTask.timePointA, pairTask.viewSetupA );
@@ -557,8 +559,10 @@ public class Solver extends AbstractRegistration
 			final ArrayList< String > labelsB = labelsByView.get( vBKey );
 			final ArrayList< SerializedIPPairwiseResult > results = new ArrayList<>();
 
-			if ( labelsA == null || labelsB == null )
+			if ( labelsA == null || labelsB == null ) {
+				System.out.println("Either " + vAKey + " or " + vBKey + " has no labels." );
 				return results;
+			}
 
 			final ViewRegistration vRegA = data.getViewRegistrations().getViewRegistration( vA );
 			final ViewRegistration vRegB = data.getViewRegistrations().getViewRegistration( vB );
@@ -568,18 +572,21 @@ public class Solver extends AbstractRegistration
 			final AffineTransform3D mA = vRegA.getModel();
 			final AffineTransform3D mB = vRegB.getModel();
 
-			for ( final String labelA : labelsA )
-				for ( final String labelB : labelsB )
-				{
-					final InterestPoints interestPointsA = data.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA );
-					final InterestPoints interestPointsB = data.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB );
+			for ( final String labelA : labelsA ) {
+				final InterestPoints interestPointsA = data.getViewInterestPoints().getViewInterestPointLists(vA).getInterestPointList(labelA);
+				if ( interestPointsA == null )
+					continue;
 
-					if ( interestPointsA == null || interestPointsB == null )
+				final Map<Integer, InterestPoint> ipListA = interestPointsA.getInterestPointsCopy();
+
+				for ( final String labelB : labelsB ) {
+					final InterestPoints interestPointsB = data.getViewInterestPoints().getViewInterestPointLists(vB).getInterestPointList(labelB);
+
+					if ( interestPointsB == null )
 						continue;
 
-					final Collection< CorrespondingInterestPoints > cpA = interestPointsA.getCorrespondingInterestPointsCopy();
-					final Map< Integer, InterestPoint > ipListA = interestPointsA.getInterestPointsCopy();
-					final Map< Integer, InterestPoint > ipListB = interestPointsB.getInterestPointsCopy();
+					final Collection<CorrespondingInterestPoints> cpA = interestPointsA.getCorrespondingInterestPointsCopy();
+					final Map<Integer, InterestPoint> ipListB = interestPointsB.getInterestPointsCopy();
 					final SerializedIPPairwiseResult result = new SerializedIPPairwiseResult(
 							pairTask.timePointA,
 							pairTask.viewSetupA,
@@ -588,8 +595,7 @@ public class Solver extends AbstractRegistration
 							labelA,
 							labelB );
 
-					for ( final CorrespondingInterestPoints p : cpA )
-					{
+					for ( final CorrespondingInterestPoints p : cpA ) {
 						if ( !p.getCorrespodingLabel().equals( labelB ) || !p.getCorrespondingViewId().equals( vB ) )
 							continue;
 
@@ -607,13 +613,16 @@ public class Solver extends AbstractRegistration
 						mB.apply( ipB.getL(), ipB.getL() );
 						mB.apply( ipB.getW(), ipB.getW() );
 
-						result.inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
+						result.inliers.add(new PointMatchGeneric<>(ipA, ipB));
 					}
 
 					if ( !result.inliers.isEmpty() )
-						results.add( result );
+						results.add(result);
 				}
 
+			}
+
+			System.out.println("Done collecting correspondences for " + pairTask);
 			return results;
 		}).collect();
 
@@ -706,6 +715,16 @@ public class Solver extends AbstractRegistration
 		ViewId correspondingViewId()
 		{
 			return new ViewId( timePointB, viewSetupB );
+		}
+
+		@Override
+		public String toString() {
+			return new ToStringBuilder(this)
+					.append("timePointA", timePointA)
+					.append("viewSetupA", viewSetupA)
+					.append("timePointB", timePointB)
+					.append("viewSetupB", viewSetupB)
+					.toString();
 		}
 	}
 
