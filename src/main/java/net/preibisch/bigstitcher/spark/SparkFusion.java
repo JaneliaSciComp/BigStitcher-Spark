@@ -141,7 +141,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@Option(names = {"-f", "--fusion"}, description = "Strategy for merging overlapping views during fusion, supported: AVG, AVG_BLEND, "/*AVG_CONTENT, AVG_BLEND_CONTENT*/+", MAX_INTENSITY, LOWEST_VIEWID_WINS, HIGHEST_VIEWID_WINS, CLOSEST_PIXEL_WINS (default: AVG_BLEND)")
 	private FusionType fusionType = FusionType.AVG_BLEND;
 
-	@Option(names = {"-fm", "--fusionMethod"}, description = "The transformation models used for fusion, AFFINE or THIN_PLATE_SPLINE. TPS requires a split dataset with at least 2x2x2 split views (default: AFFINE).")
+	@Option(names = {"-fm", "--fusionMethod"}, description = "The transformation models used for fusion, AFFINE or THIN_PLATE_SPLINE (TPS). TPS requires a split dataset with at least 2x2x2 split views (default: AFFINE).")
 	private FusionMethod fusionMethod = FusionMethod.AFFINE;
 
 	@Option(names = { "-oe", "--overlapExpansion" }, description = "Number of pixels by which intervals are expanded when testing for overlap (default: 2 for FusionMethod.AFFINE; 50 for FusionMethod.THIN_PLATE_SPLINE).")
@@ -213,7 +213,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					+ "For each split, the first entry whose threshold >= correspondence-count is used; if none match, --tpsSeamSamplesPerAxis is the fallback. "
 					+ "Example: --tpsSeamSamplesSchedule 100=4,200=3 (with --tpsSeamSamplesPerAxis 2) means: "
 					+ "<=100 -> 4 samples/axis, <=200 -> 3 samples/axis, otherwise 2. Default: null (use --tpsSeamSamplesPerAxis for every split).")
-	private java.util.Map< Integer, Integer > tpsSeamSamplesSchedule = null;
+	private Map< Integer, Integer > tpsSeamSamplesSchedule = null;
 
 	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (corrCOM, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z, donor_view_setup_id. Nail rows whose donor differs from view_setup_id are cross-view tie 'partner' nails. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
 	private String tpsLandmarksOut = null;
@@ -335,6 +335,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 			if ( masks )
 			{
+				// TODO: support masks for THIN_PLATE_SPLINE
 				System.out.println( "FusionMethod.THIN_PLATE_SPLINE: masks not yet supported." );
 				return null;
 			}
@@ -574,8 +575,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 		final long totalTime = System.currentTimeMillis();
 
-		final TpsSeamSchedule tpsSchedule = buildSeamSamplesSchedule( tpsSeamSamplesSchedule, tpsSeamSamplesPerAxis );
-
+		final TpsSeamSchedule tpsSchedule = buildSeamSamplesSchedule( tpsSeamSamplesSchedule, tpsSeamSamplesPerAxis, fusionMethod );
 		final TpsLandmarksSink landmarksSink = openLandmarksSink( tpsLandmarksOut, fusionMethod );
 
 		for ( int c = 0; c < numChannels; ++c )
@@ -809,7 +809,6 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 												overlappingViews, splitImgLoaderLambda.new2oldSetupId() );
 
 								final Map< ViewId, Interval > viewBoundsLoaded = new HashMap<>();
-								@SuppressWarnings( { "unchecked", "rawtypes" } )
 								final Map rawDfields = new HashMap<>();
 								final Map< ViewId, AffineTransform3D > approxAffines = new HashMap<>();
 								try ( final N5Reader r = URITools.instantiateN5Reader( storageType, outPathURI ) )
@@ -1397,9 +1396,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	 * arrays. Returns {@link TpsSeamSchedule#EMPTY} (both arrays null) when {@code schedule}
 	 * is null or empty. The fallback value is only used for the diagnostic log line.
 	 */
-	private static TpsSeamSchedule buildSeamSamplesSchedule( final Map< Integer, Integer > schedule, final int fallbackSamplesPerAxis )
+	private static TpsSeamSchedule buildSeamSamplesSchedule( final Map< Integer, Integer > schedule, final int fallbackSamplesPerAxis, final FusionMethod fusionMethod )
 	{
-		if ( schedule == null || schedule.isEmpty() )
+		if ( schedule == null || schedule.isEmpty()|| fusionMethod != FusionMethod.THIN_PLATE_SPLINE )
 			return TpsSeamSchedule.EMPTY;
 
 		final List< Entry< Integer, Integer > > entries = new ArrayList<>( schedule.entrySet() );
