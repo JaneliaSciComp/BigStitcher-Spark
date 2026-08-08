@@ -23,6 +23,7 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -41,6 +42,7 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.shard.ShardCodecInfo;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
@@ -57,9 +59,17 @@ import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Cast;
 import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
+import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.flatfield.BasicFlatfield;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.correction.ViewCorrection;
+import net.preibisch.bigstitcher.spark.correction.ViewCorrections;
 import net.preibisch.bigstitcher.spark.flatfield.FlatfieldApply;
+import net.preibisch.bigstitcher.spark.flatfield.FlatfieldCorrection;
+import net.preibisch.bigstitcher.spark.lens.LensApply;
+import net.preibisch.bigstitcher.spark.lens.LensCorrection;
+import net.preibisch.bigstitcher.spark.lens.LensModels;
+import net.preibisch.bigstitcher.spark.lens.LensModels.Model;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
@@ -76,18 +86,28 @@ import picocli.CommandLine.Option;
 import util.URITools;
 
 /**
- * Apply a precomputed BaSiC flatfield / darkfield correction (see
- * {@link BasicFlatfieldEstimation}) to all (selected) views of a dataset,
- * writing a corrected multi-resolution OME-ZARR / N5 container and emitting an
- * updated SpimData2 XML pointing at it.
+ * Apply illumination (BaSiC flatfield / darkfield) and, optionally, per-channel 2D
+ * lens/aberration correction to all (selected) views of a dataset, writing a
+ * corrected multi-resolution OME-ZARR / N5 container and emitting an updated
+ * SpimData2 XML pointing at it.
+ * <p>
+ * When {@code --lensCorrection} is given, the per-channel 2D warp (mpicbg TrakEM2
+ * {@code NonLinearCoordinateTransform} + optional {@code AffineModel2D}, matched to
+ * a view by channel-name substring) is applied to the full view <em>before</em> the
+ * flatfield correction, in the same s0 pass, so the volume is resaved only once. A
+ * view whose channel matches no lens model is logged and left un-warped (flatfield
+ * only). Without {@code --lensCorrection} behavior is byte-identical to a pure
+ * flatfield correction.
  * <p>
  * Only s0 is corrected; the downsampling pyramid is generated from the corrected
- * s0. Orchestration mirrors {@link SparkResaveN5}, swapping only the s0 block op
- * ({@link FlatfieldApply#correctS0Block}). Output format defaults to inherit the
+ * s0. Orchestration mirrors {@link SparkResaveN5}: each s0 block applies the composed
+ * {@link ViewCorrection}s ({@code lens.LensCorrection} + {@code flatfield.FlatfieldCorrection})
+ * via {@link ViewCorrections#applyCorrections} and writes the result. Output format
+ * defaults to inherit the
  * source volume's per-container layout (block/shard size, compression, storage
  * format, pyramid factors) unless the corresponding CLI option is explicitly set.
  */
-public class SparkFlatfieldCorrection extends AbstractSelectableViews implements Callable< Void >, Serializable
+public class SparkIlluminationAndLensCorrections extends AbstractSelectableViews implements Callable< Void >, Serializable
 {
 	private static final long serialVersionUID = 4213764132648765311L;
 
@@ -101,6 +121,17 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 
 	@Option(names = { "--fields" }, required = true, description = "container path holding the estimated fields (channelX/illuminationY/flatfield|darkfield), as written by BasicFlatfieldEstimation")
 	private String fieldsPathURIString = null;
+
+	@Option(names = { "--lensCorrection" }, description = "optional lens/aberration-correction JSON file (mpicbg TrakEM2 NonLinearCoordinateTransform + AffineModel2D per channel). When set, the per-channel 2D warp is applied before the flatfield correction. Matched to a view when the view's channel name is a substring of the JSON entry name. If omitted, lens correction is skipped.")
+	private String lensCorrectionURIString = null;
+
+	@Option(names = { "--lensMeshResolution" }, defaultValue = "64", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "mesh resolution used to render the lens warp (only used with --lensCorrection)")
+	private int lensMeshResolution = 64;
+
+	@Option(names = { "--lensIncludeAffine" }, defaultValue = "true", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+			description = "also apply the per-channel AffineModel2D after the nonlinear warp (only used with --lensCorrection)")
+	private boolean lensIncludeAffine = true;
 
 	@Option(names = { "-o", "--output" }, required = true, description = "output container for the corrected views, e.g. /home/corrected.ome.zarr or s3://myBucket/corrected.ome.zarr")
 	private String outputPathURIString = null;
@@ -156,6 +187,7 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 	// resolved after probing/CLI merge; must be effectively final for the Spark closures
 	private transient URI fieldsURI;
 	private transient StorageFormat fieldsFormat;
+	private transient URI lensURI; // null = no lens correction
 
 	@Override
 	public Void call() throws Exception
@@ -176,6 +208,14 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 		if ( fieldsFormat == null )
 			throw new IllegalArgumentException( "Cannot determine the storage format of --fields '" + fieldsPathURIString + "'." );
 		System.out.println( "Fields container: " + fieldsURI + " (" + fieldsFormat + ")" );
+
+		// -- resolve optional lens-correction file --
+		lensURI = ( lensCorrectionURIString != null ) ? URITools.toURI( lensCorrectionURIString ) : null;
+		if ( lensURI != null )
+			System.out.println( "Lens correction: " + lensURI + " (meshResolution=" + lensMeshResolution
+					+ ", includeAffine=" + lensIncludeAffine + ")" );
+		else
+			System.out.println( "Lens correction: none" );
 
 		// -- resolve output XML --
 		final URI xmlOutURI;
@@ -306,6 +346,10 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 		if ( viewIdsToProcess.isEmpty() )
 			throw new IllegalArgumentException( "No views left to correct after --missingFields=" + missingFields + " filtering." );
 
+		// -- validate lens models up front (fail fast before Spark starts) --
+		if ( lensURI != null )
+			validateLensModels( dataGlobal, viewIdsToProcess, dimensions );
+
 		if ( dryRun )
 		{
 			System.out.println( "This is a dry-run, stopping here." );
@@ -372,7 +416,7 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 								computeBlockSize ) ).flatMap( List::stream ).collect( Collectors.toList() );
 		System.out.printf( "Process %d s0 grid blocks%n", gridS0.size() );
 
-		final SparkConf conf = new SparkConf().setAppName( "SparkFlatfieldCorrection" );
+		final SparkConf conf = new SparkConf().setAppName( "SparkIlluminationAndLensCorrections" );
 		if ( localSparkBindAddress )
 		{
 			conf.set( "spark.driver.bindAddress", "127.0.0.1" );
@@ -408,12 +452,20 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 			baselineDeltas = null;
 		}
 
+		// instantiate the ordered view corrections and apply them (in order) with
+		// ViewCorrections.applyCorrections: optional lens/aberration warp first, then the
+		// pointwise flatfield correction (terminal, produces the output data type).
+		final List< ViewCorrection > corrections = new ArrayList<>();
+		if ( lensURI != null )
+			corrections.add( new LensCorrection( lensURI, lensMeshResolution, lensIncludeAffine ) );
+		corrections.add( new FlatfieldCorrection( fieldsURIf, fieldsFormatf, outDataTypes, baselineDeltas ) );
+
 		// -- Phase B: Spark s0 correction --
 		processSNBlocks(
 				sc,
 				gridS0,
 				blockCount -> Math.min( Math.max( sc.defaultParallelism(), 1 ), blockCount ),
-				"s0 flatfield correction",
+				"s0 illumination/lens correction",
 				"Corrected s0 level, took: ",
 				true,
 				true,
@@ -423,20 +475,22 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 					final N5Writer n5Lcl = URITools.instantiateN5Writer( storage, n5PathURI );
 
 					final ViewId vId = N5ApiTools.gridBlockToViewId( gridBlock );
-					final DataType dt = outDataTypes.get( vId.getViewSetupId() );
 
-					final double[] delta = ( baselineDeltas == null ) ? null : baselineDeltas.get( viewKey( vId ) );
+					// load the full source view and apply the composed corrections
+					final SetupImgLoader< ? > imgLoader =
+							dataLocal.getSequenceDescription().getImgLoader().getSetupImgLoader( vId.getViewSetupId() );
+					final RandomAccessibleInterval< ? > img = imgLoader.getImage( vId.getTimePointId() );
 
-					FlatfieldApply.correctS0Block(
-							dataLocal,
+					final RandomAccessibleInterval< ? extends RealType< ? > > corrected =
+							ViewCorrections.applyCorrections( corrections, dataLocal, vId, Cast.unchecked( img ) );
+
+					// crop this grid block from the corrected view and write it
+					resaveCorrectedBlock(
+							corrected,
 							n5Lcl,
 							storage,
-							dt,
-							fieldsURIf,
-							fieldsFormatf,
-							N5ApiTools.gridToDatasetBdv( 0, storage ),
-							gridBlock,
-							delta );
+							N5ApiTools.gridToDatasetBdv( 0, storage ).apply( gridBlock ),
+							gridBlock );
 
 					n5Lcl.close();
 				} );
@@ -647,6 +701,58 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 		{
 			n5.close();
 		}
+	}
+
+	// ─── lens-model validation (driver, fail-fast) ───────────────────────────────
+
+	/**
+	 * Validate the lens models against the views to process before Spark starts:
+	 * for each distinct (channel name, view X/Y size), resolve the matching model
+	 * (error on an ambiguous match, error on a fitted-size mismatch, warn on no
+	 * match). A no-match is not fatal — that view will be flatfield-corrected only.
+	 */
+	private void validateLensModels(
+			final SpimData2 data,
+			final List< ViewId > viewIds,
+			final Map< Integer, long[] > dimensions )
+	{
+		final List< Model > models = LensApply.loadModelsCached( lensURI );
+		System.out.println( "Loaded " + models.size() + " lens model(s) from " + lensURI );
+
+		final Set< String > checked = new java.util.HashSet<>();
+		int matched = 0, unmatched = 0;
+
+		for ( final ViewId v : viewIds )
+		{
+			final ViewSetup vs = data.getSequenceDescription().getViewDescription( v ).getViewSetup();
+			final String channelName = ( vs.getChannel() != null ) ? vs.getChannel().getName() : null;
+			final long[] dim = dimensions.get( v.getViewSetupId() );
+			final int w = ( int ) dim[ 0 ];
+			final int h = ( int ) dim[ 1 ];
+
+			final String key = channelName + "#" + w + "x" + h;
+			if ( !checked.add( key ) )
+				continue;
+
+			final Model m = LensModels.findForChannel( models, channelName ); // throws on ambiguity
+			if ( m == null )
+			{
+				System.out.println( "WARNING: no lens model matches channel '" + channelName
+						+ "'; those views will be flatfield-corrected only." );
+				++unmatched;
+			}
+			else
+			{
+				if ( m.fittedWidth != w || m.fittedHeight != h )
+					throw new IllegalArgumentException(
+							"Lens model '" + m.name + "' was fitted at " + m.fittedWidth + "x" + m.fittedHeight
+									+ " but channel '" + channelName + "' views are " + w + "x" + h
+									+ "; the non-linear model is only valid at its fitted size." );
+				System.out.println( "Channel '" + channelName + "' (" + w + "x" + h + ") -> lens model '" + m.name + "'" );
+				++matched;
+			}
+		}
+		System.out.println( "Lens-model validation: " + matched + " channel/size group(s) matched, " + unmatched + " unmatched." );
 	}
 
 	// ─── baseline (temporal drift) — Phase 0 ─────────────────────────────────────
@@ -884,6 +990,37 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 		return net.imglib2.img.array.ArrayImgs.floats( data, coarseW, coarseH, viewD );
 	}
 
+	// ─── resave of a corrected s0 block ──────────────────────────────────────────
+
+	/**
+	 * Crop one s0 grid block from an already-corrected full view (of the output data
+	 * type) and write it to the container. For OME-ZARR the 3D block is expanded to
+	 * 5D (X,Y,Z,1,1); {@code gridBlock[2]} is the grid offset in inner-block coords.
+	 */
+	private static < O extends RealType< O > & NativeType< O > > void resaveCorrectedBlock(
+			final RandomAccessibleInterval< ? extends RealType< ? > > correctedFullView,
+			final N5Writer n5Out,
+			final StorageFormat storageType,
+			final String dataset,
+			final long[][] gridBlock )
+	{
+		final boolean isZarr = ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 );
+
+		final long[] blockOffset3d = new long[] { gridBlock[ 0 ][ 0 ], gridBlock[ 0 ][ 1 ], gridBlock[ 0 ][ 2 ] };
+		final long[] blockSize3d = new long[] { gridBlock[ 1 ][ 0 ], gridBlock[ 1 ][ 1 ], gridBlock[ 1 ][ 2 ] };
+		final long[] gridOffset = isZarr
+				? new long[] { gridBlock[ 2 ][ 0 ], gridBlock[ 2 ][ 1 ], gridBlock[ 2 ][ 2 ], 0, 0 }
+				: gridBlock[ 2 ];
+
+		final RandomAccessibleInterval< O > block =
+				Cast.unchecked( Views.offsetInterval( correctedFullView, blockOffset3d, blockSize3d ) );
+		final RandomAccessibleInterval< O > toWrite = isZarr
+				? Views.addDimension( Views.addDimension( block, 0, 0 ), 0, 0 )
+				: block;
+
+		N5Utils.saveBlock( toWrite, n5Out, dataset, gridOffset );
+	}
+
 	// ─── Spark orchestration (mirrors SparkResaveN5) ─────────────────────────────
 
 	@FunctionalInterface
@@ -1007,6 +1144,6 @@ public class SparkFlatfieldCorrection extends AbstractSelectableViews implements
 	public static void main( final String... args )
 	{
 		System.out.println( Arrays.toString( args ) );
-		System.exit( new CommandLine( new SparkFlatfieldCorrection() ).execute( args ) );
+		System.exit( new CommandLine( new SparkIlluminationAndLensCorrections() ).execute( args ) );
 	}
 }

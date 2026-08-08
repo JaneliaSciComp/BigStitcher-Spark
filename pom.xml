@@ -136,6 +136,17 @@
             <version>3.1</version>
         </dependency>
         <dependency>
+            <!-- mpicbg.trakem2.transform.{NonLinearCoordinateTransform,AffineModel2D,...}
+                 for the lens/aberration correction warp (version managed by pom-scijava) -->
+            <groupId>sc.fiji</groupId>
+            <artifactId>trakem2-transform</artifactId>
+        </dependency>
+        <dependency>
+            <!-- parse the lens-model JSON (version managed by pom-scijava; also transitive via n5) -->
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+        <dependency>
             <groupId>sc.fiji</groupId>
             <artifactId>bigdataviewer-core</artifactId>
         </dependency>

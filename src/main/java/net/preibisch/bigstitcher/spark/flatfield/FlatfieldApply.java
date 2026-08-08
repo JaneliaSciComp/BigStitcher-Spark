@@ -27,16 +27,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5Reader;
-import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
-import mpicbg.spim.data.sequence.SetupImgLoader;
-import mpicbg.spim.data.sequence.ViewDescription;
-import mpicbg.spim.data.sequence.ViewId;
-import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.img.array.ArrayImg;
@@ -45,10 +39,6 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Cast;
-import net.imglib2.util.Util;
-import net.imglib2.view.Views;
-import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.n5api.N5ApiTools;
 import util.URITools;
 
 /**
@@ -85,99 +75,6 @@ public class FlatfieldApply
 			this.w = w;
 			this.h = h;
 		}
-	}
-
-	/**
-	 * Correct a single s0 grid block of a view and write it to the output container.
-	 * Mirrors {@link N5ApiTools#resaveS0Block} but applies the correction.
-	 *
-	 * @param data          per-task SpimData2 (source images)
-	 * @param n5Out         output writer
-	 * @param storageType   output storage format
-	 * @param outputDataType output data type (may differ from source, e.g. FLOAT32)
-	 * @param fieldsURI     estimation container URI
-	 * @param fieldsFormat  estimation container storage format
-	 * @param gridBlockToDataset s0 dataset naming function
-	 * @param gridBlock     the extended grid block (gridBlock[3] encodes the ViewId)
-	 * @param delta         per-z baseline delta (in shading-corrected units) subtracted
-	 *                      before rounding/clamping; index by absolute z. Length 1 means
-	 *                      one whole-view value used for every z. {@code null} disables it
-	 *                      (byte-identical to no-baseline behavior).
-	 */
-	public static < T extends RealType< T > & NativeType< T >, O extends RealType< O > & NativeType< O > > void correctS0Block(
-			final SpimData2 data,
-			final N5Writer n5Out,
-			final StorageFormat storageType,
-			final DataType outputDataType,
-			final URI fieldsURI,
-			final StorageFormat fieldsFormat,
-			final java.util.function.Function< long[][], String > gridBlockToDataset,
-			final long[][] gridBlock,
-			final double[] delta )
-	{
-		final ViewId viewId = N5ApiTools.gridBlockToViewId( gridBlock );
-		final String dataset = gridBlockToDataset.apply( gridBlock );
-
-		final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
-		final ViewSetup vs = vd.getViewSetup();
-		final int ch = ( vs.getChannel() != null ) ? vs.getChannel().getId() : 0;
-		final int il = ( vs.getIllumination() != null ) ? vs.getIllumination().getId() : 0;
-		final String groupKey = "channel" + ch + "/illumination" + il;
-
-		final SetupImgLoader< ? > imgLoader = data.getSequenceDescription().getImgLoader().getSetupImgLoader( viewId.getViewSetupId() );
-		final RandomAccessibleInterval< T > img = Cast.unchecked( imgLoader.getImage( viewId.getTimePointId() ) );
-
-		// view X/Y size (the raw 3D volume is X,Y,Z)
-		final int viewW = ( int ) img.dimension( 0 );
-		final int viewH = ( int ) img.dimension( 1 );
-
-		final Field2D field = loadFieldCached( fieldsURI, fieldsFormat, groupKey, viewW, viewH );
-
-		final long[] blockOffset, blockSize, gridOffset;
-
-		// 5D OME-ZARR CONTAINER (output). Source image is always 3D here.
-		final boolean isZarr = ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 );
-
-		if ( isZarr )
-		{
-			blockOffset = new long[] { gridBlock[ 0 ][ 0 ], gridBlock[ 0 ][ 1 ], gridBlock[ 0 ][ 2 ], 0, 0 };
-			blockSize = new long[] { gridBlock[ 1 ][ 0 ], gridBlock[ 1 ][ 1 ], gridBlock[ 1 ][ 2 ], 1, 1 };
-			gridOffset = new long[] { gridBlock[ 2 ][ 0 ], gridBlock[ 2 ][ 1 ], gridBlock[ 2 ][ 2 ], 0, 0 };
-		}
-		else
-		{
-			blockOffset = gridBlock[ 0 ];
-			blockSize = gridBlock[ 1 ];
-			gridOffset = gridBlock[ 2 ];
-		}
-
-		// crop the raw 3D block: X,Y,Z from gridBlock (2d field is broadcast across z)
-		final long[] blockOffset3d = new long[] { gridBlock[ 0 ][ 0 ], gridBlock[ 0 ][ 1 ], gridBlock[ 0 ][ 2 ] };
-		final long[] blockSize3d = new long[] { gridBlock[ 1 ][ 0 ], gridBlock[ 1 ][ 1 ], gridBlock[ 1 ][ 2 ] };
-
-		final RandomAccessibleInterval< T > src = Views.offsetInterval( img, blockOffset3d, blockSize3d );
-
-		final boolean isFloat = ( outputDataType == DataType.FLOAT32 || outputDataType == DataType.FLOAT64 );
-
-		// build the corrected block (3D) as an ArrayImg of the output type
-		final ArrayImg< O, ? > corrected3d = applyCorrection(
-				src, field,
-				( int ) blockOffset3d[ 0 ], ( int ) blockOffset3d[ 1 ],
-				outputDataType,
-				delta, ( int ) blockOffset3d[ 2 ] );
-
-		// write
-		final RandomAccessibleInterval< O > toWrite;
-		if ( isZarr )
-			toWrite = Views.addDimension( Views.addDimension( corrected3d, 0, 0 ), 0, 0 );
-		else
-			toWrite = corrected3d;
-
-		N5Utils.saveBlock( toWrite, n5Out, dataset, gridOffset );
-
-		System.out.println( "ViewId [" + viewId.getTimePointId() + "," + viewId.getViewSetupId() + "] group " + groupKey
-				+ ", corrected block: offset=" + Util.printCoordinates( blockOffset )
-				+ ", dimension=" + Util.printCoordinates( blockSize ) );
 	}
 
 	/**
