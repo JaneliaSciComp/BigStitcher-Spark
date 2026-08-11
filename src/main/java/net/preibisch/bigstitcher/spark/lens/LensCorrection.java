@@ -79,6 +79,9 @@ public class LensCorrection implements ViewCorrection
 					+ "]); skipping lens correction for this view." );
 			return source;
 		}
+		System.out.println( "Apply lens correction for channel '" + channelName + "' (view ["
+				+ viewId.getTimePointId() + "," + viewId.getViewSetupId()
+				+ "]); meshresolution = " + meshResolution );
 
 		return LensApply.correctedFullView( source, mapping, viewW, viewH, ( int ) source.dimension( 2 ) );
 	}
