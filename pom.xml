@@ -89,10 +89,10 @@
         <imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
         <imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
         <imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
-        <bigdataviewer-core.version>10.6.11</bigdataviewer-core.version>
+        <bigdataviewer-core.version>10.6.12</bigdataviewer-core.version>
         <bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-        <multiview-reconstruction.version>9.0.10-SNAPSHOT</multiview-reconstruction.version>
+        <multiview-reconstruction.version>9.0.11</multiview-reconstruction.version>
         <BigStitcher.version>3.0.6</BigStitcher.version>
 
         <!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
@@ -193,15 +193,20 @@
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
             <exclusions>
-                <!-- awssdk's netty HTTP client pulls netty 4.1.115, clashing with the
-                     explicit netty-all:4.1.68.Final. apache-client is the default. -->
+                <!-- awssdk's netty HTTP client pulls its own netty, clashing with the
+                     explicit netty-all (matched to Spark 4.1.2's netty 4.2.7.Final).
+                     apache-client is the default sync client. -->
                 <exclusion>
                     <groupId>software.amazon.awssdk</groupId>
                     <artifactId>netty-nio-client</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
-        <!-- Scala is sensitive to fasterxml version -->
+<!--        Scala is sensitive to fasterxml version; Spark 4.1.2 ships Jackson 2.21.2.
+            All three of databind/core/annotations must be pinned together: pom-scijava 44.0.0
+            manages the jackson family to 2.19.2, so without explicit core/annotations pins the
+            transitive 2.21 requested by databind gets dragged back to 2.19.2 -> mismatched
+            ObjectMapper (NoClassDefFoundError: JsonSerializeAs) at Spark MetricsServlet init. -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -209,12 +214,18 @@
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.21.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
+            <!-- NB: jackson-annotations versions on the minor line only (2.21), not 2.21.2 -->
             <version>2.21</version>
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
-            <!-- Spark 4.1.2 release comes with scala 2.13 -->
+            <!-- Spark 4.1.2 release comes with scala 2.13 (Java 17/21) -->
             <artifactId>spark-core_2.13</artifactId>
             <version>4.1.2</version>
             <exclusions>
@@ -451,6 +462,11 @@
                                         implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/org.janelia.saalfeldlab.n5.serialization.NameConfig$Name</resource>
                                 </transformer>
+                                <!-- Merge META-INF/services/* (Java SPI) instead of letting one jar's
+                                     copy win. Needed for grpc's io.grpc.NameResolverProvider /
+                                     LoadBalancerProvider, which several grpc jars each register. -->
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                             <!--<minimizeJar>true</minimizeJar> -->
                             <filters>
