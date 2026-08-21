@@ -29,6 +29,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -61,6 +62,7 @@ import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
+import mpicbg.spim.data.sequence.ViewSetup;
 import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
@@ -215,7 +217,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					+ "<=100 -> 4 samples/axis, <=200 -> 3 samples/axis, otherwise 2. Default: null (use --tpsSeamSamplesPerAxis for every split).")
 	private Map< Integer, Integer > tpsSeamSamplesSchedule = null;
 
-	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (splitCenter, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z, donor_view_setup_id. Nail rows whose donor differs from view_setup_id are cross-view tie 'partner' nails. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
+	@Option(names = { "--tpsDfieldChannelId" }, description = "TPS only: compute displacement fields for the underlying views of this channel id only, and reuse them for the corresponding views (same tile/angle/illumination) of every other channel. "
+			+ "Use this for multi-channel datasets where only one channel carries interest points and the other channels hold duplicated affine transforms. "
+			+ "The per-channel ViewRegistrations of matched views must be identical — this is verified, and fusion aborts if they are not. Default: null (each channel computes its own dfields).")
+	private Integer tpsDfieldChannelId = null;
+
+	@Option(names = { "--tpsLandmarksOut" }, description = "TPS only: write all per-underlying-view landmarks (corrCOM, midpoints, nails) to a CSV file. Columns: view_setup_id, timepoint_id, type, source_x, source_y, source_z, target_x, target_y, target_z, donor_view_setup_id. Nail rows whose donor differs from view_setup_id are cross-view tie 'partner' nails. Target coords are in render/global space, ready to overlay on the fused image. Default: null (no output).")
 	private String tpsLandmarksOut = null;
 
 
@@ -348,6 +355,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 			if ( overlapExpansion == null )
 				overlapExpansion = OverlappingViews.defaultTPSExpansion;
+		}
+		else if ( tpsDfieldChannelId != null )
+		{
+			System.out.println( "--tpsDfieldChannelId is only meaningful with -fm THIN_PLATE_SPLINE." );
+			return null;
 		}
 		else
 		{
@@ -578,6 +590,28 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final TpsSeamSchedule tpsSchedule = buildSeamSamplesSchedule( tpsSeamSamplesSchedule, tpsSeamSamplesPerAxis, fusionMethod );
 		final TpsLandmarksSink landmarksSink = openLandmarksSink( tpsLandmarksOut, fusionMethod );
 
+		// Which underlying view supplies the dfield for each underlying view. Identity unless
+		// --tpsDfieldChannelId is set. Must be a HashMap: it is captured by the block lambdas
+		// and therefore has to serialize to the executors.
+		final HashMap< Integer, Integer > dfieldSourceSetup;
+
+		if ( fusionMethod == FusionMethod.THIN_PLATE_SPLINE )
+		{
+			final SplitViewerImgLoader splitLoader = ( SplitViewerImgLoader ) sd.getImgLoader();
+			dfieldSourceSetup = buildDfieldSourceSetupMap( splitLoader.underlyingSequenceDescription(), tpsDfieldChannelId );
+
+			if ( tpsDfieldChannelId != null )
+				checkDfieldSourceCompatibility( splitLoader, dataGlobal, dfieldSourceSetup, viewIdsGlobal );
+		}
+		else
+		{
+			dfieldSourceSetup = new HashMap<>();
+		}
+
+		// dfield dataset paths written by earlier channels of this run, so a dfield shared
+		// across channels is computed exactly once.
+		final Set< String > dfieldsMaterializedThisRun = new HashSet<>();
+
 		for ( int c = 0; c < numChannels; ++c )
 			for ( int t = 0; t < numTimepoints; ++t )
 			{
@@ -608,7 +642,8 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					materializeDisplacementFields( sc, dataGlobal, viewIds, xmlURI, outPathURI, storageType, anisotropyFactor,
 							tpsCorrespondenceLabel, tpsMinNumCorrespondences,
 							tpsAnchorOverlapCorners, tpsCornerCoverageRadius,
-							tpsSeamSamplesPerAxis, tpsSchedule.thresholds, tpsSchedule.values, landmarksSink.visitor );
+							tpsSeamSamplesPerAxis, tpsSchedule.thresholds, tpsSchedule.values, landmarksSink.visitor,
+							dfieldSourceSetup, dfieldsMaterializedThisRun );
 				}
 
 				final MultiResolutionLevelInfo[] mrInfo;
@@ -815,7 +850,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 								{
 									for ( final ViewId uvid : overlappingUnderlying )
 									{
-										final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
+										// The dfield may live under a different view than the one being
+										// fused (--tpsDfieldChannelId); the maps handed to mvr stay keyed
+										// by the requesting view, only the path is redirected.
+										final String dsPath = DisplacementFieldN5Tools.datasetPath(
+												new ViewId( uvid.getTimePointId(), dfieldSourceSetup.get( uvid.getViewSetupId() ) ) );
 										viewBoundsLoaded.put( uvid, DisplacementFieldN5Tools.readBbox( r, dsPath ) );
 										final TransformedDisplacementField< ? > df =
 												( dfieldType == DfieldType.FLOAT32 )
@@ -1167,6 +1206,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	 * race on dataset creation. Always recomputes from scratch, unless the user
 	 * passed {@code --reuseDeformationFields} in which case any existing dfield
 	 * dataset at the per-view path is reused as-is (no parameter-match check).
+	 * <p>
+	 * {@code dfieldSourceSetup} redirects each underlying setup id to the setup whose
+	 * dfield it uses (see {@code --tpsDfieldChannelId}); it is the identity map unless
+	 * that flag is set. {@code materializedThisRun} accumulates the dataset paths already
+	 * written by earlier channels/timepoints of this same run, so a shared dfield is
+	 * computed once no matter how many channels ask for it.
 	 */
 	private void materializeDisplacementFields(
 			final JavaSparkContext sc,
@@ -1183,7 +1228,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final int seamSamplesPerAxis,
 			final int[] seamSamplesScheduleThresholds,
 			final int[] seamSamplesScheduleValues,
-			final Consumer< LandmarkRecord > landmarkVisitor )
+			final Consumer< LandmarkRecord > landmarkVisitor,
+			final Map< Integer, Integer > dfieldSourceSetup,
+			final Set< String > materializedThisRun )
 	{
 		final int[] dfieldSpacingInt = Import.csvStringToIntArray( dfieldSpacingString );
 		if ( dfieldSpacingInt.length != 3 )
@@ -1198,11 +1245,58 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final SplitViewerImgLoader splitImgLoader = ( SplitViewerImgLoader ) dataGlobal.getSequenceDescription().getImgLoader();
 		final Map< Integer, List< Integer > > old2newSetupId =
 				SplitImgLoaderThinPlateSplineFusion.old2newSetupId( splitImgLoader.new2oldSetupId() );
-		final List< ViewId > underlyingViewIds =
-				SplitImgLoaderThinPlateSplineFusion.underlyingViewIds( splitViewIds, splitImgLoader.new2oldSetupId() );
+		// Redirect every underlying view onto the view that supplies its dfield. Without
+		// --tpsDfieldChannelId this is the identity map and the loop is a no-op; with it,
+		// this channel's views collapse onto the reference channel's views (deduplicated,
+		// since several channels share one dfield).
+		final List< ViewId > underlyingViewIds = new ArrayList<>();
+		final Set< ViewId > seenUnderlying = new HashSet<>();
+		for ( final ViewId uvid : SplitImgLoaderThinPlateSplineFusion.underlyingViewIds( splitViewIds, splitImgLoader.new2oldSetupId() ) )
+		{
+			final ViewId source = new ViewId( uvid.getTimePointId(), dfieldSourceSetup.get( uvid.getViewSetupId() ) );
+			if ( seenUnderlying.add( source ) )
+				underlyingViewIds.add( source );
+		}
+
 		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
 		final Map< ViewId, ViewRegistration > splitRegMap = dataGlobal.getViewRegistrations().getViewRegistrations();
 		final ViewInterestPoints viewInterestPoints = ( correspondenceLabel != null ) ? dataGlobal.getViewInterestPoints() : null;
+
+		// Drop everything already on disk (or already written by an earlier channel of this
+		// run) before the expensive nail-donation pass, so a channel that only reuses another
+		// channel's dfields does no landmark work at all.
+		final List< ViewId > underlyingToCompute = new ArrayList<>();
+		try ( final N5Reader r = URITools.instantiateN5Reader( storageTypeFinal, outPathURIFinal ) )
+		{
+			for ( final ViewId uvid : underlyingViewIds )
+			{
+				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
+
+				if ( materializedThisRun.contains( dsPath ) )
+				{
+					System.out.println( "Phase 1.5: dfield for " + Group.pvid( uvid ) + " already materialized by an earlier channel of this run (" + dsPath + ")" );
+					continue;
+				}
+
+				// Trust the cache: a complete dfield dataset includes the approx_affine_row_major
+				// attribute written by a previous Phase 1.5, so there's no reason to recompute
+				// landmarks (which would re-load all interest points + correspondences) just to
+				// rewrite the same affine.
+				if ( reuseDeformationFields && r.exists( dsPath ) )
+				{
+					System.out.println( "Phase 1.5: reusing cached dfield for " + Group.pvid( uvid ) + " (" + dsPath + ")" );
+					continue;
+				}
+
+				underlyingToCompute.add( uvid );
+			}
+		}
+
+		if ( underlyingToCompute.isEmpty() )
+		{
+			System.out.println( "Phase 1.5: nothing to compute, all " + underlyingViewIds.size() + " displacement field(s) are already available." );
+			return;
+		}
 
 		// Cross-view nail donations are global: each (split S, partner S') overlap-corner emits
 		// a pair of landmarks pointing at the same render-space target (one into U's TPS, one
@@ -1233,32 +1327,19 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final List< DfieldBlockSpec > allSpecs = new ArrayList<>();
 		final List< PerUTaskSpec > perUSpecs = new ArrayList<>();
 
-		try ( final N5Reader r = URITools.instantiateN5Reader( storageTypeFinal, outPathURIFinal ) )
+		for ( final ViewId uvid : underlyingToCompute )
 		{
-			for ( final ViewId uvid : underlyingViewIds )
-			{
-				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
+			perUSpecs.add( new PerUTaskSpec(
+					Spark.serializeViewId( uvid ),
+					xmlURIFinal, outPathURIFinal, storageTypeFinal,
+					anisotropyFactor,
+					correspondenceLabel, minNumCorrespondences,
+					anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
+					seamSamplesScheduleThresholds, seamSamplesScheduleValues,
+					dfieldSpacing, dfieldBlockSize, dfieldType,
+					nailDonations.get( uvid ) ) );
 
-				// Trust the cache: a complete dfield dataset includes the approx_affine_row_major
-				// attribute written by a previous Phase 1.5, so there's no reason to recompute
-				// landmarks (which would re-load all interest points + correspondences) just to
-				// rewrite the same affine.
-				if ( reuseDeformationFields && r.exists( dsPath ) )
-				{
-					System.out.println( "Phase 1.5: reusing cached dfield for " + Group.pvid( uvid ) + " (" + dsPath + ")" );
-					continue;
-				}
-
-				perUSpecs.add( new PerUTaskSpec(
-						Spark.serializeViewId( uvid ),
-						xmlURIFinal, outPathURIFinal, storageTypeFinal,
-						anisotropyFactor,
-						correspondenceLabel, minNumCorrespondences,
-						anchorOverlapCorners, cornerCoverageRadius, seamSamplesPerAxis,
-						seamSamplesScheduleThresholds, seamSamplesScheduleValues,
-						dfieldSpacing, dfieldBlockSize, dfieldType,
-						nailDonations.get( uvid ) ) );
-			}
+			materializedThisRun.add( DisplacementFieldN5Tools.datasetPath( uvid ) );
 		}
 
 		final int viewsToCompute = perUSpecs.size();
@@ -1389,6 +1470,157 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		} );
 
 		System.out.println( "Phase 1.5 complete in " + ( System.currentTimeMillis() - phase15Start ) + " ms." );
+	}
+
+	/**
+	 * The attribute tuple that identifies "the same physical view in another channel":
+	 * everything except the channel itself. Missing attributes are encoded as -1 so that
+	 * datasets without e.g. an illumination axis still match up.
+	 */
+	private static List< Integer > nonChannelAttributes( final ViewSetup vs )
+	{
+		return Arrays.asList(
+				vs.getTile() != null ? vs.getTile().getId() : -1,
+				vs.getAngle() != null ? vs.getAngle().getId() : -1,
+				vs.getIllumination() != null ? vs.getIllumination().getId() : -1 );
+	}
+
+	/**
+	 * Map each underlying (unsplit) setup id onto the setup id whose displacement field it
+	 * should use. With {@code dfieldChannelId == null} every setup maps to itself, which
+	 * reproduces the per-channel behaviour exactly. Otherwise every setup maps to the setup
+	 * in that channel sharing its tile/angle/illumination.
+	 */
+	private static HashMap< Integer, Integer > buildDfieldSourceSetupMap(
+			final SequenceDescription underlyingSD,
+			final Integer dfieldChannelId )
+	{
+		final HashMap< Integer, Integer > dfieldSourceSetup = new HashMap<>();
+
+		if ( dfieldChannelId == null )
+		{
+			for ( final ViewSetup vs : underlyingSD.getViewSetupsOrdered() )
+				dfieldSourceSetup.put( vs.getId(), vs.getId() );
+			return dfieldSourceSetup;
+		}
+
+		final HashMap< List< Integer >, Integer > referenceSetups = new HashMap<>();
+		final Set< Integer > availableChannels = new HashSet<>();
+
+		for ( final ViewSetup vs : underlyingSD.getViewSetupsOrdered() )
+		{
+			if ( vs.getChannel() == null )
+				throw new IllegalArgumentException( "--tpsDfieldChannelId " + dfieldChannelId + ": underlying setup " + vs.getId()
+						+ " has no channel attribute, so dfields cannot be shared across channels." );
+
+			availableChannels.add( vs.getChannel().getId() );
+
+			if ( vs.getChannel().getId() != dfieldChannelId )
+				continue;
+
+			final Integer clash = referenceSetups.put( nonChannelAttributes( vs ), vs.getId() );
+			if ( clash != null )
+				throw new IllegalArgumentException( "--tpsDfieldChannelId " + dfieldChannelId + ": underlying setups "
+						+ clash + " and " + vs.getId() + " share the same tile/angle/illumination, so the dfield source is ambiguous." );
+		}
+
+		if ( referenceSetups.isEmpty() )
+			throw new IllegalArgumentException( "--tpsDfieldChannelId " + dfieldChannelId
+					+ ": no underlying view setup has this channel id. Available channel ids: " + new ArrayList<>( availableChannels ) );
+
+		for ( final ViewSetup vs : underlyingSD.getViewSetupsOrdered() )
+		{
+			final Integer source = referenceSetups.get( nonChannelAttributes( vs ) );
+			if ( source == null )
+				throw new IllegalArgumentException( "--tpsDfieldChannelId " + dfieldChannelId + ": underlying setup " + vs.getId()
+						+ " (channel " + vs.getChannel().getId() + ") has no counterpart in channel " + dfieldChannelId
+						+ " with the same tile/angle/illumination." );
+
+			dfieldSourceSetup.put( vs.getId(), source );
+		}
+
+		System.out.println( "[--tpsDfieldChannelId] displacement fields are computed for channel " + dfieldChannelId
+				+ " only and shared across all " + availableChannels.size() + " channel(s)." );
+
+		return dfieldSourceSetup;
+	}
+
+	/**
+	 * Sharing a displacement field across channels is only valid if the sharing views sit at
+	 * the same place in render space and have the same size — the dfield maps render
+	 * coordinates to that view's image pixels. Verify both for every split view, and abort
+	 * with a specific message rather than silently fusing misplaced data.
+	 */
+	private static void checkDfieldSourceCompatibility(
+			final SplitViewerImgLoader splitImgLoader,
+			final SpimData2 dataGlobal,
+			final Map< Integer, Integer > dfieldSourceSetup,
+			final List< ViewId > splitViewIds )
+	{
+		final double tolerance = 1e-3;
+		final Map< Integer, Integer > new2old = splitImgLoader.new2oldSetupId();
+		final Map< Integer, Interval > splitIntervals = splitImgLoader.newSetupId2Interval();
+		final Map< ViewId, ViewRegistration > regs = dataGlobal.getViewRegistrations().getViewRegistrations();
+		final SequenceDescription underlyingSD = splitImgLoader.underlyingSequenceDescription();
+
+		// underlying setup id -> its split setups, so we can find the counterpart split
+		// (same sub-interval) under the dfield source view.
+		final Map< Integer, List< Integer > > old2new =
+				SplitImgLoaderThinPlateSplineFusion.old2newSetupId( new2old );
+
+		int checked = 0;
+
+		for ( final ViewId splitViewId : splitViewIds )
+		{
+			final int underlyingSetup = new2old.get( splitViewId.getViewSetupId() );
+			final int sourceSetup = dfieldSourceSetup.get( underlyingSetup );
+
+			if ( underlyingSetup == sourceSetup )
+				continue;
+
+			if ( !Intervals.equalDimensions(
+					underlyingSD.getViewDescriptions().get( new ViewId( splitViewId.getTimePointId(), underlyingSetup ) ).getViewSetup().getSize(),
+					underlyingSD.getViewDescriptions().get( new ViewId( splitViewId.getTimePointId(), sourceSetup ) ).getViewSetup().getSize() ) )
+				throw new IllegalArgumentException( "--tpsDfieldChannelId: underlying setups " + underlyingSetup + " and " + sourceSetup
+						+ " have different image dimensions, their displacement fields cannot be shared." );
+
+			// counterpart split: same underlying sub-interval under the source setup
+			final Interval interval = splitIntervals.get( splitViewId.getViewSetupId() );
+			Integer sourceSplitSetup = null;
+			for ( final int candidate : old2new.getOrDefault( sourceSetup, Collections.emptyList() ) )
+				if ( Intervals.equals( interval, splitIntervals.get( candidate ) ) )
+				{
+					sourceSplitSetup = candidate;
+					break;
+				}
+
+			if ( sourceSplitSetup == null )
+				throw new IllegalArgumentException( "--tpsDfieldChannelId: split setup " + splitViewId.getViewSetupId()
+						+ " covers " + Util.printInterval( interval ) + " of underlying setup " + underlyingSetup
+						+ ", but underlying setup " + sourceSetup + " has no split covering the same interval. "
+						+ "The channels must be split identically." );
+
+			final ViewId sourceSplitViewId = new ViewId( splitViewId.getTimePointId(), sourceSplitSetup );
+			final ViewRegistration reg = regs.get( splitViewId );
+			final ViewRegistration sourceReg = regs.get( sourceSplitViewId );
+
+			reg.updateModel();
+			sourceReg.updateModel();
+
+			final double[] a = reg.getModel().getRowPackedCopy();
+			final double[] b = sourceReg.getModel().getRowPackedCopy();
+
+			for ( int i = 0; i < a.length; ++i )
+				if ( Math.abs( a[ i ] - b[ i ] ) > tolerance )
+					throw new IllegalArgumentException( "--tpsDfieldChannelId: " + Group.pvid( splitViewId ) + " and its dfield source "
+							+ Group.pvid( sourceSplitViewId ) + " have different ViewRegistrations ("
+							+ Arrays.toString( a ) + " vs " + Arrays.toString( b ) + "). "
+							+ "Sharing displacement fields requires the channels to carry identical transforms." );
+
+			++checked;
+		}
+
+		System.out.println( "[--tpsDfieldChannelId] verified matching registrations and dimensions for " + checked + " split view(s)." );
 	}
 
 	/**
