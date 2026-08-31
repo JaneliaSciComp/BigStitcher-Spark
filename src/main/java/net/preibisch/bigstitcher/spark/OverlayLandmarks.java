@@ -75,7 +75,7 @@ import util.URITools;
  *
  * <p>Default color-coding (one source per landmark type):
  * <ul>
- *   <li><b>correspondence centers-of-mass (corrCOM)</b> → magenta</li>
+ *   <li><b>split sub-view centers (splitCenter)</b> → magenta</li>
  *   <li><b>correspondence midpoints</b> → green</li>
  *   <li><b>self-donation surface nails (nail)</b> → yellow</li>
  *   <li><b>cross-view tie nails (partner_nail)</b> → cyan</li>
@@ -128,7 +128,7 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 	private double maxIntensity;
 
 	@Option( names = "--csvSplitByViewId",
-			description = "If set, split every landmark type by view_setup_id (one BDV source per (type, view), per-view colored). Default: merge all view ids within each type (3 sources total: corrCOM, midpoints, nails)." )
+			description = "If set, split every landmark type by view_setup_id (one BDV source per (type, view), per-view colored). Default: merge all view ids within each type (3 sources total: splitCenter, midpoints, nails)." )
 	private boolean csvSplitByViewId;
 
 	@Override
@@ -198,17 +198,17 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 		// === Load landmarks (CSV or single debug point) ===
 		if ( csv != null && !csv.isEmpty() )
 		{
-			final Map< Integer, List< RealPoint > > corrCOMByView = new HashMap<>();
+			final Map< Integer, List< RealPoint > > splitCenterByView = new HashMap<>();
 			final Map< Integer, List< RealPoint > > midpointsByView = new HashMap<>();
 			final Map< Integer, List< RealPoint > > nailsByView = new HashMap<>();
 			final Map< Integer, List< RealPoint > > partnerNailsByView = new HashMap<>();
-			loadCsv( csv, corrCOMByView, midpointsByView, nailsByView, partnerNailsByView );
+			loadCsv( csv, splitCenterByView, midpointsByView, nailsByView, partnerNailsByView );
 			System.out.println( "[overlay-landmarks] loaded "
-					+ corrCOMByView.values().stream().mapToInt( List::size ).sum() + " corrCOM, "
+					+ splitCenterByView.values().stream().mapToInt( List::size ).sum() + " splitCenter, "
 					+ midpointsByView.values().stream().mapToInt( List::size ).sum() + " midpoints, "
 					+ nailsByView.values().stream().mapToInt( List::size ).sum() + " nails, "
 					+ partnerNailsByView.values().stream().mapToInt( List::size ).sum() + " partner_nails across "
-					+ allViewIds( corrCOMByView, midpointsByView, nailsByView, partnerNailsByView ).size() + " views" );
+					+ allViewIds( splitCenterByView, midpointsByView, nailsByView, partnerNailsByView ).size() + " views" );
 
 			// === Transform landmark coordinates into the image's BDV world frame ===
 			// Two pieces are needed (read from the first input — landmarks are one CSV per fusion):
@@ -227,7 +227,7 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 				System.out.println( "[overlay-landmarks] landmark transform: subtract " + Arrays.toString( off )
 						+ ( zScale != 1.0 ? "  then *z " + zScale : "" ) );
 				for ( final Map< Integer, List< RealPoint > > byView :
-						Arrays.asList( corrCOMByView, midpointsByView, nailsByView, partnerNailsByView ) )
+						Arrays.asList( splitCenterByView, midpointsByView, nailsByView, partnerNailsByView ) )
 					for ( final List< RealPoint > pts : byView.values() )
 						transformAll( pts, off, zScale );
 			}
@@ -237,10 +237,10 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			// the image's voxel bounds, especially when --preserveAnisotropy has stretched
 			// the image's world z). The image source is shown with its own transform; the
 			// landmark sources stay at identity since their coordinates are already world. ===
-			final Interval viewerInterval = enclosingInterval( sigma, corrCOMByView, midpointsByView, nailsByView, partnerNailsByView );
+			final Interval viewerInterval = enclosingInterval( sigma, splitCenterByView, midpointsByView, nailsByView, partnerNailsByView );
 
 			// === Build landmark sources ===
-			// Without --csvSplitByViewId: one source per type. corrCOM=magenta, midpoints=green,
+			// Without --csvSplitByViewId: one source per type. splitCenter=magenta, midpoints=green,
 			// nails (self donations) = yellow, partner_nails (cross-view ties) = cyan; display
 			// range 0..2 for the dot types, 0..6 for both nail variants.
 			// With --csvSplitByViewId: one source per (type, view_id); each source is colored by
@@ -251,18 +251,18 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 			final ARGBType cyan    = new ARGBType( ARGBType.rgba(   0, 255, 255, 255 ) );
 			if ( csvSplitByViewId )
 			{
-				bdv = addSplitSources( bdv, corrCOMByView,      viewerInterval, sigma, "corrCOM",       2.0 );
+				bdv = addSplitSources( bdv, splitCenterByView,      viewerInterval, sigma, "splitCenter",       2.0 );
 				bdv = addSplitSources( bdv, midpointsByView,    viewerInterval, sigma, "midpoints",     2.0 );
 				bdv = addSplitSources( bdv, nailsByView,        viewerInterval, sigma, "nails",         6.0 );
 				bdv = addSplitSources( bdv, partnerNailsByView, viewerInterval, sigma, "partner_nails", 6.0 );
 			}
 			else
 			{
-				final List< RealPoint > corrCOMAll      = flatten( corrCOMByView );
+				final List< RealPoint > splitCenterAll      = flatten( splitCenterByView );
 				final List< RealPoint > midpointsAll    = flatten( midpointsByView );
 				final List< RealPoint > nailsAll        = flatten( nailsByView );
 				final List< RealPoint > partnerNailsAll = flatten( partnerNailsByView );
-				if ( !corrCOMAll.isEmpty() )      bdv = addPointSource( bdv, corrCOMAll,      viewerInterval, sigma, "corrCOM",       magenta, 2.0 );
+				if ( !splitCenterAll.isEmpty() )      bdv = addPointSource( bdv, splitCenterAll,      viewerInterval, sigma, "splitCenter",       magenta, 2.0 );
 				if ( !midpointsAll.isEmpty() )    bdv = addPointSource( bdv, midpointsAll,    viewerInterval, sigma, "midpoints",     green,   2.0 );
 				if ( !nailsAll.isEmpty() )        bdv = addPointSource( bdv, nailsAll,        viewerInterval, sigma, "nails",         yellow,  6.0 );
 				if ( !partnerNailsAll.isEmpty() ) bdv = addPointSource( bdv, partnerNailsAll, viewerInterval, sigma, "partner_nails", cyan,    6.0 );
@@ -279,7 +279,7 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 
 	private static void loadCsv(
 			final String path,
-			final Map< Integer, List< RealPoint > > corrCOMByView,
+			final Map< Integer, List< RealPoint > > splitCenterByView,
 			final Map< Integer, List< RealPoint > > midpointsByView,
 			final Map< Integer, List< RealPoint > > nailsByView,
 			final Map< Integer, List< RealPoint > > partnerNailsByView ) throws IOException
@@ -310,8 +310,8 @@ public class OverlayLandmarks implements Callable< Void >, Serializable
 				final double ty = Double.parseDouble( cols[ 7 ].trim() );
 				final double tz = Double.parseDouble( cols[ 8 ].trim() );
 				final RealPoint p = new RealPoint( tx, ty, tz );
-				if ( "corrCOM".equals( type ) )
-					corrCOMByView.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
+				if ( "splitCenter".equals( type ) )
+					splitCenterByView.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
 				else if ( "midpoint".equals( type ) )
 					midpointsByView.computeIfAbsent( viewSetupId, k -> new ArrayList<>() ).add( p );
 				else if ( "nail".equals( type ) )
