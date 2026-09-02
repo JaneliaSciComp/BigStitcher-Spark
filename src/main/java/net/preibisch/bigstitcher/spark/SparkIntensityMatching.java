@@ -17,6 +17,11 @@ import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
+import mpicbg.models.AffineModel1D;
+import mpicbg.models.IdentityModel;
+import mpicbg.models.InterpolatedAffineModel1D;
+import mpicbg.models.Model;
+import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RealInterval;
@@ -37,6 +42,16 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	public enum IntensityMatchingMethod
 	{
 		RANSAC, HISTOGRAM
+	}
+
+	public enum TransformationModel
+	{
+		AFFINE, TRANSLATION, IDENTITY
+	}
+
+	public enum RegularizationModel
+	{
+		NONE, AFFINE, TRANSLATION, IDENTITY
 	}
 
 	@Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
@@ -60,6 +75,21 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@Option(names = {"--method"}, defaultValue = "RANSAC", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "Method to match intensities between overlapping views: RANSAC or HISTOGRAM")
 	private IntensityMatchingMethod intensityMatchingMethod;
+
+	@Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity matching; AFFINE, TRANSLATION or IDENTITY (default: AFFINE)")
+	private TransformationModel transformationModel = TransformationModel.AFFINE;
+
+	@Option(names = { "-rm1", "--regularizationModel1" }, description = "first regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: TRANSLATION)")
+	private RegularizationModel regularizationModel1 = RegularizationModel.TRANSLATION;
+
+	@Option(names = { "--lambda1" }, description = "lambda [0..1] for the first regularization model (default: 0.01)")
+	private double lambda1 = 0.01;
+
+	@Option(names = { "-rm2", "--regularizationModel2" }, description = "second regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: IDENTITY)")
+	private RegularizationModel regularizationModel2 = RegularizationModel.IDENTITY;
+
+	@Option(names = { "--lambda2" }, description = "lambda [0..1] for the second regularization model (default: 0.01)")
+	private double lambda2 = 0.01;
 
 	@CommandLine.Option(names = { "--numIterations" }, description = "number of RANSAC iterations (default: 1000)")
 	private int iterations = 1000;
@@ -110,6 +140,15 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final int minNumInliers = this.minNumInliers;
 		final double maxTrust = this.maxTrust;
 		final IntensityMatchingMethod method = this.intensityMatchingMethod;
+		final TransformationModel transformationModel = this.transformationModel;
+		final RegularizationModel regularizationModel1 = this.regularizationModel1;
+		final double lambda1 = this.lambda1;
+		final RegularizationModel regularizationModel2 = this.regularizationModel2;
+		final double lambda2 = this.lambda2;
+
+		System.out.println( "Intensity matching model: " + transformationModel
+				+ ", regularized by " + regularizationModel1 + " (lambda1=" + lambda1 + ")"
+				+ " and " + regularizationModel2 + " (lambda2=" + lambda2 + ")" );
 
 		new ViewPairCoefficientMatchesIO( outputURI ).writeCoefficientsSize( coefficientsSize );
 
@@ -171,16 +210,18 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + views._1().getViewSetupId() + "<>" + views._2().getViewSetupId() );
 
+			final Model< ? > model = createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
+
 			final ViewPairCoefficientMatches matches;
 			if ( method == IntensityMatchingMethod.RANSAC )
 			{
 				matches = IntensityCorrection.matchRansac( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
-						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
+						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, model, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
 			}
 			else // method == IntensityMatchingMethod.HISTOGRAM
 			{
 				matches = IntensityCorrection.matchHistograms( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
-						minIntensityThreshold, maxIntensityThreshold, minNumCandidates );
+						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, model );
 			}
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
 			matchWriter.write( matches );
@@ -191,6 +232,45 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Done.");
 
 		return null;
+	}
+
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public static Model< ? > createModelInstance(
+			final TransformationModel transformationModel,
+			final RegularizationModel regularizationModel1,
+			final double lambda1,
+			final RegularizationModel regularizationModel2,
+			final double lambda2 )
+	{
+		Model< ? > model = createBaseModel( transformationModel );
+
+		if ( regularizationModel1 != RegularizationModel.NONE )
+			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel1 ), lambda1 );
+
+		if ( regularizationModel2 != RegularizationModel.NONE )
+			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel2 ), lambda2 );
+
+		return model;
+	}
+
+	private static Model< ? > createBaseModel( final TransformationModel transformationModel )
+	{
+		if ( transformationModel == TransformationModel.TRANSLATION )
+			return new TranslationModel1D();
+		else if ( transformationModel == TransformationModel.IDENTITY )
+			return new IdentityModel();
+		else
+			return new AffineModel1D();
+	}
+
+	private static Model< ? > createRegularizationModel( final RegularizationModel regularizationModel )
+	{
+		if ( regularizationModel == RegularizationModel.TRANSLATION )
+			return new TranslationModel1D();
+		else if ( regularizationModel == RegularizationModel.IDENTITY )
+			return new IdentityModel();
+		else
+			return new AffineModel1D();
 	}
 
 	static List< ViewId > serializable( final List< ? extends ViewId > list )

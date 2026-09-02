@@ -83,7 +83,7 @@ The `install` script runs `mvn install`, then generates per-command shell wrappe
 Parent: `pom-scijava` `44.0.0` (matches mvr; provides Java 21 defaults and the managed `imglib2` / `spim_data` base versions, so those are **no longer pinned here** — inherited from the parent to stay in lock-step with mvr).
 
 Currently pinned (top of `pom.xml`):
-- `multiview-reconstruction.version` = `9.0.1` (released; the zarrv3 line's release — BigStitcher 3.0.0 mirrors its dependency overrides)
+- `multiview-reconstruction.version` = `9.0.12-SNAPSHOT` (temporary, for the intensity-matching model-selection API; switch back to a release once mvr 9.0.12 is out)
 - `imglib2-cache.version` = `1.0.0-beta-20`
 - `imglib2-algorithm.version` = `0.18.3` (provides `algorithm.blocks.dfield.PositionFieldFunction`, required by mvr's `SplitImgLoaderThinPlateSplineFusion`)
 - `imglib2-realtransform.version` = `4.0.5`
