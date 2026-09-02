@@ -50,16 +50,16 @@ public class IntensitySolver extends AbstractSelectableViews {
 	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
 	private String outputDataset = "intensity";
 
-	@CommandLine.Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity solving; AFFINE, TRANSLATION or IDENTITY (default: AFFINE)")
+	@CommandLine.Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity solving; AFFINE, TRANSLATION, SCALE or IDENTITY (default: AFFINE)")
 	private TransformationModel transformationModel = TransformationModel.AFFINE;
 
-	@CommandLine.Option(names = { "-rm1", "--regularizationModel1" }, description = "first regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: TRANSLATION)")
+	@CommandLine.Option(names = { "-rm1", "--regularizationModel1" }, description = "first regularization model for the transformation model; NONE, AFFINE, TRANSLATION, SCALE or IDENTITY (default: TRANSLATION)")
 	private RegularizationModel regularizationModel1 = RegularizationModel.TRANSLATION;
 
 	@CommandLine.Option(names = { "--lambda1" }, description = "lambda [0..1] for the first regularization model (default: 0.01)")
 	private double lambda1 = 0.01;
 
-	@CommandLine.Option(names = { "-rm2", "--regularizationModel2" }, description = "second regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: IDENTITY)")
+	@CommandLine.Option(names = { "-rm2", "--regularizationModel2" }, description = "second regularization model for the transformation model; NONE, AFFINE, TRANSLATION, SCALE or IDENTITY (default: IDENTITY)")
 	private RegularizationModel regularizationModel2 = RegularizationModel.IDENTITY;
 
 	@CommandLine.Option(names = { "--lambda2" }, description = "lambda [0..1] for the second regularization model (default: 0.01)")

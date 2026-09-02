@@ -24,6 +24,7 @@ import mpicbg.models.Model;
 import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
 import net.imglib2.RealInterval;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -46,12 +47,12 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 	public enum TransformationModel
 	{
-		AFFINE, TRANSLATION, IDENTITY
+		AFFINE, TRANSLATION, SCALE, IDENTITY
 	}
 
 	public enum RegularizationModel
 	{
-		NONE, AFFINE, TRANSLATION, IDENTITY
+		NONE, AFFINE, TRANSLATION, SCALE, IDENTITY
 	}
 
 	@Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
@@ -79,16 +80,16 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@Option(names = { "--numBins" }, description = "number of quantile samples (bins) taken from each intensity distribution for histogram matching (default: 100, only for HISTOGRAM method)")
 	private int numBins = 100;
 
-	@Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity matching; AFFINE, TRANSLATION or IDENTITY (default: AFFINE)")
+	@Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity matching; AFFINE, TRANSLATION, SCALE or IDENTITY (default: AFFINE)")
 	private TransformationModel transformationModel = TransformationModel.AFFINE;
 
-	@Option(names = { "-rm1", "--regularizationModel1" }, description = "first regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: TRANSLATION)")
+	@Option(names = { "-rm1", "--regularizationModel1" }, description = "first regularization model for the transformation model; NONE, AFFINE, TRANSLATION, SCALE or IDENTITY (default: TRANSLATION)")
 	private RegularizationModel regularizationModel1 = RegularizationModel.TRANSLATION;
 
 	@Option(names = { "--lambda1" }, description = "lambda [0..1] for the first regularization model (default: 0.01)")
 	private double lambda1 = 0.01;
 
-	@Option(names = { "-rm2", "--regularizationModel2" }, description = "second regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: IDENTITY)")
+	@Option(names = { "-rm2", "--regularizationModel2" }, description = "second regularization model for the transformation model; NONE, AFFINE, TRANSLATION, SCALE or IDENTITY (default: IDENTITY)")
 	private RegularizationModel regularizationModel2 = RegularizationModel.IDENTITY;
 
 	@Option(names = { "--lambda2" }, description = "lambda [0..1] for the second regularization model (default: 0.01)")
@@ -261,6 +262,8 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	{
 		if ( transformationModel == TransformationModel.TRANSLATION )
 			return new TranslationModel1D();
+		else if ( transformationModel == TransformationModel.SCALE )
+			return new ScaleModel1D();
 		else if ( transformationModel == TransformationModel.IDENTITY )
 			return new IdentityModel();
 		else
@@ -271,6 +274,8 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	{
 		if ( regularizationModel == RegularizationModel.TRANSLATION )
 			return new TranslationModel1D();
+		else if ( regularizationModel == RegularizationModel.SCALE )
+			return new ScaleModel1D();
 		else if ( regularizationModel == RegularizationModel.IDENTITY )
 			return new IdentityModel();
 		else
