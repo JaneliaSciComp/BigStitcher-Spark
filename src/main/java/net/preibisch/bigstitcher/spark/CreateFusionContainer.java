@@ -2,6 +2,8 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.File;
 import java.io.Serializable;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.n5.Compression;
 import org.janelia.saalfeldlab.n5.DataType;
@@ -28,6 +29,7 @@ import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -46,6 +48,7 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.ViewSetupUtils;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
@@ -170,18 +173,30 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 		// the resolution (voxel size) of the fused output at full res (s0) - carried over from the
 		// input data's own calibration (adjusted for whatever scale is already baked into its
-		// ViewRegistration models), rather than hardcoding it - see usages below
+		// ViewRegistration models, e.g. a real affine registration), rather than hardcoding it -
+		// see usages below. The raw result of computeAverageCalibration() is then rounded back to
+		// the same decimal precision as the raw XML voxel size (per axis) to strip the
+		// floating-point noise its transform-based decomposition introduces - see roundToPrecisionOf().
+		final SequenceDescription seqDescGlobal = dataGlobal.getSequenceDescription();
 		final List< ViewDescription > vdsGlobal = viewIdsGlobal.stream()
-				.map( vid -> dataGlobal.getSequenceDescription().getViewDescription( vid ) )
-				.collect( Collectors.toList() );
+				.map( vid -> seqDescGlobal.getViewDescription( vid ) )
+				.toList();
 
-		final Pair< double[], String > avgCalibration =
+		final Pair< double[], String > avgCalibrationRaw =
 				TransformationTools.computeAverageCalibration( vdsGlobal, dataGlobal.getViewRegistrations() );
 
-		System.out.println( "Approximate pixel size of fused image (without downsampling): " + Util.printCoordinates( avgCalibration.getA() ) + " " + avgCalibration.getB() );
+		final VoxelDimensions refVoxelSize = ViewSetupUtils.getVoxelSize( vdsGlobal.get( 0 ).getViewSetup() );
 
-		final int numTimepointsXML = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size();
-		final int numChannelsXML = dataGlobal.getSequenceDescription().getAllChannelsOrdered().size();
+		final double[] avgCalibrationValues = new double[ 3 ];
+		for ( int d = 0; d < 3; ++d )
+			avgCalibrationValues[ d ] = roundToPrecisionOf(
+					avgCalibrationRaw.getA()[ d ],
+					refVoxelSize != null ? refVoxelSize.dimension( d ) : avgCalibrationRaw.getA()[ d ] );
+
+		System.out.println( "Approximate pixel size of fused image (without downsampling): " + Util.printCoordinates( avgCalibrationValues ) + " " + avgCalibrationRaw.getB() );
+
+		final int numTimepointsXML = seqDescGlobal.getTimePoints().getTimePointsOrdered().size();
+		final int numChannelsXML = seqDescGlobal.getAllChannelsOrdered().size();
 
 		System.out.println( "XML project contains " + numChannelsXML + " channels, " + numTimepointsXML + " timepoints." );
 
@@ -390,6 +405,17 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MaxIntensity", maxIntensity );
 		}
 
+		// resolution of the s0 export - carry over the actual voxel calibration of the input data
+		// (computed above) rather than hardcoding 1.0 for x/y. When --preserveAnisotropy is set,
+		// the fused volume keeps native z spacing (the bounding box was downsampled by
+		// anisotropyFactor above instead of resampling z to be isotropic), so each output z-voxel
+		// covers anisotropyFactor * (isotropic z-voxel) of physical space. Shared by the OME-NGFF
+		// and BDV metadata paths below so viewers don't squash z either way.
+		final double zResS0 = preserveAnisotropy ? avgCalibrationValues[ 2 ] * anisotropyFactor : avgCalibrationValues[ 2 ];
+		final VoxelDimensions voxelSizeS0 = new FinalVoxelDimensions( "micrometer", new double[] { avgCalibrationValues[ 0 ], avgCalibrationValues[ 1 ], zResS0 } );
+
+		System.out.println( "Resolution of level 0: " + Util.printCoordinates( voxelSizeS0.dimensionsAsDoubleArray() ) + " micrometer" ); //vx.unit() might not be OME-ZARR compatible
+
 		// setup datasets and metadata
 		MultiResolutionLevelInfo[][] mrInfos = null;
 
@@ -441,23 +467,12 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
 					(level) -> MipmapTransforms.getMipmapTransformDefault( Arrays.copyOf( mrInfo[level].absoluteDownsamplingDouble(), 3 ) );
 
-			// extract the resolution of the s0 export - carry over the actual voxel calibration of
-			// the input data (computed above) rather than hardcoding 1.0 for x/y.
-			// When --preserveAnisotropy is set, the fused volume keeps native z spacing (the bounding
-			// box was downsampled by anisotropyFactor above instead of resampling z to be isotropic),
-			// so each output z-voxel covers anisotropyFactor * (isotropic z-voxel) of physical space.
-			// Reflect that in the OME-NGFF s0 scale so viewers don't squash z.
-			final double zResS0 = preserveAnisotropy ? avgCalibration.getA()[ 2 ] * anisotropyFactor : avgCalibration.getA()[ 2 ];
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { avgCalibration.getA()[ 0 ], avgCalibration.getA()[ 1 ], zResS0 } );
-
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
-
 			// create metadata
 			final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 					5, // int n
 					"/", // String name, I also saw "/"
 					storageType == StorageFormat.ZARR2 ? "0.4" : "0.5", // OME-NGFF version
-					vx.dimensionsAsDoubleArray(), // double[] resolutionS0,
+					voxelSizeS0.dimensionsAsDoubleArray(), // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
 					levelToName,
@@ -498,17 +513,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			for ( int t = 0; t < numTimepoints; ++t )
 				tps.add( new TimePoint( t ) );
 
-			// extract the resolution of the s0 export - carry over the actual voxel calibration of
-			// the input data (computed above) rather than hardcoding 1.0 for x/y.
-			// When --preserveAnisotropy is set, the fused volume keeps native z spacing, so the
-			// BDV ViewSetup's voxelSize z component must additionally reflect anisotropyFactor.
-			final double zResS0Bdv = preserveAnisotropy ? avgCalibration.getA()[ 2 ] * anisotropyFactor : avgCalibration.getA()[ 2 ];
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { avgCalibration.getA()[ 0 ], avgCalibration.getA()[ 1 ], zResS0Bdv } );
-
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( vx.dimensionsAsDoubleArray() ) + " " + "micrometer" );
-
-			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", vx.dimensionsAsDoubleArray() );
-
 			for ( int c = 0; c < numChannels; ++c )
 			{
 				setups.add(
@@ -516,7 +520,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 								c,
 								"setup " + c,
 								new FinalDimensions( bb ),
-								vxNew,
+								voxelSizeS0,
 								new Tile( 0 ),
 								new Channel( c, "Channel " + c ),
 								new Angle( 0 ),
@@ -638,6 +642,22 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.close();
 
 		return null;
+	}
+
+	/**
+	 * Rounds {@code value} to the same number of decimal places that {@code reference} was
+	 * apparently specified with (e.g. reference=0.1625 -&gt; round to 4 decimal places). Used to
+	 * strip the floating-point noise that {@link TransformationTools#computeAverageCalibration}
+	 * introduces via its Vector3d-transform/length() decomposition (which, for a pure
+	 * diagonal-scale/calibration ViewRegistration model, mathematically cancels back to the raw
+	 * XML voxel size but not bit-for-bit), while still preserving any genuine, larger scale
+	 * difference a real (e.g. affine) registration may have introduced.
+	 */
+	private static double roundToPrecisionOf( final double value, final double reference )
+	{
+		final int decimals = Math.max( 0, Math.min( new BigDecimal( Double.toString( reference ) ).scale(), 10 ) );
+
+		return BigDecimal.valueOf( value ).setScale( decimals, RoundingMode.HALF_UP ).doubleValue();
 	}
 
 	public static void main(final String... args) throws SpimDataException
