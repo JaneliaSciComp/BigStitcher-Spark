@@ -10,8 +10,11 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.slf4j.LoggerFactory;
 
+import mpicbg.models.Model;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
+import net.preibisch.bigstitcher.spark.SparkIntensityMatching.RegularizationModel;
+import net.preibisch.bigstitcher.spark.SparkIntensityMatching.TransformationModel;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
@@ -46,6 +49,21 @@ public class IntensitySolver extends AbstractSelectableViews {
 
 	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{-n5Group}/setup{s}/timepoint{t}/{n5Dataset}\"")
 	private String outputDataset = "intensity";
+
+	@CommandLine.Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity solving; AFFINE, TRANSLATION or IDENTITY (default: AFFINE)")
+	private TransformationModel transformationModel = TransformationModel.AFFINE;
+
+	@CommandLine.Option(names = { "-rm1", "--regularizationModel1" }, description = "first regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: TRANSLATION)")
+	private RegularizationModel regularizationModel1 = RegularizationModel.TRANSLATION;
+
+	@CommandLine.Option(names = { "--lambda1" }, description = "lambda [0..1] for the first regularization model (default: 0.01)")
+	private double lambda1 = 0.01;
+
+	@CommandLine.Option(names = { "-rm2", "--regularizationModel2" }, description = "second regularization model for the transformation model; NONE, AFFINE, TRANSLATION or IDENTITY (default: IDENTITY)")
+	private RegularizationModel regularizationModel2 = RegularizationModel.IDENTITY;
+
+	@CommandLine.Option(names = { "--lambda2" }, description = "lambda [0..1] for the second regularization model (default: 0.01)")
+	private double lambda2 = 0.01;
 
 	@Override
 	public Void call() throws Exception
@@ -111,9 +129,14 @@ public class IntensitySolver extends AbstractSelectableViews {
 		}
 
 		System.out.println( "\nConnected pairs: " + pairwiseMatches.size() );
+		System.out.println( "Intensity solving model: " + transformationModel
+				+ ", regularized by " + regularizationModel1 + " (lambda1=" + lambda1 + ")"
+				+ " and " + regularizationModel2 + " (lambda2=" + lambda2 + ")" );
 		System.out.println( "Running solve... " );
 
-		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, pairwiseMatches, maxIterations );
+		final Model< ? > model = SparkIntensityMatching.createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
+
+		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, pairwiseMatches, maxIterations, model );
 
 		IntensityCorrection.writeCoefficients( n5Writer, outputGroup, outputDataset, coefficients );
 
