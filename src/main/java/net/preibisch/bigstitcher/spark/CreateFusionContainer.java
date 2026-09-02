@@ -3,6 +3,7 @@ package net.preibisch.bigstitcher.spark;
 import java.io.File;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.math.RoundingMode;
 import java.net.URI;
 import java.util.ArrayList;
@@ -48,7 +49,6 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.ViewSetupUtils;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
@@ -174,9 +174,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// the resolution (voxel size) of the fused output at full res (s0) - carried over from the
 		// input data's own calibration (adjusted for whatever scale is already baked into its
 		// ViewRegistration models, e.g. a real affine registration), rather than hardcoding it -
-		// see usages below. The raw result of computeAverageCalibration() is then rounded back to
-		// the same decimal precision as the raw XML voxel size (per axis) to strip the
-		// floating-point noise its transform-based decomposition introduces - see roundToPrecisionOf().
+		// see usages below. computeAverageCalibration()'s result is then denoised - see stripCalibrationNoise().
 		final SequenceDescription seqDescGlobal = dataGlobal.getSequenceDescription();
 		final List< ViewDescription > vdsGlobal = viewIdsGlobal.stream()
 				.map( vid -> seqDescGlobal.getViewDescription( vid ) )
@@ -185,13 +183,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		final Pair< double[], String > avgCalibrationRaw =
 				TransformationTools.computeAverageCalibration( vdsGlobal, dataGlobal.getViewRegistrations() );
 
-		final VoxelDimensions refVoxelSize = ViewSetupUtils.getVoxelSize( vdsGlobal.get( 0 ).getViewSetup() );
-
 		final double[] avgCalibrationValues = new double[ 3 ];
 		for ( int d = 0; d < 3; ++d )
-			avgCalibrationValues[ d ] = roundToPrecisionOf(
-					avgCalibrationRaw.getA()[ d ],
-					refVoxelSize != null ? refVoxelSize.dimension( d ) : avgCalibrationRaw.getA()[ d ] );
+			avgCalibrationValues[ d ] = stripCalibrationNoise( avgCalibrationRaw.getA()[ d ] );
 
 		System.out.println( "Approximate pixel size of fused image (without downsampling): " + Util.printCoordinates( avgCalibrationValues ) + " " + avgCalibrationRaw.getB() );
 
@@ -644,20 +638,21 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		return null;
 	}
 
-	/**
-	 * Rounds {@code value} to the same number of decimal places that {@code reference} was
-	 * apparently specified with (e.g. reference=0.1625 -&gt; round to 4 decimal places). Used to
-	 * strip the floating-point noise that {@link TransformationTools#computeAverageCalibration}
-	 * introduces via its Vector3d-transform/length() decomposition (which, for a pure
-	 * diagonal-scale/calibration ViewRegistration model, mathematically cancels back to the raw
-	 * XML voxel size but not bit-for-bit), while still preserving any genuine, larger scale
-	 * difference a real (e.g. affine) registration may have introduced.
-	 */
-	private static double roundToPrecisionOf( final double value, final double reference )
-	{
-		final int decimals = Math.max( 0, Math.min( new BigDecimal( Double.toString( reference ) ).scale(), 10 ) );
+	/** Number of significant figures to keep when denoising a calibration value - see {@link #stripCalibrationNoise}. */
+	private static final int CALIBRATION_SIGNIFICANT_DIGITS = 12;
 
-		return BigDecimal.valueOf( value ).setScale( decimals, RoundingMode.HALF_UP ).doubleValue();
+	/**
+	 * Strips the floating-point noise that {@link TransformationTools#computeAverageCalibration}'s
+	 * Vector3d-transform/length() decomposition introduces (typically in the last few significant
+	 * digits of a double), while preserving any genuine, larger scale difference a real
+	 * registration may have introduced.
+	 */
+	private static double stripCalibrationNoise( final double value )
+	{
+		if ( !Double.isFinite( value ) )
+			return value;
+
+		return BigDecimal.valueOf( value ).round( new MathContext( CALIBRATION_SIGNIFICANT_DIGITS, RoundingMode.HALF_UP ) ).doubleValue();
 	}
 
 	public static void main(final String... args) throws SpimDataException
