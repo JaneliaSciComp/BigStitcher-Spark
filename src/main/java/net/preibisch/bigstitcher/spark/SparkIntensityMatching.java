@@ -76,6 +76,9 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			description = "Method to match intensities between overlapping views: RANSAC or HISTOGRAM")
 	private IntensityMatchingMethod intensityMatchingMethod;
 
+	@Option(names = { "--numBins" }, description = "number of quantile samples (bins) taken from each intensity distribution for histogram matching (default: 100, only for HISTOGRAM method)")
+	private int numBins = 100;
+
 	@Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity matching; AFFINE, TRANSLATION or IDENTITY (default: AFFINE)")
 	private TransformationModel transformationModel = TransformationModel.AFFINE;
 
@@ -140,6 +143,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final int minNumInliers = this.minNumInliers;
 		final double maxTrust = this.maxTrust;
 		final IntensityMatchingMethod method = this.intensityMatchingMethod;
+		final int numBins = this.numBins;
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel1 = this.regularizationModel1;
 		final double lambda1 = this.lambda1;
@@ -221,7 +225,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			else // method == IntensityMatchingMethod.HISTOGRAM
 			{
 				matches = IntensityCorrection.matchHistograms( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
-						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, model );
+						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, model, numBins );
 			}
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
 			matchWriter.write( matches );
