@@ -3,6 +3,7 @@ package net.preibisch.bigstitcher.spark;
 import static net.imglib2.util.Intervals.intersect;
 import static net.imglib2.util.Intervals.isEmpty;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
@@ -25,12 +27,17 @@ import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
+import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
+import net.imglib2.util.Cast;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
+import net.preibisch.bigstitcher.spark.util.AutoThreshold;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.IntensityThresholds;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatches;
 import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatchesIO;
 import picocli.CommandLine;
@@ -64,8 +71,8 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "path (URI) for saving pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
 	private String outputPathURIString = null;
 
-	@Option(names = { "--minThreshold" }, description = "min threshold for intensities to consider for matching, anything below this value will be discarded (default: 1)")
-	private double minIntensityThreshold = 1;
+	@Option(names = { "--minThreshold" }, description = "min threshold for intensities to consider for matching, anything below this value will be discarded; either a fixed value, or LI or OTSU to compute it per view (at --renderScale) and use max(thresholdView1, thresholdView2) for each pair (default: 1)")
+	private String minThresholdString = "1";
 
 	@Option(names = { "--maxThreshold" }, description = "max threshold for intensities to consider for matching, anything above this value will be discarded (default: none)")
 	private double maxIntensityThreshold = Double.NaN;
@@ -122,6 +129,9 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		if ( numBins < 2 )
 			throw new IllegalArgumentException( "--numBins must be >= 2 (a single sample only ever matches each distribution's minimum), but was " + numBins );
 
+		final AutoThreshold.Method autoThresholdMethod = parseAutoThresholdMethod( minThresholdString );
+		final double fixedMinIntensityThreshold = autoThresholdMethod == null ? Double.parseDouble( minThresholdString ) : Double.NaN;
+
 		// build the model once here so an invalid lambda fails on the driver, not in every Spark task
 		createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
 
@@ -141,8 +151,8 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		final double renderScale = this.renderScale;
 		final int[] coefficientsSize = Import.csvStringToIntArray( numCoefficientsString );
 		final URI outputURI = URITools.toURI( outputPathURIString );
-		final double minIntensityThreshold = this.minIntensityThreshold;
 		final double maxIntensityThreshold = this.maxIntensityThreshold;
+		final long downsampling = Math.max( 1, Math.round( 1.0 / renderScale ) );
 		final int minNumCandidates = this.minNumCandidates;
 		final int iterations = this.iterations;
 		final double maxEpsilon = this.maxEpsilon;
@@ -214,6 +224,49 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			}
 		}
 
+		// one threshold per view, from the whole view at --renderScale, like the reference
+		// Python pipeline's per-tile Li/Otsu; each pair is then gated at the higher of the two
+		final Map< ViewId, Double > viewThresholds;
+
+		if ( autoThresholdMethod == null )
+		{
+			viewThresholds = null;
+		}
+		else
+		{
+			final List< ViewId > viewsToThreshold = viewIdPairsToMatch.stream()
+					.flatMap( pair -> Stream.of( pair._1(), pair._2() ) )
+					.distinct()
+					.collect( Collectors.toList() );
+
+			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing " + autoThresholdMethod
+					+ " threshold for " + viewsToThreshold.size() + " views (downsampling " + downsampling + "x) ... " );
+
+			final long[] downsampleFactors = new long[] { downsampling, downsampling, downsampling };
+
+			final JavaRDD< ViewId > viewRDD = sc.parallelize( viewsToThreshold, Math.min( Spark.maxPartitions, viewsToThreshold.size() ) );
+
+			viewThresholds = new HashMap<>( viewRDD.mapToPair( viewId -> {
+				final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
+				final RandomAccessibleInterval< ? > img = SparkInterestPointDetection.openAndDownsample(
+						dataLocal.getSequenceDescription().getImgLoader(), viewId, downsampleFactors, true ).getA();
+				return new Tuple2<>( viewId, AutoThreshold.compute( autoThresholdMethod, Cast.unchecked( img ) ) );
+			} ).collectAsMap() );
+
+			// a constant view cannot be split; fall back to the default floor of 1 so it is
+			// not silently matched against its full background
+			viewThresholds.replaceAll( ( viewId, threshold ) -> {
+				if ( !Double.isNaN( threshold ) )
+					return threshold;
+				System.out.println( "WARNING: view " + Group.pvid( viewId ) + " has a constant image at this scale, "
+						+ autoThresholdMethod + " threshold undefined, using 1 instead." );
+				return 1.0;
+			} );
+
+			printThresholdSummary( viewThresholds );
+			IntensityThresholds.write( outputURI, viewThresholds );
+		}
+
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): running ... " );
 
 		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
@@ -222,6 +275,11 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + views._1().getViewSetupId() + "<>" + views._2().getViewSetupId() );
 
 			final Model< ? > model = createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
+
+			// the shared floor: a pair is compared only where BOTH views are foreground
+			final double minIntensityThreshold = viewThresholds == null
+					? fixedMinIntensityThreshold
+					: Math.max( viewThresholds.get( views._1() ), viewThresholds.get( views._2() ) );
 
 			final ViewPairCoefficientMatches matches;
 			if ( method == IntensityMatchingMethod.RANSAC )
@@ -243,6 +301,36 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Done.");
 
 		return null;
+	}
+
+	/**
+	 * @return the auto-threshold method named by {@code --minThreshold}, or null if it is a fixed value
+	 */
+	static AutoThreshold.Method parseAutoThresholdMethod( final String minThreshold )
+	{
+		final String s = minThreshold.trim();
+
+		for ( final AutoThreshold.Method method : AutoThreshold.Method.values() )
+			if ( method.name().equalsIgnoreCase( s ) )
+				return method;
+
+		try
+		{
+			Double.parseDouble( s );
+			return null;
+		}
+		catch ( final NumberFormatException e )
+		{
+			throw new IllegalArgumentException( "--minThreshold must be a number, LI or OTSU, but was '" + minThreshold + "'" );
+		}
+	}
+
+	private static void printThresholdSummary( final Map< ViewId, Double > viewThresholds )
+	{
+		final double[] sorted = viewThresholds.values().stream().mapToDouble( Double::doubleValue ).sorted().toArray();
+
+		System.out.println( String.format( "Per-view thresholds: min %.2f, median %.2f, max %.2f",
+				sorted[ 0 ], sorted[ sorted.length / 2 ], sorted[ sorted.length - 1 ] ) );
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })

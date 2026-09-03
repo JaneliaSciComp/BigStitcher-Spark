@@ -232,6 +232,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	@CommandLine.Option(names = { "--intensityN5Dataset" }, description = "dataset name for each coefficient dataset (default: \"intensity\"). The coefficients for view(s,t) are stored in dataset \"{--intensityN5Group}/setup{s}/timepoint{t}/{--intensityN5Dataset}\"")
 	private String intensityN5Dataset = "intensity";
 
+	@CommandLine.Option(names = { "--intensityMaskBelowThreshold" }, description = "only intensity-correct voxels at or above the per-view threshold the coefficients were measured on (requires match-intensities --minThreshold LI/OTSU; default: correct all voxels)")
+	private boolean intensityMaskBelowThreshold = false;
+
 	URI outPathURI = null;
 	/**
 	 * Prefetching now works with a Executors.newCachedThreadPool();
@@ -522,6 +525,18 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			try( final N5Reader r = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI  ) )
 			{
 				System.out.println( "Found intensity container '" + intensityN5PathURI + "'.");
+
+				if ( intensityMaskBelowThreshold )
+				{
+					final ViewId v = viewIdsGlobal.get( 0 );
+					final double threshold = IntensityCorrection.readCoefficients( r, intensityN5Group, intensityN5Dataset, v ).threshold();
+
+					if ( Double.isFinite( threshold ) )
+						System.out.println( "Only correcting intensities >= the per-view threshold (e.g. " + threshold + " for " + Group.pvid( v ) + ")." );
+					else
+						System.out.println( "WARNING: --intensityMaskBelowThreshold was specified, but the coefficients carry no threshold "
+								+ "(match-intensities was run with a fixed --minThreshold), so all voxels will be corrected." );
+				}
 			}
 			catch ( Exception e )
 			{
@@ -539,6 +554,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final StorageFormat intensityN5StorageType = this.intensityN5StorageType;
 		final URI intensityN5PathURI = this.intensityN5PathURI;
 		final String intensityN5Group = this.intensityN5Group;
+		final boolean intensityMaskBelowThreshold = this.intensityMaskBelowThreshold;
 		final String intensityN5Dataset = this.intensityN5Dataset;
 
 		// TODO: do we still need this?
@@ -724,8 +740,11 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							coefficients = new HashMap<>();
 							try ( N5Reader intensityN5Reader = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI ) )
 							{
-								overlappingViews.forEach( v ->
-									coefficients.put( v, IntensityCorrection.readCoefficients( intensityN5Reader, intensityN5Group, intensityN5Dataset, v ) ) );
+								overlappingViews.forEach( v -> {
+									final Coefficients coeff = IntensityCorrection.readCoefficients( intensityN5Reader, intensityN5Group, intensityN5Dataset, v );
+									// the stored per-view threshold only takes effect if it was asked for
+									coefficients.put( v, intensityMaskBelowThreshold ? coeff : coeff.withThreshold( Double.NaN ) );
+								} );
 							}
 						} else
 						{

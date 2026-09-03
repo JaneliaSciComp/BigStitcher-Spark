@@ -17,6 +17,7 @@ import net.preibisch.bigstitcher.spark.SparkIntensityMatching.RegularizationMode
 import net.preibisch.bigstitcher.spark.SparkIntensityMatching.TransformationModel;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
+import net.preibisch.bigstitcher.spark.util.IntensityThresholds;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -138,6 +139,26 @@ public class IntensitySolver extends AbstractSelectableViews {
 		System.out.println( "Running solve... " );
 
 		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, pairwiseMatches, maxIterations, model );
+
+		// carry the thresholds the gains were measured on over to the coefficients, so
+		// fusion can restrict the correction to the same foreground
+		final Map< ViewId, Double > thresholds = IntensityThresholds.read( matchesURI );
+
+		if ( thresholds != null )
+		{
+			final long missing = coefficients.keySet().stream().filter( v -> !thresholds.containsKey( v ) ).count();
+
+			if ( missing > 0 )
+				System.out.println( "WARNING: " + missing + " of " + coefficients.size() + " views have no entry in thresholds.txt; "
+						+ "those will be corrected everywhere even with --intensityMaskBelowThreshold." );
+
+			System.out.println( "Storing per-view thresholds for " + ( coefficients.size() - missing ) + " views with the coefficients." );
+
+			coefficients.replaceAll( ( viewId, c ) -> {
+				final Double threshold = thresholds.get( viewId );
+				return threshold == null ? c : c.withThreshold( threshold );
+			} );
+		}
 
 		IntensityCorrection.writeCoefficients( n5Writer, outputGroup, outputDataset, coefficients );
 
