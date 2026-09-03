@@ -1294,11 +1294,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 						spec.seamSamplesScheduleThresholds, spec.seamSamplesScheduleValues, sink,
 						spec.donatedNails );
 
-				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
+				// TPS (render -> image), approximate affine (image -> render; seeds the iterative
+				// TPS inverse) and back-projected bbox, exactly as in BlkThinPlateSplineFusion.init()
 				final Dimensions dims = uSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
-				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
-				final AffineTransform3D approxAffine = BlkThinPlateSplineFusion.fitAffineTransform(
-						lm.getSourcePoints(), lm.getTargetPoints() );
+				final BlkThinPlateSplineFusion.TpsSetup tpsSetup = BlkThinPlateSplineFusion.setupTps( lm, dims );
+				final Interval bbox = tpsSetup.boundingBox;
+				final AffineTransform3D approxAffine = tpsSetup.approximateAffine;
 
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
 				try ( final N5Writer w = URITools.instantiateN5Writer( spec.storageType, spec.outPathURI ) )
