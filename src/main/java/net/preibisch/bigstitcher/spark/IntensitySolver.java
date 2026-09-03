@@ -70,6 +70,9 @@ public class IntensitySolver extends AbstractSelectableViews {
 	{
 		this.setRegion();
 
+		// build the model first so an invalid lambda fails before any container is created
+		final Model< ? > model = SparkIntensityMatching.createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
+
 		final URI outPathURI = URITools.toURI( outputPathURIString );
 		System.out.println( "Writing coefficients to: " + outPathURI );
 
@@ -133,8 +136,6 @@ public class IntensitySolver extends AbstractSelectableViews {
 				+ ", regularized by " + regularizationModel1 + " (lambda1=" + lambda1 + ")"
 				+ " and " + regularizationModel2 + " (lambda2=" + lambda2 + ")" );
 		System.out.println( "Running solve... " );
-
-		final Model< ? > model = SparkIntensityMatching.createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
 
 		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, pairwiseMatches, maxIterations, model );
 

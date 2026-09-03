@@ -119,6 +119,12 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	{
 		this.setRegion();
 
+		if ( numBins < 2 )
+			throw new IllegalArgumentException( "--numBins must be >= 2 (a single sample only ever matches each distribution's minimum), but was " + numBins );
+
+		// build the model once here so an invalid lambda fails on the driver, not in every Spark task
+		createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
+
 		this.dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
@@ -250,12 +256,21 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 		Model< ? > model = createBaseModel( transformationModel );
 
 		if ( regularizationModel1 != RegularizationModel.NONE )
-			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel1 ), lambda1 );
+			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel1 ), checkLambda( "--lambda1", lambda1 ) );
 
 		if ( regularizationModel2 != RegularizationModel.NONE )
-			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel2 ), lambda2 );
+			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel2 ), checkLambda( "--lambda2", lambda2 ) );
 
 		return model;
+	}
+
+	static double checkLambda( final String name, final double lambda )
+	{
+		// the negated form also rejects NaN
+		if ( !( lambda >= 0.0 && lambda <= 1.0 ) )
+			throw new IllegalArgumentException( name + " must be in [0..1], but was " + lambda );
+
+		return lambda;
 	}
 
 	private static Model< ? > createBaseModel( final TransformationModel transformationModel )
