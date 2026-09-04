@@ -863,7 +863,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 												new UnsignedShortType(),
 												blockSize,
 												d );
-								N5Utils.saveNonEmptyBlock(
+								N5Util.saveNonEmptyBlock(
 										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
 										executorVolumeWriterDS, datasetDS, gridBlock[2], new UnsignedShortType() );
 							}
@@ -879,7 +879,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 												new UnsignedByteType(),
 												blockSize,
 												d );
-								N5Utils.saveNonEmptyBlock(
+								N5Util.saveNonEmptyBlock(
 										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
 										executorVolumeWriterDS, datasetDS, gridBlock[2], new UnsignedByteType() );
 							}
@@ -895,7 +895,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 												new FloatType(),
 												blockSize,
 												d );
-								N5Utils.saveNonEmptyBlock(
+								N5Util.saveNonEmptyBlock(
 										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
 										executorVolumeWriterDS, datasetDS, gridBlock[2], new FloatType() );
 							}

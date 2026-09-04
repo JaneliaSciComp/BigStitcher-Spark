@@ -33,9 +33,12 @@ import org.janelia.saalfeldlab.n5.RawCompression;
 import org.janelia.saalfeldlab.n5.XzCompression;
 import org.janelia.saalfeldlab.n5.blosc.BloscCompression;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
+import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.type.NativeType;
 import net.preibisch.bigstitcher.spark.CreateFusionContainer.Compressions;
 import net.preibisch.legacy.io.IOFunctions;
 import util.URITools;
@@ -43,6 +46,29 @@ import util.URITools;
 public class N5Util
 {
 	public static N5HDF5Writer sharedHDF5Writer = null;
+
+	/**
+	 * Like {@link N5Utils#saveNonEmptyBlock(RandomAccessibleInterval, N5Writer, String, long[], NativeType)},
+	 * i.e. blocks that only contain the default value are not written (deleted) - except for HDF5.
+	 *
+	 * HDF5 cannot delete chunks; n5-hdf5 (3.0.0) emulates deleteBlock() by writing a zero block of the
+	 * full block size. At the dataset boundary that block extends beyond the extent and HDF5 fails with
+	 * "selection + offset not within extent". For HDF5 we therefore always write every (cropped) block.
+	 *
+	 * (Same as N5ApiTools.saveNonEmptyBlock() in multiview-reconstruction &gt;= 9.0.12)
+	 */
+	public static < T extends NativeType< T > > void saveNonEmptyBlock(
+			final RandomAccessibleInterval< T > source,
+			final N5Writer n5,
+			final String dataset,
+			final long[] gridOffset,
+			final T defaultValue )
+	{
+		if ( n5 instanceof N5HDF5Writer )
+			N5Utils.saveBlock( source, n5, dataset, gridOffset );
+		else
+			N5Utils.saveNonEmptyBlock( source, n5, dataset, gridOffset, defaultValue );
+	}
 
 	public static N5Writer createN5Writer(
 			final URI n5PathURI,
