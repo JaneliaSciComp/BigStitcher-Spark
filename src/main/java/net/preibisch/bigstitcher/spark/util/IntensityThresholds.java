@@ -37,13 +37,58 @@ import mpicbg.spim.data.sequence.ViewId;
 import util.URITools;
 
 /**
- * The per-view intensity thresholds the gains were measured on, stored as
- * "thresholds.txt" ("timepointId setupId threshold" per line) next to the pairwise
- * matches, so the solve and the fusion can pick up what the matching used.
+ * The sidecar files match-intensities writes next to the pairwise matches:
+ * <ul>
+ * <li>"thresholds.txt" -- the per-view thresholds the gains were measured on
+ *     ("timepointId setupId threshold" per line), so the solve and the fusion can pick up
+ *     what the matching used;</li>
+ * <li>"matching-done.txt" -- written only once matching has finished, recording the
+ *     parameters. Without it, a crashed or killed matching run leaves a directory that
+ *     still looks complete (the per-pair files from a PREVIOUS run are all still there),
+ *     and the solve silently produces coefficients from stale matches.</li>
+ * </ul>
  */
 public class IntensityThresholds
 {
 	private static final String FILENAME = "thresholds.txt";
+
+	private static final String DONE = "matching-done.txt";
+
+	/** Records that matching finished, and with which parameters. */
+	public static void writeDone( final URI matchesURI, final String parameters ) throws IOException
+	{
+		final URI fn = matchesURI.resolve( DONE );
+
+		try ( final PrintWriter pw = URITools.openFileWriteCloudWriter( URITools.getKeyValueAccess( matchesURI ), fn ) )
+		{
+			pw.println( new java.util.Date( System.currentTimeMillis() ).toString() );
+			pw.println( parameters );
+		}
+
+		System.out.println( "Wrote " + fn );
+	}
+
+	/**
+	 * @return the parameters matching was run with, or null if matching never finished
+	 *         (crashed, was killed, or predates this marker)
+	 */
+	public static String readDone( final URI matchesURI ) throws IOException
+	{
+		final URI fn = matchesURI.resolve( DONE );
+
+		try (
+				final InputStream is = URITools.openFileReadCloudStream( URITools.getKeyValueAccess( matchesURI ), fn );
+				final BufferedReader br = new BufferedReader( new InputStreamReader( is ) ) )
+		{
+			final String when = br.readLine();
+			final String parameters = br.readLine();
+			return ( when == null ? "" : when ) + ( parameters == null ? "" : " | " + parameters );
+		}
+		catch ( final N5Exception.N5NoSuchKeyException e )
+		{
+			return null;
+		}
+	}
 
 	public static void write( final URI matchesURI, final Map< ViewId, Double > thresholds ) throws IOException
 	{

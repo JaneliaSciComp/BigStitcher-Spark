@@ -30,8 +30,8 @@ import util.URITools;
 
 public class IntensitySolver extends AbstractSelectableViews {
 
-	@CommandLine.Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
-	private String numCoefficientsString = "8,8,8";
+	@CommandLine.Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: whatever match-intensities used, read from the matches)")
+	private String numCoefficientsString = null;
 
 	@CommandLine.Option(names = { "--matchesPath" }, required = true, description = "path (URI) for loading pairwise intensity matches, e.g., file:/home/fused.n5/intensity/ or e.g. s3://myBucket/data.zarr/intensity/")
 	private String matchesPathURIString = null;
@@ -109,14 +109,39 @@ public class IntensitySolver extends AbstractSelectableViews {
 		if ( views == null || views.isEmpty() )
 			throw new IllegalArgumentException( "No ViewIds found." );
 
-		final int[] coefficientsSize = Import.csvStringToIntArray( numCoefficientsString );
 		final URI matchesURI = URITools.toURI( matchesPathURIString );
+
+		final String matchingDone = IntensityThresholds.readDone( matchesURI );
+
+		if ( matchingDone == null )
+			throw new IllegalArgumentException( "No 'matching-done.txt' in " + matchesURI + ": match-intensities did not "
+					+ "finish (it crashed, was killed, or predates this check). Any match files present are from an "
+					+ "earlier run and solving them would silently give coefficients for the wrong parameters. "
+					+ "Re-run match-intensities." );
+
+		System.out.println( "Matches were computed with: " + matchingDone );
 
 		final ViewPairCoefficientMatchesIO matchesIO = new ViewPairCoefficientMatchesIO( matchesURI );
 		final int[] matchesCoefficientsSize = matchesIO.readCoefficientsSize();
-		if ( !Arrays.equals( matchesCoefficientsSize, coefficientsSize ) )
+
+		// the matches record what they were computed with, so default to that. Solving 1,1,1
+		// matches as an 8,8,8 field leaves 511 of 512 sub-tiles per view unconstrained, and
+		// fusion then interpolates that across the tile -- so a mismatch is an error, not a warning.
+		final int[] coefficientsSize;
+
+		if ( numCoefficientsString == null )
 		{
-			System.err.println( "numCoefficients stored with matches is different from specified numCoefficients argument!" );
+			coefficientsSize = matchesCoefficientsSize;
+			System.out.println( "numCoefficients (from the matches): " + Arrays.toString( coefficientsSize ) );
+		}
+		else
+		{
+			coefficientsSize = Import.csvStringToIntArray( numCoefficientsString );
+
+			if ( !Arrays.equals( matchesCoefficientsSize, coefficientsSize ) )
+				throw new IllegalArgumentException( "--numCoefficients " + Arrays.toString( coefficientsSize )
+						+ " does not match the " + Arrays.toString( matchesCoefficientsSize ) + " the matches in " + matchesURI
+						+ " were computed with. Omit --numCoefficients to use the stored value." );
 		}
 
 		final List< ViewPairCoefficientMatches > pairwiseMatches = new ArrayList<>();

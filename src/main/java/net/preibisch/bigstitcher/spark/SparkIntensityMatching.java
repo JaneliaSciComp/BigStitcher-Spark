@@ -29,6 +29,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
+import net.imglib2.util.Pair;
 import net.imglib2.util.Cast;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.AutoThreshold;
@@ -240,17 +241,17 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 					.collect( Collectors.toList() );
 
 			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing " + autoThresholdMethod
-					+ " threshold for " + viewsToThreshold.size() + " views (downsampling " + downsampling + "x) ... " );
-
-			final long[] downsampleFactors = new long[] { downsampling, downsampling, downsampling };
+					+ " threshold for " + viewsToThreshold.size() + " views (at most " + downsampling + "x downsampling) ... " );
 
 			final JavaRDD< ViewId > viewRDD = sc.parallelize( viewsToThreshold, Math.min( Spark.maxPartitions, viewsToThreshold.size() ) );
 
 			viewThresholds = new HashMap<>( viewRDD.mapToPair( viewId -> {
 				final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-				final RandomAccessibleInterval< ? > img = SparkInterestPointDetection.openAndDownsample(
-						dataLocal.getSequenceDescription().getImgLoader(), viewId, downsampleFactors, true ).getA();
-				return new Tuple2<>( viewId, AutoThreshold.compute( autoThresholdMethod, Cast.unchecked( img ) ) );
+				final Pair< RandomAccessibleInterval< ? >, Long > img = AutoThreshold.openForHistogram(
+						dataLocal.getSequenceDescription().getImgLoader(), viewId, downsampling );
+				System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( viewId )
+						+ " threshold from stored level at " + img.getB() + "x downsampling" );
+				return new Tuple2<>( viewId, AutoThreshold.compute( autoThresholdMethod, Cast.unchecked( img.getA() ) ) );
 			} ).collectAsMap() );
 
 			// a constant view cannot be split; fall back to the default floor of 1 so it is
@@ -295,6 +296,11 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
 			matchWriter.write( matches );
 		} );
+
+		// only now: a crashed job must NOT leave a directory that looks complete
+		IntensityThresholds.writeDone( outputURI, "minThreshold=" + minThresholdString + " maxThreshold=" + maxIntensityThreshold
+				+ " numCoefficients=" + numCoefficientsString + " renderScale=" + renderScale + " method=" + method
+				+ " model=" + transformModelSummary( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 ) );
 
 		sc.close();
 
@@ -350,6 +356,12 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel2 ), checkLambda( "--lambda2", lambda2 ) );
 
 		return model;
+	}
+
+	static String transformModelSummary( final TransformationModel tm, final RegularizationModel rm1, final double lambda1,
+			final RegularizationModel rm2, final double lambda2 )
+	{
+		return tm + "+" + rm1 + "(" + lambda1 + ")+" + rm2 + "(" + lambda2 + ")";
 	}
 
 	static double checkLambda( final String name, final double lambda )
