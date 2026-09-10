@@ -130,8 +130,8 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
 
-	@Option(names = { "-pa", "--preAlign" }, required = false, description = "whether to pre-align before solving (PREALIGN) or to initialize with the current transformations (NO_PREALIGN), (default: PREALIGN)")
-	protected PreAlign preAlign = PreAlign.PREALIGN;
+	@Option(names = { "-pa", "--preAlign" }, required = false, description = "whether to pre-align before solving (PREALIGN) or to initialize with the current transformations (NO_PREALIGN), (default: NO_PREALIGN)")
+	protected PreAlign preAlign = PreAlign.NO_PREALIGN;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers, how many times worse than the average error a link needs to be (default: 3.5)")
 	protected double relativeThreshold = 3.5;
