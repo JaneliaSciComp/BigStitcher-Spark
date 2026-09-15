@@ -28,8 +28,10 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -675,37 +677,48 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final HashMap< ViewId, List< List< Double > > > intensitiesPerViewId = new HashMap<>();
 		final HashMap< ViewId, List< Interval > > intervalsPerViewId = new HashMap<>();
 
-		for ( final Tuple3<ViewId, long[][], String> tuple : results )
+		System.out.println( "Loading interest points from temporary N5 (" + results.size() + " blocks) ... " + new java.util.Date() );
+
+		// load N5 in parallel, then fill the per-view lists sequentially so their indices stay aligned
+		final List< Tuple4< ViewId, List< InterestPoint >, Interval, List< Double > > > loaded = results.parallelStream().map( tuple ->
 		{
-			final ViewId viewId = tuple._1();
+			final String dataset = tempDataset + "/" + tuple._3();
 
-			//if ( points != null && points.length > 0 )
-			if ( n5Writer.datasetExists( tempDataset + "/" + tuple._3() + "/points" ))
+			if ( !n5Writer.datasetExists( dataset + "/points" ) )
+				return null;
+
+			final Img<DoubleType> points = N5Utils.open( n5Writer, dataset + "/points" );
+
+			List< Double > intensitiesList = null;
+
+			if ( ( storeIntensities || maxSpots > 0 ) && n5Writer.datasetExists( dataset + "/intensities" ) )
 			{
-				// load from N5
-				final Img<DoubleType> points = N5Utils.open( n5Writer, tempDataset + "/" + tuple._3() + "/points" );
+				final Img<DoubleType> intensities = N5Utils.open( n5Writer, dataset + "/intensities" );
+				intensitiesList = new ArrayList<>();
+				for ( final DoubleType v : Views.flatIterable( intensities ) )
+					intensitiesList.add( v.get() );
+			}
 
-				interestPointsPerViewId.putIfAbsent(viewId, new ArrayList<>() );
-				interestPointsPerViewId.get( viewId ).add( Spark.deserializeInterestPoints(points) );
+			return new Tuple4< ViewId, List< InterestPoint >, Interval, List< Double > >( tuple._1(), Spark.deserializeInterestPoints( points ), Spark.deserializeInterval( tuple._2() ), intensitiesList );
+		} ).filter( t -> t != null ).collect( Collectors.toList() );
 
-				intervalsPerViewId.putIfAbsent(viewId, new ArrayList<>() );
-				intervalsPerViewId.get( viewId ).add( Spark.deserializeInterval( tuple._2() ) );
+		for ( final Tuple4< ViewId, List< InterestPoint >, Interval, List< Double > > t : loaded )
+		{
+			final ViewId viewId = t._1();
 
-				if ( storeIntensities || maxSpots > 0 )
-				{
-					intensitiesPerViewId.putIfAbsent(viewId, new ArrayList<>() );
+			interestPointsPerViewId.computeIfAbsent( viewId, k -> new ArrayList<>() ).add( t._2() );
+			intervalsPerViewId.computeIfAbsent( viewId, k -> new ArrayList<>() ).add( t._3() );
 
-					if ( n5Writer.datasetExists( tempDataset + "/" + tuple._3() + "/intensities" ) )
-					{
-						// load from N5
-						final Img<DoubleType> intensities = N5Utils.open( n5Writer, tempDataset + "/" + tuple._3() + "/intensities" );
-						final ArrayList<Double> intensitiesList = new ArrayList<>();
-						Views.flatIterable( intensities ).forEach( v -> intensitiesList.add( v.get() ) );
-						intensitiesPerViewId.get( viewId ).add( intensitiesList );
-					}
-				}
+			if ( storeIntensities || maxSpots > 0 )
+			{
+				intensitiesPerViewId.computeIfAbsent( viewId, k -> new ArrayList<>() );
+
+				if ( t._4() != null )
+					intensitiesPerViewId.get( viewId ).add( t._4() );
 			}
 		}
+
+		System.out.println( "Loaded interest points from temporary N5 ... " + new java.util.Date() );
 
 		if ( !keepTemporaryN5 )
 		{
@@ -806,10 +819,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		}
 
 		// now combine all jobs and fix potential overlap (overlappingOnly)
-		final HashMap< ViewId, List< InterestPoint > > interestPoints = new HashMap<>();
-		final HashMap< ViewId, List< Double > > intensitiesIPs = new HashMap<>();
+		final Map< ViewId, List< InterestPoint > > interestPoints = new ConcurrentHashMap<>();
+		final Map< ViewId, List< Double > > intensitiesIPs = new ConcurrentHashMap<>();
 
-		for ( final ViewId viewId : viewIds )
+		System.out.println( "Combining interest points per view ... " + new java.util.Date() );
+
+		viewIds.parallelStream().forEach( viewId ->
 		{
 			final ArrayList< InterestPoint > myIps = new ArrayList<>();
 			final ArrayList< Double > myIntensities = new ArrayList<>();
@@ -889,7 +904,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 				System.out.println( Group.pvid( viewId ) + ": no points found." );
 			}
-		}
+		} );
+
+		System.out.println( "Combined interest points ... " + new java.util.Date() );
 
 		if ( !dryRun )
 		{
@@ -905,7 +922,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
-			InterestPointTools.addInterestPoints( dataGlobal, label, interestPoints, params );
+			InterestPointTools.addInterestPoints( dataGlobal, label, new HashMap<>( interestPoints ), params );
 
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 
