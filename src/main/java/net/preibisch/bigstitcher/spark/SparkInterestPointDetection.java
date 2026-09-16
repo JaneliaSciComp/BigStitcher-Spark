@@ -894,14 +894,14 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			rdd.foreach( boundingBox ->
 			{
-				final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
-
-				if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/points" ))
+				// remove the whole block group (not just points/intensities), otherwise n5Writer.remove( tempDataset ) below has to delete thousands of empty directories single-threaded
+				// _3() is "" for blocks without points, which have no group
+				if ( !boundingBox._3().isEmpty() )
 				{
-					n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/points" );
+					final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
 
-					if ( n5WriterLocal.datasetExists( tempDataset + "/" + boundingBox._3() + "/intensities" ) )
-						n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() + "/intensities" );
+					if ( n5WriterLocal.exists( tempDataset + "/" + boundingBox._3() ) )
+						n5WriterLocal.remove( tempDataset + "/" + boundingBox._3() );
 
 					n5WriterLocal.close();
 				}
