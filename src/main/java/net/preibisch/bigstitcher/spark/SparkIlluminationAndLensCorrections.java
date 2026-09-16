@@ -129,9 +129,9 @@ public class SparkIlluminationAndLensCorrections extends AbstractSelectableViews
 			description = "mesh resolution used to render the lens warp (only used with --lensCorrection)")
 	private int lensMeshResolution = 64;
 
-	@Option(names = { "--lensIncludeAffine" }, defaultValue = "true", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
+	@Option(names = { "--lensIncludeAffine" }, showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
 			description = "also apply the per-channel AffineModel2D after the nonlinear warp (only used with --lensCorrection)")
-	private boolean lensIncludeAffine = true;
+	private boolean lensIncludeAffine = false;
 
 	@Option(names = { "-o", "--output" }, required = true, description = "output container for the corrected views, e.g. /home/corrected.ome.zarr or s3://myBucket/corrected.ome.zarr")
 	private String outputPathURIString = null;
