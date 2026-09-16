@@ -573,9 +573,10 @@ public class Solver extends AbstractRegistration
 								InterestPoint ipA = ipListA.get( p.getDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 								InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 		
-								// transform into fresh arrays and create new points: the shared InterestPoints must not be
-								// modified because the lists are not bijective (one point may correspond to several in
-								// the other view) and are read concurrently by other pairs
+								// transform into fresh arrays and create new points instead of modifying ipA/ipB:
+								// the correspondences are not bijective (one point may correspond to several in the
+								// other view), so the same InterestPoint can show up in several matches of this pair
+								// and would otherwise get the model applied more than once
 								final double[] lA = new double[ 3 ], lB = new double[ 3 ];
 								mA.apply( ipA.getL(), lA );
 								mB.apply( ipB.getL(), lB );
