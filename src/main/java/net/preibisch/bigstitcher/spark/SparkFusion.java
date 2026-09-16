@@ -1377,9 +1377,10 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
 				final Dimensions dims = uSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
-				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
 				final AffineTransform3D approxAffine = BlkThinPlateSplineFusion.fitAffineTransform(
 						lm.getSourcePoints(), lm.getTargetPoints() );
+				// the affine seeds the iterative TPS inverse (mvr >= 9.0.13)
+				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, approxAffine, dims );
 
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
 				try ( final N5Writer w = URITools.instantiateN5Writer( spec.storageType, spec.outPathURI ) )
