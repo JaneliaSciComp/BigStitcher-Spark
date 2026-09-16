@@ -2,6 +2,9 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.File;
 import java.io.Serializable;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,6 +38,7 @@ import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -44,6 +48,7 @@ import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.SparkFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
@@ -218,8 +223,26 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 			return null;
 
-		final int numTimepointsXML = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size();
-		final int numChannelsXML = dataGlobal.getSequenceDescription().getAllChannelsOrdered().size();
+		// the resolution (voxel size) of the fused output at full res (s0) - carried over from the
+		// input data's own calibration (adjusted for whatever scale is already baked into its
+		// ViewRegistration models, e.g. a real affine registration), rather than hardcoding it -
+		// see usages below. computeAverageCalibration()'s result is then denoised - see stripCalibrationNoise().
+		final SequenceDescription seqDescGlobal = dataGlobal.getSequenceDescription();
+		final List< ViewDescription > vdsGlobal = viewIdsGlobal.stream()
+				.map( vid -> seqDescGlobal.getViewDescription( vid ) )
+				.toList();
+
+		final Pair< double[], String > avgCalibrationRaw =
+				TransformationTools.computeAverageCalibration( vdsGlobal, dataGlobal.getViewRegistrations() );
+
+		final double[] avgCalibrationValues = new double[ 3 ];
+		for ( int d = 0; d < 3; ++d )
+			avgCalibrationValues[ d ] = stripCalibrationNoise( avgCalibrationRaw.getA()[ d ] );
+
+		System.out.println( "Approximate pixel size of fused image (without downsampling): " + Util.printCoordinates( avgCalibrationValues ) + " " + avgCalibrationRaw.getB() );
+
+		final int numTimepointsXML = seqDescGlobal.getTimePoints().getTimePointsOrdered().size();
+		final int numChannelsXML = seqDescGlobal.getAllChannelsOrdered().size();
 
 		System.out.println( "XML project contains " + numChannelsXML + " channels, " + numTimepointsXML + " timepoints." );
 
@@ -426,6 +449,17 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			driverVolumeWriter.setAttribute( getContainerGroupPath(), "Bigstitcher-Spark/MaxIntensity", maxIntensity );
 		}
 
+		// resolution of the s0 export - carry over the actual voxel calibration of the input data
+		// (computed above) rather than hardcoding 1.0 for x/y. When --preserveAnisotropy is set,
+		// the fused volume keeps native z spacing (the bounding box was downsampled by
+		// anisotropyFactor above instead of resampling z to be isotropic), so each output z-voxel
+		// covers anisotropyFactor * (isotropic z-voxel) of physical space. Shared by the OME-NGFF
+		// and BDV metadata paths below so viewers don't squash z either way.
+		final double zResS0 = preserveAnisotropy ? avgCalibrationValues[ 2 ] * anisotropyFactor : avgCalibrationValues[ 2 ];
+		final VoxelDimensions voxelSizeS0 = new FinalVoxelDimensions( "micrometer", new double[] { avgCalibrationValues[ 0 ], avgCalibrationValues[ 1 ], zResS0 } );
+
+		System.out.println( "Resolution of level 0: " + Util.printCoordinates( voxelSizeS0.dimensionsAsDoubleArray() ) + " micrometer" ); //vx.unit() might not be OME-ZARR compatible
+
 		// setup datasets and metadata
 		MultiResolutionLevelInfo[][] mrInfos = null;
 
@@ -545,7 +579,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 								c,
 								"setup " + c,
 								new FinalDimensions( bb ),
-								vxNew,
+								voxelSizeS0,
 								new Tile( 0 ),
 								new Channel( c, "Channel " + c ),
 								new Angle( 0 ),
@@ -669,17 +703,16 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		return null;
 	}
 
-	private void updateAnisotropyAndCalibration( SpimData2 dataGlobal, List<ViewId> viewIdsGlobal )
-	{
+	private void updateAnisotropyAndCalibration( SpimData2 dataGlobal, List<ViewId> viewIdsGlobal ) {
 		ViewRegistrations registrations = dataGlobal.getViewRegistrations();
 		// get all view descriptions
 		List<ViewDescription> vds = SpimData2.getAllViewDescriptionsSorted(dataGlobal, viewIdsGlobal);
 		// group by timepoint and channel
 		Set<Class<? extends Entity>> groupingFactors = new HashSet<>(Arrays.asList(TimePoint.class, Channel.class));
-		List<Group<ViewDescription>> fusionGroups = Group.splitBy( vds, groupingFactors );
+		List<Group<ViewDescription>> fusionGroups = Group.splitBy(vds, groupingFactors);
 		Pair<double[], String> calAndUnit = fusionGroups.stream().findFirst()
 				.map(group -> TransformationTools.computeAverageCalibration(group, registrations))
-				.orElse(new ValuePair<>(new double[]{ 1, 1, 1 }, "micrometer"));
+				.orElse(new ValuePair<>(new double[]{1, 1, 1}, "micrometer"));
 		cal = calAndUnit.getA();
 		calUnit = calAndUnit.getB();
 
@@ -692,6 +725,23 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		} else {
 			avgAnisotropy = Double.NaN;
 		}
+	}
+
+	/** Number of significant figures to keep when denoising a calibration value - see {@link #stripCalibrationNoise}. */
+	private static final int CALIBRATION_SIGNIFICANT_DIGITS = 12;
+
+	/**
+	 * Strips the floating-point noise that {@link TransformationTools#computeAverageCalibration}'s
+	 * Vector3d-transform/length() decomposition introduces (typically in the last few significant
+	 * digits of a double), while preserving any genuine, larger scale difference a real
+	 * registration may have introduced.
+	 */
+	private static double stripCalibrationNoise( final double value )
+	{
+		if ( !Double.isFinite( value ) )
+			return value;
+
+		return BigDecimal.valueOf( value ).round( new MathContext( CALIBRATION_SIGNIFICANT_DIGITS, RoundingMode.HALF_UP ) ).doubleValue();
 	}
 
 	public static void main(final String... args) throws SpimDataException

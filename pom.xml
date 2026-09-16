@@ -92,7 +92,7 @@
         <bigdataviewer-core.version>10.6.12</bigdataviewer-core.version>
         <bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-        <multiview-reconstruction.version>9.0.11</multiview-reconstruction.version>
+        <multiview-reconstruction.version>9.0.13</multiview-reconstruction.version>
         <BigStitcher.version>3.0.6</BigStitcher.version>
 
         <!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
@@ -119,15 +119,30 @@
 
     <repositories>
         <!-- NB: for project parent -->
+		<!--
         <repository>
             <id>imagej.public</id>
             <url>https://maven.imagej.net/content/groups/public</url>
         </repository>
+        -->
+
+		<repository>
+		<id>scijava.public</id>
+			<url>https://maven.scijava.org/content/groups/public</url>
+			<releases><checksumPolicy>fail</checksumPolicy></releases>
+			<snapshots><checksumPolicy>fail</checksumPolicy></snapshots>
+		</repository>
+		<repository>
+			<id>ome</id>
+			<url>https://artifacts.openmicroscopy.org/artifactory/maven</url>
+		</repository>
+
         <repository>
             <id>jitpack.io</id>
             <url>https://jitpack.io</url>
         </repository>
     </repositories>
+
     <dependencies>
         <dependency>
             <!-- FFT-based DCT for BaSiC flatfield estimation (mirrors FFTW's REDFT r2r) -->
