@@ -573,9 +573,9 @@ public class Solver extends AbstractRegistration
 								InterestPoint ipA = ipListA.get( p.getDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 								InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 		
-								// transform into fresh arrays (never in place: AffineTransform3D.apply(src, tgt) is not
-								// alias-safe for non-diagonal matrices), and create new points because the lists are
-								// not bijective (one point may correspond to several in the other view)
+								// transform into fresh arrays and create new points: the shared InterestPoints must not be
+								// modified because the lists are not bijective (one point may correspond to several in
+								// the other view) and are read concurrently by other pairs
 								final double[] lA = new double[ 3 ], lB = new double[ 3 ];
 								mA.apply( ipA.getL(), lA );
 								mB.apply( ipB.getL(), lB );
