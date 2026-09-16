@@ -130,8 +130,8 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
 
-	@Option(names = { "-pa", "--preAlign" }, required = false, description = "whether to pre-align before solving (PREALIGN) or to initialize with the current transformations (NO_PREALIGN), (default: PREALIGN)")
-	protected PreAlign preAlign = PreAlign.PREALIGN;
+	@Option(names = { "-pa", "--preAlign" }, required = false, description = "whether to pre-align before solving (PREALIGN) or to initialize with the current transformations (NO_PREALIGN), (default: NO_PREALIGN)")
+	protected PreAlign preAlign = PreAlign.NO_PREALIGN;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers, how many times worse than the average error a link needs to be (default: 3.5)")
 	protected double relativeThreshold = 3.5;
@@ -512,6 +512,18 @@ public class Solver extends AbstractRegistration
 
 			progress.set( 0 );
 
+			// ViewRegistration.updateModel() rebuilds the shared model in place and getModel() returns that
+			// live object; calling them from the parallel loop below lets one thread read a half-built model
+			// (e.g. missing the calibration), which silently corrupts point coordinates by tens of thousands
+			// of pixels. Compute every model once, sequentially, and hand out private copies.
+			final Map< ViewId, AffineTransform3D > models = new HashMap<>();
+			for ( final ViewId viewId : viewIdsGlobal )
+			{
+				final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
+				vr.updateModel();
+				models.put( viewId, vr.getModel().copy() );
+			}
+
 			pool.submit( () -> tasks.parallelStream().forEach( pair ->
 			{
 				progress.incrementAndGet();
@@ -534,12 +546,8 @@ public class Solver extends AbstractRegistration
 						return;
 					}
 
-				final ViewRegistration vRegA = dataGlobal.getViewRegistrations().getViewRegistration( vA );
-				final ViewRegistration vRegB = dataGlobal.getViewRegistrations().getViewRegistration( vB );
-
-				vRegA.updateModel(); vRegB.updateModel();
-				final AffineTransform3D mA = vRegA.getModel();
-				final AffineTransform3D mB = vRegB.getModel();
+				final AffineTransform3D mA = models.get( vA );
+				final AffineTransform3D mB = models.get( vB );
 
 				// iterate over all pairs of labels
 				for ( final String labelA : labelMap.get( vA ).keySet() )
@@ -565,19 +573,14 @@ public class Solver extends AbstractRegistration
 								InterestPoint ipA = ipListA.get( p.getDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 								InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 		
-								// we need to copy the array because it might not be bijective
-								// (some points in one list might correspond with the same point in the other list)
-								// which leads to the SpimData model being applied twice
-								ipA = new InterestPoint( ipA.getId(), ipA.getL().clone() );
-								ipB = new InterestPoint( ipB.getId(), ipB.getL().clone() );
+								// transform into fresh arrays and create new points: the shared InterestPoints must not be
+								// modified because the lists are not bijective (one point may correspond to several in
+								// the other view) and are read concurrently by other pairs
+								final double[] lA = new double[ 3 ], lB = new double[ 3 ];
+								mA.apply( ipA.getL(), lA );
+								mB.apply( ipB.getL(), lB );
 
-								// transform the points
-								mA.apply( ipA.getL(), ipA.getL() );
-								mA.apply( ipA.getW(), ipA.getW() );
-								mB.apply( ipB.getL(), ipB.getL() );
-								mB.apply( ipB.getW(), ipB.getW() );
-
-								inliers.add( new PointMatchGeneric<>( ipA, ipB ) );
+								inliers.add( new PointMatchGeneric<>( new InterestPoint( ipA.getId(), lA ), new InterestPoint( ipB.getId(), lB ) ) );
 							}
 						}
 		
