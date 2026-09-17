@@ -386,7 +386,7 @@ public class Solver extends AbstractRegistration
 						(AbstractModel< ? >)refTile.getModel(),
 						mapBackModel.copy() );
 
-				System.out.println( "Mapback model for " + Group.pvid( ref ) + ": " + mapBack );
+				System.out.println( "Mapback model (" + mapBackModel.getClass().getSimpleName() + ", pre-concatenated to all views of this subset) for " + Group.pvid( ref ) + ": " + mapBack );
 
 				if ( mapBack != null )
 					mapBackPerRef.put( ref, mapBack );
@@ -404,7 +404,30 @@ public class Solver extends AbstractRegistration
 
 		// print per-view transformations + identity-vs-non-identity summary,
 		// gated by TransformationTools.maxPerViewTransformLog
-		TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, models );
+		if ( mapBackPerView.isEmpty() )
+		{
+			TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, models );
+		}
+		else
+		{
+			// print what is actually stored: mapback composed with the solved model
+			System.out.println( "Final transformation models (mapback model pre-concatenated):" );
+			final HashMap< ViewId, Tile< ? > > stored = new HashMap<>();
+
+			for ( final ViewId viewId : viewIdsGlobal )
+			{
+				final Tile< ? > tile = models.get( viewId );
+				final AffineTransform3D t = tile == null ? new AffineTransform3D() : TransformationTools.getAffineTransform( (Affine3D< ? >)tile.getModel() );
+				final AffineTransform3D mapBack = mapBackPerView.get( viewId );
+
+				if ( mapBack != null )
+					t.preConcatenate( mapBack );
+
+				stored.put( viewId, new Tile<>( TransformationTools.getModel( t ) ) );
+			}
+
+			TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, stored );
+		}
 
 		
 		// get all timepoints
