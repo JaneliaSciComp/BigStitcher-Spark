@@ -41,11 +41,10 @@ import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
+import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
 import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
@@ -75,6 +74,7 @@ import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatch
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
@@ -99,9 +99,9 @@ public class Solver extends AbstractRegistration
 
 	public ArrayList< ViewId > fixedViewIds;
 
-	//public enum MapbackModel { TRANSLATION, RIGID };
-	//public ArrayList< ViewId > mapBackViewIds;
-	//public Model<?> mapBackModel;
+	public enum MapbackModel { TRANSLATION, RIGID };
+	public ArrayList< ViewId > mapBackViewIds;
+	public Model<?> mapBackModel;
 
 	@Option(names = { "-s", "--sourcePoints" }, required = true, description = "which source to use for the solve, IP (interest points) or STITCHING")
 	protected SolverSource sourcePoints = null;
@@ -154,14 +154,14 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "-fv", "--fixedViews" }, description = "define a list of (or a single) fixed view ids (time point, view setup), e.g. -fv '0,0' -fv '0,1' (default: first view id)")
 	protected String[] fixedViews = null;
 
-//@Option(names = { "--enableMapbackViews" }, description = "enable mapping back of views (see --mapbackViews and --mapbackModel), requires --disableFixedViews.")
-	//protected boolean enableMapbackViews = false;
+	@Option(names = { "--enableMapbackViews" }, description = "enable mapping back of views (see --mapbackViews and --mapbackModel), requires --disableFixedViews.")
+	protected boolean enableMapbackViews = false;
 
-	//@Option(names = { "--mapbackViews" }, description = "define a view id (time point, view setup) onto which the registration result is mapped back onto, it needs to be one per independent registration subset (e.g. timepoint) (only works if no views are fixed), e.g. --mapbackView '0,0' (default: first view id)")
-	//protected String[] mapbackViews = null;
+	@Option(names = { "--mapbackViews" }, description = "define a view id (time point, view setup) onto which the registration result is mapped back onto, it needs to be one per independent registration subset (e.g. timepoint) (only works if no views are fixed), e.g. --mapbackViews '0,0' (default: first view id)")
+	protected String[] mapbackViews = null;
 
-	//@Option(names = { "--mapbackModel" }, description = "which transformation model to use for mapback if it is activated; TRANSLATION or RIGID (default: RIGID)")
-	//protected MapbackModel mapbackModelEntry = MapbackModel.RIGID;
+	@Option(names = { "--mapbackModel" }, description = "which transformation model to use for mapback if it is activated; TRANSLATION or RIGID (default: RIGID)")
+	protected MapbackModel mapbackModelEntry = MapbackModel.RIGID;
 
 	@Override
 	public Void call() throws Exception
@@ -255,36 +255,24 @@ public class Solver extends AbstractRegistration
 		System.out.println("labels: " + ( labels == null ? "null" : Arrays.toString( labels.toArray() ) ));
 		System.out.println("labelweights: " + ( labelweights == null ? "null" : Arrays.toString( labelweights.toArray() ) ));
 
-		// assemble fixed views
-		final HashSet< ViewId > fixedViewIds;
-		
-		if ( this.disableFixedViews )
-		{
-			fixedViewIds = new HashSet<>();
-		}
-		else
+		// identify subsets exactly like the GUI (strategy + bounding-box overlap + connected components)
+		final PairwiseSetup< ViewId > setup = setupGroups( viewReg, AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints ) );
+		final ArrayList< Subset< ViewId > > subsets = setup.getSubsets();
+
+		// assemble fixed views (GUI: strategy defaults + first view per subset / user list / nothing)
+		final HashSet< ViewId > fixedViewIds = new HashSet<>( setup.getDefaultFixedViews() );
+
+		if ( !this.disableFixedViews )
 		{
 			if ( this.fixedViewIds == null || this.fixedViewIds.size() == 0 )
-				fixedViewIds = assembleFixedAuto( viewIdsGlobal, dataGlobal.getSequenceDescription(), registrationTP, referenceTP ); // only TIMEPOINTS_INDIVIDUALLY and TO_REFERENCE_TIMEPOINT matter
+				fixedViewIds.addAll( assembleFixed( subsets ) );
 			else
-				fixedViewIds = new HashSet<>( this.fixedViewIds );
+				fixedViewIds.addAll( this.fixedViewIds );
 		}
 
 		System.out.println("The following ViewIds are used as fixed views: ");
 		fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
 		System.out.println();
-
-		//Set< ViewId > fixedViewIds = assembleFixed( setup.getSubsets(), this.fixedViewIds, dataGlobal.getSequenceDescription());
-		/*
-		// setup mapback and fixed views
-		final FixMapBackParameters fmbp = new FixMapBackParameters();
-		fmbp.fixedViews = this.disableFixedViews ? new HashSet<>()
-				: assembleFixed(setup.getSubsets(), this.fixedViewIds, dataGlobal.getSequenceDescription());
-		fmbp.model = this.mapBackModel;
-		fmbp.mapBackViews = this.enableMapbackViews
-				? assembleMapBack(setup.getSubsets(), this.mapBackViewIds, dataGlobal.getSequenceDescription())
-				: new HashMap<>();
-		*/
 
 		// run global optimization
 		final Collection< Group< ViewId > > groups;
@@ -292,7 +280,7 @@ public class Solver extends AbstractRegistration
 		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
 			groups = new ArrayList<>();
 		else // for grouping all we need here is the set of groups
-			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
+			groups = setup.getGroups();
 
 		// parse view setup ID comparison pairs from file (null = all-to-all)
 		final HashSet< Pair< Integer, Integer > > vsComparisonPairs = parseVsComparisonsFile( vsComparisonsFile );
@@ -373,11 +361,45 @@ public class Solver extends AbstractRegistration
 
 		System.out.println( "\nFinal models: " + models.size() );
 
+		// mapback (same as GUI: one model per registration subset, computed from the reference view's
+		// registration BEFORE the new transform is stored and its solved model), then pre-concatenated to all views
+		final HashMap< ViewId, AffineTransform3D > mapBackPerView = new HashMap<>();
+
+		if ( enableMapbackViews )
+		{
+			final HashMap< ViewId, ViewId > mapBackViewFor = assembleMapBack( subsets, this.mapBackViewIds );
+			final HashMap< ViewId, AffineTransform3D > mapBackPerRef = new HashMap<>();
+
+			for ( final ViewId ref : new HashSet<>( mapBackViewFor.values() ) )
+			{
+				final Tile< ? > refTile = models.get( ref );
+
+				if ( refTile == null )
+				{
+					System.out.println( "WARNING: mapback view " + Group.pvid( ref ) + " has no model (not connected), views of this subset are NOT mapped back." );
+					continue;
+				}
+
+				final AffineTransform3D mapBack = TransformationTools.computeMapBackModel(
+						dataGlobal.getSequenceDescription().getViewDescription( ref ).getViewSetup().getSize(),
+						dataGlobal.getViewRegistrations().getViewRegistration( ref ).getModel(),
+						(AbstractModel< ? >)refTile.getModel(),
+						mapBackModel.copy() );
+
+				System.out.println( "Mapback model for " + Group.pvid( ref ) + ": " + mapBack );
+
+				if ( mapBack != null )
+					mapBackPerRef.put( ref, mapBack );
+			}
+
+			mapBackViewFor.forEach( ( viewId, ref ) -> mapBackPerView.put( viewId, mapBackPerRef.get( ref ) ) );
+		}
+
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
 			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
 			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
-			TransformationTools.storeTransformation( vr, viewId, tile, null /*mapback*/, model.getClass().getSimpleName() );
+			TransformationTools.storeTransformation( vr, viewId, tile, mapBackPerView.get( viewId ), model.getClass().getSimpleName() );
 		}
 
 		// print per-view transformations + identity-vs-non-identity summary,
@@ -634,85 +656,51 @@ public class Solver extends AbstractRegistration
 			return null;
 	}
 
-	public static HashSet< ViewId > assembleFixedAuto(
-			final ArrayList< ViewId > allViewIds,
-			final SequenceDescription sd,
-			final RegistrationType registrationTP,
-			final int referenceTP )
+	/** GUI "Fix first view": the first (sorted) view of every subset. */
+	public static HashSet< ViewId > assembleFixed( final List< Subset< ViewId > > subsets )
 	{
 		final HashSet< ViewId > fixed = new HashSet<>();
 
-		Collections.sort( allViewIds );
-
-		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
-		{
-			for ( final ViewId viewId : allViewIds )
-			{
-				if ( viewId.getTimePointId() == referenceTP )
-				{
-					fixed.add( viewId );
-					break;
-				}
-			}
-		}
-		else if ( registrationTP == RegistrationType.TIMEPOINTS_INDIVIDUALLY )
-		{
-			// it is sorted by timpoint
-			fixed.add( allViewIds.get( 0 ) );
-			int currentTp = allViewIds.get( 0 ).getTimePointId();
-
-			for ( final ViewId viewId : allViewIds )
-			{
-				// next tp
-				if ( viewId.getTimePointId() != currentTp )
-				{
-					fixed.add( viewId );
-					currentTp = viewId.getTimePointId();
-				}
-			}
-		}
-		else
-		{
-			fixed.add( allViewIds.get( 0 ) ); // always the first view is fixed
-		}
+		for ( final Subset< ViewId > subset : subsets )
+			if ( subset.getViews().size() > 0 )
+				fixed.add( Subset.getViewsSorted( subset.getViews() ).get( 0 ) );
 
 		return fixed;
 	}
 
-	public static HashMap< Subset< ViewId >, Pair< ViewId, Dimensions > > assembleMapBack(
-			final ArrayList< Subset< ViewId > > subsets,
-			final ArrayList< ViewId > mapBackViewIds,
-			final SequenceDescription sd )
+	/**
+	 * GUI "Map back to first/user defined view": one reference view per subset.
+	 *
+	 * @return for every view the mapback (reference) view of its subset
+	 */
+	public static HashMap< ViewId, ViewId > assembleMapBack(
+			final List< Subset< ViewId > > subsets,
+			final ArrayList< ViewId > mapBackViewIds )
 	{
-		final HashMap< Subset< ViewId >, Pair< ViewId, Dimensions > > map = new HashMap<>();
+		final HashMap< ViewId, ViewId > map = new HashMap<>();
 
 		for ( final Subset< ViewId > subset : subsets )
 		{
-			ViewId mapBackView = null;
+			if ( subset.getViews().size() == 0 )
+				continue;
 
-			// see if we have view specified for 
-			if ( mapBackViewIds != null && mapBackViewIds.size() > 0 )
-			{
+			// user-specified view in this subset, otherwise the first one
+			ViewId mapBackView = Subset.getViewsSorted( subset.getViews() ).get( 0 );
+
+			if ( mapBackViewIds != null )
 				for ( final ViewId mbv : mapBackViewIds )
 					if ( subset.contains( mbv ) )
 					{
 						mapBackView = mbv;
 						break;
 					}
-			}
 
-			// if none was found, use the first one
-			if ( mapBackView == null )
-			{
-				mapBackView = Subset.getViewsSorted( subset.getViews() ).get( 0 );
-			}
-
-			final Dimensions mapBackViewDims = sd.getViewDescription( mapBackView ).getViewSetup().getSize();
-			map.put( subset, new ValuePair< ViewId, Dimensions >( mapBackView, mapBackViewDims ) );
+			for ( final ViewId viewId : subset.getViews() )
+				map.put( viewId, mapBackView );
 		}
 
 		System.out.println("The following ViewIds are used for mapback: ");
-		map.values().forEach( vid -> System.out.print( Group.pvid( vid.getA() ) + ", ") );
+		new HashSet<>( map.values() ).forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
 		System.out.println();
 
 		return map;
@@ -720,13 +708,15 @@ public class Solver extends AbstractRegistration
 
 	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
 	{
-		//if ( !disableFixedViews && enableMapbackViews )
-		//	throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
+		if ( !disableFixedViews && enableMapbackViews )
+			throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
+
+		if ( enableMapbackViews && registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
+			throw new IllegalArgumentException("'--enableMapbackViews' is not supported with '-rtp TO_REFERENCE_TIMEPOINT' (the GUI does not map back in this mode either).");
 
 		// fixed views and mapping back to original view
 		if ( disableFixedViews )
 		{
-			/*
 			if ( enableMapbackViews )
 			{
 				if ( mapbackViews == null || mapbackViews.length == 0 )
@@ -742,14 +732,12 @@ public class Solver extends AbstractRegistration
 	
 					final ArrayList<ViewId> parsedViews = Import.getViewIds( mapbackViews ); // all views
 					this.mapBackViewIds = Import.getViewIds( dataGlobal, parsedViews );
-					System.out.println( "Warning: only " + mapBackViewIds.size() + " of " + parsedViews.size() + " that you specified for mapback views exist and are present.");
-	
+
+					if ( parsedViews.size() != mapBackViewIds.size() )
+						System.out.println( "Warning: only " + mapBackViewIds.size() + " of " + parsedViews.size() + " that you specified for mapback views exist and are present.");
+
 					if ( this.mapBackViewIds == null || this.mapBackViewIds.size() == 0 )
-						throw new IllegalArgumentException( "Mapback views couldn't be parsed. Please provide valid mapsback views." );
-	
-					System.out.println("The following ViewIds are used for mapback: ");
-					fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
-					System.out.println();
+						throw new IllegalArgumentException( "Mapback views couldn't be parsed. Please provide valid mapback views." );
 				}
 
 				// load mapback model
@@ -763,7 +751,7 @@ public class Solver extends AbstractRegistration
 
 				this.mapBackViewIds = null;
 			}
-			*/
+
 			this.fixedViewIds = null;
 		}
 		else
@@ -793,7 +781,6 @@ public class Solver extends AbstractRegistration
 				System.out.println();
 			}
 
-			//sthis.mapBackViewIds = null;
 		}
 
 		return true;
