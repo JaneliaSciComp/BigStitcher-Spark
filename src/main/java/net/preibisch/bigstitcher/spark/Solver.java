@@ -50,6 +50,7 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
+import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.RegularizationModel;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -242,6 +243,8 @@ public class Solver extends AbstractRegistration
 		System.out.println("splitTimepoints: " + splitTimepoints);
 
 		System.out.println("Other parameters: ");
+		System.out.println("transformationModel: " + transformationModel );
+		System.out.println("regularizationModel: " + regularizationModel + ( regularizationModel == RegularizationModel.NONE ? "" : " (lambda=" + regularizationLambda + ")" ) );
 		System.out.println("method: " + globalOptType );
 		System.out.println("preAlign: " + preAlign );
 		System.out.println("sourcePoints: " + sourcePoints );
