@@ -344,19 +344,17 @@ public class SplitDatasets extends AbstractBasic
 					intervals.add( Spark.deserializeInterval( si ) );
 
 				// Create saver that writes interest points on-the-fly.
-				// Open one N5Writer on ${baseDir}/interestpoints.n5 per task and reuse it for every save,
-				// so we don't pay an open/close cycle per InterestPoints object.
-				final URI containerUri = URITools.toURI(
-						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
+				// Executors run in separate JVMs and must not touch the shared packed index: the per-entry save
+				// writes one durable staging blob per entry, which the driver's XML save (commit) folds into the
+				// packed arrays.
 				final SplittingTools.InterestPointSaver saver = vipl -> {
-					try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
+					try
 					{
 						for ( final ViewInterestPointLists v : vipl.values() )
 							for ( final InterestPoints ips : v.getHashMap().values() )
 							{
-								final InterestPointsN5 n5ips = ( InterestPointsN5 ) ips;
-								n5ips.saveInterestPoints( false, n5Writer );
-								n5ips.saveCorrespondingInterestPoints( false, n5Writer );
+								ips.saveInterestPoints( false );
+								ips.saveCorrespondingInterestPoints( false );
 							}
 					}
 					catch ( final Exception e )
