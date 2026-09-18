@@ -448,6 +448,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// create temporary N5 folder
 		final String tempLocation = URITools.appendName( dataGlobal.getBasePathURI(), InterestPointsN5.baseN5 );
 		final URI tempURI = URITools.toURI( tempLocation );
+		final URI baseDirURI = dataGlobal.getBasePathURI();
+		// without intensities the combine tasks write one staging blob per view straight into the interest point store's
+		// staging area (JVM-independent, one file each); the driver's XML save commits them, nothing is loaded into driver memory
+		final boolean useBlobs = !storeIntensities && !dryRun;
 		final String tempDataset = "spark_tmp_" + System.currentTimeMillis() + "_" + new Random( System.nanoTime() ).nextInt();
 
 		System.out.println( "Creating temporary N5 for dataset for spark jobs in '" + tempURI + ":/" + tempDataset + "'" );
@@ -852,7 +856,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
 				}
 
-				saveInterestPoints( n5WriterLocal, combinedDataset( tempDataset, viewId ), myIpsNewId, storeIntensities ? myIntensities : null );
+				if ( useBlobs )
+					writeStagingBlobs( baseDirURI, viewId, label, myIpsNewId );
+				else
+					saveInterestPoints( n5WriterLocal, combinedDataset( tempDataset, viewId ), myIpsNewId, storeIntensities ? myIntensities : null );
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, myIpsNewId.size() );
@@ -861,12 +868,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			{
 				System.out.println( Group.pvid( viewId ) + ": no points found." );
 
+				if ( useBlobs )
+					writeStagingBlobs( baseDirURI, viewId, label, new ArrayList<>() );
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, 0 );
 			}
 		} ).collect();
 
+		if ( !useBlobs )
+		{
 		System.out.println( "Loading combined interest points from temporary N5 ... " + new java.util.Date() );
 
 		combined.parallelStream().forEach( t ->
@@ -891,6 +902,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				intensitiesIPs.put( viewId, intensitiesList );
 			}
 		} );
+		}
 
 		System.out.println( "Combined interest points ... " + new java.util.Date() );
 
@@ -924,8 +936,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Computed all interest points, statistics:" );
 
-		for ( final ViewId viewId : viewIds )
-			System.out.println( Group.pvid( viewId ) + ": " + interestPoints.get( viewId ).size() );
+		for ( final Tuple2< ViewId, Integer > t : combined )
+			System.out.println( Group.pvid( t._1() ) + ": " + t._2() );
 
 		if ( !dryRun )
 		{
@@ -941,7 +953,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
-			InterestPointTools.addInterestPoints( dataGlobal, label, new HashMap<>( interestPoints ), params );
+			if ( useBlobs )
+				InterestPointTools.addInterestPointEntries( dataGlobal, label, viewIdsGlobal, params ); // data is in the staging blobs; save() below commits them
+			else
+				InterestPointTools.addInterestPoints( dataGlobal, label, new HashMap<>( interestPoints ), params );
 
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 
@@ -1012,6 +1027,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	}
 
 	/** stores the points as [n x size] doubles in dataset/points and, if not null, the intensities in dataset/intensities (same layout as the per-block results) */
+	/** one durable staging blob (points) + one (empty correspondences) per view; folded into the store by the next XML save */
+	static void writeStagingBlobs( final URI baseDir, final ViewId viewId, final String label, final List< InterestPoint > ips )
+	{
+		final InterestPointsN5 list = new InterestPointsN5( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label ) );
+		list.setInterestPoints( ips );
+		list.setCorrespondingInterestPoints( new ArrayList<>() );
+		list.saveInterestPoints( true );
+		list.saveCorrespondingInterestPoints( true );
+	}
+
 	static void saveInterestPoints( final N5Writer n5, final String dataset, final List< InterestPoint > ips, final List< Double > intensities )
 	{
 		final int n = ips.get( 0 ).getL().length;
