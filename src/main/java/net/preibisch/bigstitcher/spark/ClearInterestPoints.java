@@ -325,21 +325,17 @@ public class ClearInterestPoints extends AbstractBasic
 						if ( entry.getValue().contains( label ) )
 							viewsWithLabel.add( entry.getKey() );
 
-					try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
+					for ( final ViewId viewId : viewsWithLabel )
 					{
-						for ( final ViewId viewId : viewsWithLabel )
-						{
-							if ( !silent )
-								System.out.println( "  removing '" + label + "' from " + Group.pvid( viewId ) );
+						if ( !silent )
+							System.out.println( "  removing '" + label + "' from " + Group.pvid( viewId ) );
 
-							// Remove the per-label group (drops both /interestpoints and /correspondences).
-							final String groupPath = "tpId_" + viewId.getTimePointId() +
-									"_viewSetupId_" + viewId.getViewSetupId() + "/" + label;
-							if ( n5Writer.exists( groupPath ) )
-								n5Writer.remove( groupPath );
+						// removes the entry from the packed store (committed with the XML save below) and any legacy per-view group
+						final InterestPoints list = ips.get( viewId ).getInterestPointList( label );
+						list.deleteInterestPoints();
+						list.deleteCorrespondingInterestPoints();
 
-							ips.get( viewId ).getHashMap().remove( label );
-						}
+						ips.get( viewId ).getHashMap().remove( label );
 					}
 					System.out.println( "Removed label '" + label + "' from " + viewsWithLabel.size() + " view(s)." );
 
