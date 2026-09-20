@@ -194,7 +194,14 @@ Tightly coupled to mvr's `process.splitting.*` — recent mvr-side work (single-
 New CLI tool to filter a SpimData2 XML by attributes. Defaults to overwriting the input XML.
 
 ### `ClearInterestPoints` (expanded)
-Added modes: `FIX_INTERESTPOINTS`, `ADD_LABEL`, `REMOVE_LABEL`. Cloud-aware.
+Added modes: `FIX_INTERESTPOINTS`, `ADD_LABEL`, `REMOVE_LABEL`. Cloud-aware. Now extends
+`AbstractSelectableViews`: every mode except `FIX_INTERESTPOINTS` honours the view-selection flags, and
+correspondences in *unselected* views that point into the selection are pruned too (dataset stays consistent
+in one pass). A selection covering all present views (incl. "no flags") takes the legacy dataset-wide paths,
+so `CLEAR_EVERYTHING` still wipes the whole `interestpoints.n5`. The set+label correspondence filter
+(`removeCorrespondencesToViewsWithLabel`) lives here because BSS pins a released mvr; upstream it to
+`CorrespondenceTools` when mvr moves past 9.0.13. `ClearRegistrations` now actually applies its selection
+(its loop used to iterate every registration).
 
 ### Shared CLI plumbing
 `--max*Log` knobs and the post-registration transformation summary moved into `AbstractInfrastructure` so all commands share them. Registration-specific args migrated to `AbstractRegistration`.
@@ -252,7 +259,7 @@ mvn test -Dtest=TestSparkFusion -Denforcer.skip=true       # one class
 mvn test -Dtest=TestSparkFusion#testFusionWithMultiResPyramid -Denforcer.skip=true
 ```
 
-Test classes (`TestSparkInterestPointDetection`, `TestSparkFusion`) reuse mvr's `SimulateUtil` / `TestInterestPointDetection` / `TestRegistration` / `TestBoundingBox` — so mvr changes flow through here automatically.
+Test classes (`TestSparkInterestPointDetection`, `TestSparkFusion`, `TestClearInterestPoints`) reuse mvr's `SimulateUtil` / `TestInterestPointDetection` / `TestRegistration` / `TestBoundingBox` — so mvr changes flow through here automatically.
 
 Known issue: mvr-side `TestN5Zarr` multi-resolution sharding tests hit NPE at `PaddedRawBlockCodec.encode()`. Production GUI export and Spark fusion both work; suspected to be test-setup parameter init.
 

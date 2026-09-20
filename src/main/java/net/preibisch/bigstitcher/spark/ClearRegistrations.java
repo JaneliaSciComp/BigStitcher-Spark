@@ -23,8 +23,10 @@ package net.preibisch.bigstitcher.spark;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransform;
@@ -69,10 +71,16 @@ public class ClearRegistrations extends AbstractSelectableViews
 
 		final Map<ViewId, ViewRegistration> regs = dataGlobal.getViewRegistrations().getViewRegistrations();
 
-		System.out.println( "The following transformations will be removed:");
+		// Only touch the views the user selected (all present views when no selection flags are given).
+		final Set< ViewId > selected = new HashSet<>( viewIdsGlobal );
+
+		System.out.println( "The following transformations will be removed (" + selected.size() + " selected view(s)):");
 
 		for ( final Entry<ViewId, ViewRegistration> reg : regs.entrySet() )
 		{
+			if ( !selected.contains( reg.getKey() ) )
+				continue;
+
 			System.out.println( Group.pvid( reg.getKey() ) + ":" );
 
 			final ViewRegistration r = reg.getValue();

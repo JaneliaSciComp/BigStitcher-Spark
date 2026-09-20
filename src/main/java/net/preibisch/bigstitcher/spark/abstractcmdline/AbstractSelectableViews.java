@@ -53,6 +53,16 @@ public abstract class AbstractSelectableViews extends AbstractBasic implements C
 	@Option(names = { "-vi" }, description = "specifically list the view ids (time point, view setup) that should be fused into a single image, e.g. -vi '0,0' -vi '0,1' (default: all view ids)")
 	protected String[] vi = null;
 
+	/**
+	 * True when the user passed any view-selection flag (-vi, --angleId, --tileId, --illuminationId,
+	 * --channelId, --timepointId). Intended for messaging only: whether a selection actually restricts
+	 * anything is a set comparison against the dataset's views, not a question of which flags were typed.
+	 */
+	protected boolean hasViewSelection()
+	{
+		return vi != null || angleIds != null || tileIds != null || illuminationIds != null || channelIds != null || timepointIds != null;
+	}
+
 	public ArrayList< ViewId > loadViewIds( final SpimData2 dataGlobal ) throws IllegalArgumentException
 	{
 		return loadViewIds(dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
