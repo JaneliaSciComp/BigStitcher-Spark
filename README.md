@@ -19,8 +19,8 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 Additonally there are some utility methods:
 * `SparkDownsample`/**`downsample`** (perform downsampling of existing volumes)
-* `ClearInterestPoints`/**`clear-interestpoints`** (clears interest points)
-* `ClearRegistrations`/**`clear-registrations`** (clears registrations)
+* `ClearInterestPoints`/**`clear-interestpoints`** (clears or repairs interest points and correspondences, for all or selected views)
+* `ClearRegistrations`/**`clear-registrations`** (clears registrations, for all or selected views)
 
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.** You can always verify the results of each step BigStitcher-Spark step interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below (typically BigStitcher-Spark supports a specific feature that was hard to implement in BigStitcher and vice-versa).*
 
@@ -201,7 +201,7 @@ and when using matched **interestpoints** individually per timepoint it is (e.g.
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
-Please run `solver` without parameters to get help for all command line arguments. `-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case. By default the first view of each timepoint will be fixed, `-fv` allows to specify certain views to be fixed and `--disableFixedViews` will not fix any views (in this case make sure to not use plain affine models). `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
+Please run `solver` without parameters to get help for all command line arguments. `-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case. By default the first view of each timepoint will be fixed, `-fv` allows to specify certain views to be fixed and `--disableFixedViews` will not fix any views (in this case make sure to not use plain affine models). Without fixed views, `--enableMapbackViews` maps the result back onto one reference view per timepoint (`--mapbackViews '0,0'`, default: first view) using a `RIGID` or `TRANSLATION` `--mapbackModel`, exactly like the GUI's "Map back views" option. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
 
 `--maxError` sets the maximum allowed error for the solve (it will iterate at least until it is under that value), `--maxIterations` defines the maximum number of iterations, and `--maxPlateauwidth` defines the number of iterations that are used to estimate if the solve converged (and is thus also the minimal number of iterations). 
 
@@ -218,6 +218,20 @@ When using interestpoints (for timeseries alignment with grouping all views of a
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads -rtp ALL_TO_ALL_WITH_RANGE --splitTimepoints</code>
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The solver currently only runs multi-threaded.
+
+## Clear Interest Points / Registrations<a name="clear">
+
+Two utilities for editing the interest-point data and the registrations stored in a project without opening BigStitcher. Both accept the same view-selection flags as the other commands (`--tileId`, `--channelId`, `--illuminationId`, `--angleId`, `--timepointId`, or `-vi '0,0' -vi '0,1'` for individual ViewIds); without them every view is processed. `--dryRun` prints what would happen without writing anything.
+
+<code>./clear-interestpoints -x ~/SparkTest/IP/dataset.xml --clearMode REMOVE_LABEL --label beads --tileId 3,4</code>
+
+<code>./clear-registrations -x ~/SparkTest/IP/dataset.xml --remove 1 -vi '0,0'</code>
+
+`clear-interestpoints` modes (`--clearMode`): `CLEAR_EVERYTHING` (default) removes all interest points and correspondences of the selected views; without a view selection it deletes the whole `interestpoints.n5` directory. `CLEAR_ALL_CORRESPONDENCES` keeps the detections and drops the correspondence links. `ADD_LABEL` / `REMOVE_LABEL` add an empty interest-point list with the given `--label`, or remove that label, from the selected views. `FIX_INTERESTPOINTS` repairs a project whose views were removed from the XML (drops orphaned entries, N5 groups and correspondences); it always covers the whole dataset and ignores the view selection.
+
+***Note:*** whenever data is removed from selected views, correspondences in *unselected* views that point into the selection are removed as well, so the project stays consistent. `--silent` skips the per-view listing, which otherwise loads all selected interest points just to print counts (recommended for large or cloud-hosted datasets).
+
+`clear-registrations` strips transformations from the selected views: `--keep N` keeps only the first N transformations (in order of application, e.g. calibration first), `--remove N` removes the last N.
 
 ## Affine Fusion<a name="affine-fusion">
 

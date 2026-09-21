@@ -13,6 +13,9 @@ import net.preibisch.bigstitcher.spark.util.ViewUtil;
 
 public class OverlappingViews
 {
+	public static final int defaultAffineExpansion = 2;
+	public static final int defaultTPSExpansion = 50;
+
 	/**
 	 * Find all views among the given {@code viewIds} that overlap the given {@code interval}.
 	 * The image interval of each view is transformed into world coordinates
@@ -23,18 +26,20 @@ public class OverlappingViews
 	 * @param viewIds which views to check
 	 * @param interval interval in world coordinates
 	 * @param registrations registrations for each view, may be adjusted for anisotropy
+	 * @param expansion how much the interval will be expanded to avoid accidental missed (e.g. affine could be 2)
 	 * @return views that overlap {@code interval}
 	 */
 	public static List<ViewId> findOverlappingViews(
 			final SpimData spimData,
 			final List<ViewId> viewIds,
 			final HashMap< ViewId, AffineTransform3D > registrations,
-			final Interval interval )
+			final Interval interval,
+			final int expansion )
 	{
 		final List< ViewId > overlapping = new ArrayList<>();
 
 		// expand to be conservative ...
-		final Interval expandedInterval = Intervals.expand( interval, 2 );
+		final Interval expandedInterval = Intervals.expand( interval, expansion );
 
 		for ( final ViewId viewId : viewIds )
 		{

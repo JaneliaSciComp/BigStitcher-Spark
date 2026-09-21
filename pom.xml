@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.scijava</groupId>
         <artifactId>pom-scijava</artifactId>
-        <version>39.0.0</version>
+        <version>44.0.0</version>
         <relativePath/>
     </parent>
 
@@ -82,7 +82,7 @@
     <properties>
 		<package-name>net.preibisch.bigstitcher.spark</package-name>
 
-        <!-- <scijava.jvm.version>1.8</scijava.jvm.version> -->
+        <scijava.jvm.version>21</scijava.jvm.version>
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
 
@@ -92,25 +92,31 @@
 		<imglib2-cache.version>1.0.0-beta-19</imglib2-cache.version>
 		<imglib2-algorithm.version>0.16.0</imglib2-algorithm.version>
 		<imglib2-roi.version>0.15.1</imglib2-roi.version>
-		<n5-imglib2.version>7.0.2</n5-imglib2.version>
 		<bigdataviewer-core.version>10.6.1</bigdataviewer-core.version>
 		<bigdataviewer-vistools.version>1.0.0-beta-36</bigdataviewer-vistools.version>
 		-->
-		<imglib2.version>8.0.0</imglib2.version>
+		<!-- imglib2 base and spim_data inherited from pom-scijava 44.0.0 to stay in lock-step with mvr -->
 		<imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
-		<imglib2-algorithm.version>0.18.2</imglib2-algorithm.version>
-		<bigdataviewer-core.version>10.6.5</bigdataviewer-core.version>
-		<bigdataviewer-n5.version>1.0.2</bigdataviewer-n5.version>
+		<imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
+		<imglib2-realtransform.version>4.0.5</imglib2-realtransform.version>
+		<bigdataviewer-core.version>10.6.12</bigdataviewer-core.version>
+		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-		<spim_data.version>2.3.5</spim_data.version>
-		<multiview-reconstruction.version>8.0.0</multiview-reconstruction.version>
-		<BigStitcher.version>2.5.0</BigStitcher.version>
+		<multiview-reconstruction.version>9.0.13</multiview-reconstruction.version>
+		<BigStitcher.version>3.0.0</BigStitcher.version>
 
-		<n5-universe.version>2.3.0</n5-universe.version>
-		<n5.version>3.5.0</n5.version>
-		<n5-zarr.version>1.5.1</n5-zarr.version>
+		<!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
+		<n5.version>4.0.1</n5.version>
+		<commons-compress.version>1.28.0</commons-compress.version>
+		<commons-io.version>2.20.0</commons-io.version>
+		<n5-hdf5.version>3.0.0</n5-hdf5.version>
+		<n5-imglib2.version>8.0.0</n5-imglib2.version>
+		<n5-universe.version>3.0.2</n5-universe.version>
+		<n5-zarr.version>2.0.1</n5-zarr.version>
+		<n5-zstandard.version>2.0.0</n5-zstandard.version>
+		<n5-blosc.version>2.0.0</n5-blosc.version>
 
-		<mpicbg.mpicbg.version>1.6.5</mpicbg.mpicbg.version>
+		<mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
 
 		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
 		<ome-codecs.version>0.3.0</ome-codecs.version>
@@ -171,7 +177,7 @@
 		<dependency>
 			<groupId>org.bigdataviewer</groupId>
 			<artifactId>bigdataviewer-n5</artifactId>
-			<version>1.0.2</version>
+			<version>${bigdataviewer-n5.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>javax.annotation</groupId>
@@ -204,19 +210,43 @@
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-aws-s3</artifactId>
-            <!-- <version>4.0.0</version> -->
+            <version>5.0.1</version>
+            <exclusions>
+                <!-- awssdk's netty HTTP client pulls its own netty, clashing with the
+                     explicit netty-all (matched to Spark 4.1.2's netty 4.2.7.Final).
+                     apache-client is the default sync client. -->
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
-<!--        Scala is sensitive to fasterxml version -->
+<!--        Scala is sensitive to fasterxml version; Spark 4.1.2 ships Jackson 2.21.2.
+            All three of databind/core/annotations must be pinned together: pom-scijava 44.0.0
+            manages the jackson family to 2.19.2, so without explicit core/annotations pins the
+            transitive 2.21 requested by databind gets dragged back to 2.19.2 -> mismatched
+            ObjectMapper (NoClassDefFoundError: JsonSerializeAs) at Spark MetricsServlet init. -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.13.4</version>
+            <version>2.21.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.21.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <!-- NB: jackson-annotations versions on the minor line only (2.21), not 2.21.2 -->
+            <version>2.21</version>
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
-<!--            Spark 3.3.2 release comes with scala 2.12.15 -->
-            <artifactId>spark-core_2.12</artifactId>
-            <version>3.3.2</version>
+<!--            Spark 4.1.2 release comes with scala 2.13.17 (Java 17/21) -->
+            <artifactId>spark-core_2.13</artifactId>
+            <version>4.1.2</version>
             <exclusions>
                 <exclusion>
                     <artifactId>netty-all</artifactId>
@@ -276,7 +306,7 @@
         <dependency>
             <groupId>org.scala-lang</groupId>
             <artifactId>scala-library</artifactId>
-            <version>2.12.15</version>
+            <version>2.13.17</version>
         </dependency>
         <dependency>
             <groupId>net.preibisch</groupId>
@@ -312,7 +342,7 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.1.68.Final</version>
+            <version>4.2.7.Final</version>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
@@ -330,6 +360,16 @@
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-imglib2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.janelia</groupId>
+            <artifactId>n5-zstandard</artifactId>
+            <version>${n5-zstandard.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.janelia.saalfeldlab</groupId>
+            <artifactId>n5-blosc</artifactId>
+            <version>${n5-blosc.version}</version>
         </dependency>
         <!-- https://mvnrepository.com/artifact/net.java.dev.jna/jna needed for M1 native library loading -->
         <dependency>
@@ -362,6 +402,33 @@
                     <artifactId>formats-gpl</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+
+        <!-- multiview-reconstruction test classes for shared test assertions -->
+        <dependency>
+            <groupId>net.preibisch</groupId>
+            <artifactId>multiview-reconstruction</artifactId>
+            <version>${multiview-reconstruction.version}</version>
+            <classifier>tests</classifier>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>ch.epfl.biop</groupId>
+                    <artifactId>ijp-kheops</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- JUnit 5 for testing -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <!-- old bioformats -->
@@ -405,6 +472,25 @@
 
     </dependencies>
 
+    <build>
+        <plugins>
+            <!-- The scijava CI build runs javadoc (javadoc:javadoc on pull requests, javadoc:jar on deploy). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <configuration>
+                    <!-- On Java 9+ the plugin puts dependencies on the module path and derives automatic module
+                         names from jar file names. Scala-suffixed jars (spark-core_2.13) yield an invalid name
+                         ("spark.core.2.13") and abort javadoc. Stay in classic classpath mode instead. -->
+                    <legacyMode>true</legacyMode>
+                    <!-- Javadoc is not a deliverable of this project: don't fail the build on javadoc-tool errors
+                         such as unreachable external doc links (javadoc.scijava.org/Icy currently 404s). -->
+                    <failOnError>false</failOnError>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
     <profiles>
         <profile>
             <id>fatjar</id>
@@ -427,6 +513,15 @@
                                         implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/org.janelia.saalfeldlab.n5.Compression$CompressionType</resource>
                                 </transformer>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/json/org.janelia.saalfeldlab.n5.serialization.NameConfig$Name</resource>
+                                </transformer>
+                                <!-- Merge META-INF/services/* (Java SPI) instead of letting one jar's
+                                     copy win. Needed for grpc's io.grpc.NameResolverProvider /
+                                     LoadBalancerProvider, which several grpc jars each register. -->
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                             <!--<minimizeJar>true</minimizeJar> -->
                             <filters>
@@ -472,6 +567,11 @@
                                 <relocation>
                                     <pattern>com.google.gson</pattern>
                                     <shadedPattern>org.janelia.saalfeldlab.com.google.gson</shadedPattern>
+                                </relocation>
+                                <!-- Protect newer commons-io from the old version (2.11.0) bundled with Spark -->
+                                <relocation>
+                                    <pattern>org.apache.commons.io</pattern>
+                                    <shadedPattern>org.janelia.saalfeldlab.org.apache.commons.io</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>

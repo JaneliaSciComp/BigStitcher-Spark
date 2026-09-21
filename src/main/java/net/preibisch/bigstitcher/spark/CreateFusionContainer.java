@@ -2,6 +2,9 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.File;
 import java.io.Serializable;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,14 +20,17 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.hdf5.N5HDF5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
-import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMultiScaleMetadata;
+import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 
 import bdv.util.MipmapTransforms;
 import mpicbg.spim.data.SpimDataException;
+import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.Angle;
 import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
+import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -34,8 +40,9 @@ import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.FinalDimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.realtransform.AffineTransform3D;
+import net.imglib2.util.Pair;
 import net.imglib2.util.Util;
-import net.preibisch.bigstitcher.spark.SparkAffineFusion.DataTypeFusion;
+import net.preibisch.bigstitcher.spark.SparkFusion.DataTypeFusion;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractBasic;
 import net.preibisch.bigstitcher.spark.util.Downsampling;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -44,7 +51,7 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttibutes;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.OMEZarrAttributes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.AllenOMEZarrLoader.OMEZARREntry;
 import net.preibisch.mvrecon.process.export.ExportN5Api;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
@@ -65,7 +72,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	private String outputPathURIString = null;
 
 	@Option(names = {"-s", "--storage"}, defaultValue = "ZARR", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Dataset storage type, currently supported OME-ZARR, N5, and ONLY for local, multithreaded Spark HDF5 (default: OME-ZARR)")
+			description = "Dataset storage type: ZARR (=OME-ZARR v3, supports sharding), ZARR2 (=OME-ZARR v2, no sharding), N5, "
+					+ "or HDF5 (ONLY for local, multithreaded Spark). Note: with the default ZARR (v3), sharding is auto-enabled "
+					+ "unless --useSharding=false is set. Use ZARR2 for OME-ZARR v2 (no sharding). (default: ZARR / OME-ZARR v3)")
 	private StorageFormat storageType = null;
 
 	@Option(names = {"-c", "--compression"}, defaultValue = "Zstandard", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
@@ -116,6 +125,14 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 	@Option(names = { "--anisotropyFactor" }, description = "define the anisotropy factor if preserveAnisotropy is set to true (default: compute from data)")
 	private double anisotropyFactor = Double.NaN;
 
+	@Option(names = { "--useSharding" },
+		description = "Enable Zarr v3 sharding (only for ZARR format, not ZARR2, default: auto-detect - enabled for ZARR, disabled otherwise)")
+	private Boolean useSharding = null; // null = auto-detect
+
+	@Option(names = { "--shardSizeFactor" },
+		description = "Shard size as multiple of block size (e.g. 4,4,2 means shard will be 4x4x2 blocks), default: 8,8,2")
+	private String shardSizeFactorString = "8,8,2";
+
 	URI outPathURI = null, xmlOutURI = null;
 
 	@Override
@@ -154,8 +171,26 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		if ( viewIdsGlobal == null || viewIdsGlobal.size() == 0 )
 			return null;
 
-		final int numTimepointsXML = dataGlobal.getSequenceDescription().getTimePoints().getTimePointsOrdered().size();
-		final int numChannelsXML = dataGlobal.getSequenceDescription().getAllChannelsOrdered().size();
+		// the resolution (voxel size) of the fused output at full res (s0) - carried over from the
+		// input data's own calibration (adjusted for whatever scale is already baked into its
+		// ViewRegistration models, e.g. a real affine registration), rather than hardcoding it -
+		// see usages below. computeAverageCalibration()'s result is then denoised - see stripCalibrationNoise().
+		final SequenceDescription seqDescGlobal = dataGlobal.getSequenceDescription();
+		final List< ViewDescription > vdsGlobal = viewIdsGlobal.stream()
+				.map( vid -> seqDescGlobal.getViewDescription( vid ) )
+				.toList();
+
+		final Pair< double[], String > avgCalibrationRaw =
+				TransformationTools.computeAverageCalibration( vdsGlobal, dataGlobal.getViewRegistrations() );
+
+		final double[] avgCalibrationValues = new double[ 3 ];
+		for ( int d = 0; d < 3; ++d )
+			avgCalibrationValues[ d ] = stripCalibrationNoise( avgCalibrationRaw.getA()[ d ] );
+
+		System.out.println( "Approximate pixel size of fused image (without downsampling): " + Util.printCoordinates( avgCalibrationValues ) + " " + avgCalibrationRaw.getB() );
+
+		final int numTimepointsXML = seqDescGlobal.getTimePoints().getTimePointsOrdered().size();
+		final int numChannelsXML = seqDescGlobal.getAllChannelsOrdered().size();
 
 		System.out.println( "XML project contains " + numChannelsXML + " channels, " + numTimepointsXML + " timepoints." );
 
@@ -213,6 +248,44 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		final int[] blockSize = Import.csvStringToIntArray( blockSizeString );
 
 		System.out.println( "Fusion target: " + boundingBox.getTitle() + ": " + Util.printInterval( boundingBox ) + " with blocksize " + Util.printCoordinates( blockSize ) );
+
+		// Parse shard size factor
+		final int[] shardSizeFactor = Import.csvStringToIntArray( shardSizeFactorString );
+
+		if ( shardSizeFactor.length != 3 )
+		{
+			System.out.println( "ERROR: shardSizeFactor must have 3 values (x,y,z)" );
+			return null;
+		}
+
+		// Auto-detect sharding based on storage type (enabled for ZARR v3, disabled otherwise)
+		if ( useSharding == null )
+			useSharding = (storageType == StorageFormat.ZARR);
+
+		// Validate: sharding only for ZARR v3
+		if ( useSharding && storageType != StorageFormat.ZARR )
+		{
+			System.out.println( "WARNING: Sharding only supported for ZARR v3. Disabling sharding." );
+			useSharding = false;
+		}
+
+		// Calculate shard size
+		final int[] shardSize;
+		if ( useSharding )
+		{
+			shardSize = new int[] {
+				blockSize[0] * shardSizeFactor[0],
+				blockSize[1] * shardSizeFactor[1],
+				blockSize[2] * shardSizeFactor[2]
+			};
+			System.out.println( "Sharding enabled. Shard size: " + Util.printCoordinates( shardSize ) + " (factor: " + Util.printCoordinates( shardSizeFactor ) + ")" );
+			System.out.println( "Note: For Zarr v3 sharding, computeBlockSize will equal shardSize for shard-aware writing." );
+		}
+		else
+		{
+			shardSize = null;
+			System.out.println( "Sharding disabled." );
+		}
 
 		// compression and data type
 		final Compression compression = N5Util.getCompression( this.compression, this.compressionLevel );
@@ -289,7 +362,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 				dir.mkdirs();
 			driverVolumeWriter = new N5HDF5Writer( URITools.fromURI( outPathURI ) );
 		}
-		else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR )
+		else if ( storageType == StorageFormat.N5 || storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
 			driverVolumeWriter = URITools.instantiateN5Writer( storageType, outPathURI );
 		}
@@ -313,11 +386,29 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/DataType", dt );
 		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/BlockSize", blockSize );
 
+		driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/UseSharding", useSharding );
+		if ( useSharding )
+		{
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/ShardSize", shardSize );
+			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/ShardSizeFactor", shardSizeFactor );
+		}
+
 		if ( minIntensity != null && maxIntensity != null )
 		{
 			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MinIntensity", minIntensity );
 			driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/MaxIntensity", maxIntensity );
 		}
+
+		// resolution of the s0 export - carry over the actual voxel calibration of the input data
+		// (computed above) rather than hardcoding 1.0 for x/y. When --preserveAnisotropy is set,
+		// the fused volume keeps native z spacing (the bounding box was downsampled by
+		// anisotropyFactor above instead of resampling z to be isotropic), so each output z-voxel
+		// covers anisotropyFactor * (isotropic z-voxel) of physical space. Shared by the OME-NGFF
+		// and BDV metadata paths below so viewers don't squash z either way.
+		final double zResS0 = preserveAnisotropy ? avgCalibrationValues[ 2 ] * anisotropyFactor : avgCalibrationValues[ 2 ];
+		final VoxelDimensions voxelSizeS0 = new FinalVoxelDimensions( "micrometer", new double[] { avgCalibrationValues[ 0 ], avgCalibrationValues[ 1 ], zResS0 } );
+
+		System.out.println( "Resolution of level 0: " + Util.printCoordinates( voxelSizeS0.dimensionsAsDoubleArray() ) + " micrometer" ); //vx.unit() might not be OME-ZARR compatible
 
 		// setup datasets and metadata
 		MultiResolutionLevelInfo[][] mrInfos = null;
@@ -328,7 +419,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// is code that creates the N5/HDF5 container and the XML in one if statement. The reason is that
 		// HDF5/N5 containers with XML may be different that OME-ZARR's; they are always the same no matter
 		// if it is a BDV project or not
-		if ( storageType == StorageFormat.ZARR )
+		if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 		{
 			System.out.println( "Creating 5D OME-ZARR metadata for '" + outPathURI + "' ... " );
 
@@ -348,6 +439,11 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			mrInfos = new MultiResolutionLevelInfo[ 1 ][];
 
 			// all is 5d now
+			// Convert shardSize to 5D if sharding is enabled
+			final int[] shardSize5d = useSharding && shardSize != null
+				? new int[] { shardSize[ 0 ], shardSize[ 1 ], shardSize[ 2 ], 1, 1 }
+				: null;
+
 			mrInfos[ 0 ] = N5ApiTools.setupMultiResolutionPyramid(
 					driverVolumeWriter,
 					levelToName,
@@ -355,26 +451,22 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					dim, //5d
 					compression,
 					blockSize5d, //5d
-					ds ); // 5d
+					ds, // 5d
+					useSharding,
+					shardSize5d ); // 5d
 
 			final MultiResolutionLevelInfo[] mrInfo = mrInfos[ 0 ];
 
+			// Note: mrInfo contains 5D downsampling (x,y,z,c,t) but MipmapTransforms expects 3D
 			final Function<Integer, AffineTransform3D> levelToMipmapTransform =
-					(level) -> MipmapTransforms.getMipmapTransformDefault( mrInfo[level].absoluteDownsamplingDouble() );
-
-			// extract the resolution of the s0 export
-			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
-
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "micrometer" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
+					(level) -> MipmapTransforms.getMipmapTransformDefault( Arrays.copyOf( mrInfo[level].absoluteDownsamplingDouble(), 3 ) );
 
 			// create metadata
-			final OmeNgffMultiScaleMetadata[] meta = OMEZarrAttibutes.createOMEZarrMetadata(
+			final OmeNgffMetadata meta = OMEZarrAttributes.createOMEZarrMetadata(
 					5, // int n
 					"/", // String name, I also saw "/"
-					resolutionS0, // double[] resolutionS0,
+					storageType == StorageFormat.ZARR2 ? "0.4" : "0.5", // OME-NGFF version
+					voxelSizeS0.dimensionsAsDoubleArray(), // double[] resolutionS0,
 					"micrometer", //vx.unit() might not be OME-ZARR compatible // String unitXYZ, // e.g micrometer
 					mrInfos[ 0 ].length, // int numResolutionLevels,
 					levelToName,
@@ -385,7 +477,13 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			//org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.v04.OmeNgffMetadata
 			// for this to work you need to register an adapter in the N5Factory class
 			// final GsonBuilder builder = new GsonBuilder().registerTypeAdapter( CoordinateTransformation.class, new CoordinateTransformationAdapter() );
-			driverVolumeWriter.setAttribute( "/", "multiscales", meta );
+			if ( storageType == StorageFormat.ZARR2 )
+				driverVolumeWriter.setAttribute( "/", "multiscales", meta.multiscales );
+			else
+			{
+				driverVolumeWriter.setAttribute( "/", "ome", meta );
+				driverVolumeWriter.setAttribute( "/", "ome/version", meta.version );
+			}
 		}
 
 		if ( bdv )
@@ -394,7 +492,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			if ( storageType == StorageFormat.N5 )
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
-			else if ( storageType == StorageFormat.ZARR )
+			else if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/OME-ZARR" );
 			else
 				driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/HDF5" );
@@ -409,16 +507,6 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			for ( int t = 0; t < numTimepoints; ++t )
 				tps.add( new TimePoint( t ) );
 
-			// extract the resolution of the s0 export
-			// TODO: this is inaccurate, we should actually estimate it from the final transformn that is applied
-			// TODO: this is a hack (returns 1,1,1) so the export downsampling pyramid is working
-			final VoxelDimensions vx = new FinalVoxelDimensions( "micrometer", new double[] { 1, 1, 1 } );// dataGlobal.getSequenceDescription().getViewSetupsOrdered().iterator().next().getVoxelSize();
-			final double[] resolutionS0 = OMEZarrAttibutes.getResolutionS0( vx, anisotropyFactor, Double.NaN );
-
-			System.out.println( "Resolution of level 0: " + Util.printCoordinates( resolutionS0 ) + " " + "m" ); //vx.unit() might not be OME-ZARR compatiblevx.unit() );
-
-			final VoxelDimensions vxNew = new FinalVoxelDimensions( "micrometer", resolutionS0 );
-
 			for ( int c = 0; c < numChannels; ++c )
 			{
 				setups.add(
@@ -426,7 +514,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 								c,
 								"setup " + c,
 								new FinalDimensions( bb ),
-								vxNew,
+								voxelSizeS0,
 								new Tile( 0 ),
 								new Channel( c, "Channel " + c ),
 								new Angle( 0 ),
@@ -435,7 +523,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 
 			final Map< ViewId, OMEZARREntry > viewIdToPath;
 
-			if ( storageType == StorageFormat.ZARR )
+			if ( storageType == StorageFormat.ZARR || storageType == StorageFormat.ZARR2 )
 			{
 				viewIdToPath = new HashMap<>();
 
@@ -457,9 +545,34 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			final SpimData2 dataFusion =
 					SpimData2Tools.createNewSpimDataForFusion( storageType, outPathURI, xmlOutURI, viewIdToPath, setups, tps );
 
-			new XmlIoSpimData2().save( dataFusion, xmlOutURI );
+			// When --preserveAnisotropy is set, the fused volume's z axis was downsampled by
+			// anisotropyFactor (see the bounding-box adjustment above), so each output z-voxel
+			// covers anisotropyFactor units of physical space. createNewSpimDataForFusion() only
+			// creates identity ViewRegistrations, so encode that z-scaling into the affine here -
+			// otherwise BDV would display the volume with z squashed by anisotropyFactor. This is
+			// the BDV equivalent of the OME-NGFF z-scale used in the non-BDV path.
+			if ( preserveAnisotropy )
+			{
+				final AffineTransform3D anisotropyTransform = new AffineTransform3D();
+				anisotropyTransform.set(
+						1.0, 0.0, 0.0, 0.0,
+						0.0, 1.0, 0.0, 0.0,
+						0.0, 0.0, anisotropyFactor, 0.0 );
 
-			if ( storageType != StorageFormat.ZARR )
+				for ( final ViewRegistration vr : dataFusion.getViewRegistrations().getViewRegistrationsOrdered() )
+				{
+					vr.preconcatenateTransform( new ViewTransformAffine( "preserve anisotropy (z-scale)", anisotropyTransform.copy() ) );
+					vr.updateModel();
+				}
+
+				System.out.println( "Encoded anisotropy factor " + anisotropyFactor + " (z-scale) into the ViewRegistration affine transforms of " + xmlOutURI );
+			}
+
+			final XmlIoSpimData2 ioFusion = new XmlIoSpimData2();
+
+			ioFusion.save( dataFusion, xmlOutURI );
+
+			if ( storageType != StorageFormat.ZARR && storageType != StorageFormat.ZARR2 )
 			{
 				final Collection<ViewDescription> vds = dataFusion.getSequenceDescription().getViewDescriptions().values();
 
@@ -474,7 +587,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 					if ( storageType == StorageFormat.N5 )
 					{
 						myMrInfo[ c + t*c  ] = N5ApiTools.setupBdvDatasetsN5(
-								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings);
+								driverVolumeWriter, vd, dt, bb, compression, blockSize, downsamplings );
 
 						driverVolumeWriter.setAttribute( "/", "Bigstitcher-Spark/FusionFormat", "BDV/N5" );
 					}
@@ -511,7 +624,9 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 							boundingBox.dimensionsAsLongArray(),
 							compression,
 							blockSize,
-							downsamplings );
+							downsamplings,
+						useSharding,
+						shardSize );
 				}
 		}
 
@@ -521,6 +636,23 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		driverVolumeWriter.close();
 
 		return null;
+	}
+
+	/** Number of significant figures to keep when denoising a calibration value - see {@link #stripCalibrationNoise}. */
+	private static final int CALIBRATION_SIGNIFICANT_DIGITS = 12;
+
+	/**
+	 * Strips the floating-point noise that {@link TransformationTools#computeAverageCalibration}'s
+	 * Vector3d-transform/length() decomposition introduces (typically in the last few significant
+	 * digits of a double), while preserving any genuine, larger scale difference a real
+	 * registration may have introduced.
+	 */
+	private static double stripCalibrationNoise( final double value )
+	{
+		if ( !Double.isFinite( value ) )
+			return value;
+
+		return BigDecimal.valueOf( value ).round( new MathContext( CALIBRATION_SIGNIFICANT_DIGITS, RoundingMode.HALF_UP ) ).doubleValue();
 	}
 
 	public static void main(final String... args) throws SpimDataException

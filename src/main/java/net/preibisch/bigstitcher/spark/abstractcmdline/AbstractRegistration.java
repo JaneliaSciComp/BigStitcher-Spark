@@ -21,11 +21,17 @@
  */
 package net.preibisch.bigstitcher.spark.abstractcmdline;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import net.imglib2.util.Pair;
+import net.imglib2.util.ValuePair;
 
 import mpicbg.models.AffineModel3D;
 import mpicbg.models.IdentityModel;
@@ -40,6 +46,9 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
+import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAll;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.AllToAllRange;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.IndividualTimepoints;
@@ -68,6 +77,9 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	@Option(names = { "--rangeTP" }, description = "the range of timepoints if timepointAlign == ALL_TO_ALL_RANGE (default: 5)")
 	protected Integer rangeTP = 5;
 
+	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
+	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
+
 	@Option(names = { "-tm", "--transformationModel" }, description = "which transformation model to use; TRANSLATION, RIGID or AFFINE (default: AFFINE)")
 	protected TransformationModel transformationModel = TransformationModel.AFFINE;
 
@@ -77,11 +89,28 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	@Option(names = { "--lambda" }, description = "lamdba to use for regularization model (default: 0.1)")
 	protected Double regularizationLambda = 0.1;
 
+	@Option(names = { "--vsComparisonsFile" }, description = "path to a text file listing allowed view setup ID pairs (one pair per line, comma-separated), e.g. '0,1\\n1,2\\n2,3' (default: all-to-all)")
+	protected String vsComparisonsFile = null;
+
+	@Option(names = { "--maxPerPairLog" }, description = "max number of per-pair 'Connecting … <-> …' log lines printed by global registration before per-pair output is suppressed (the per-(labelA,labelB) summary is always emitted). Default: 1000")
+	protected int maxPerPairLog = InterestPointMatchCreator.maxPerPairLog;
+
+	@Option(names = { "--maxPerPairCorrLog" }, description = "max number of per-pair '[…] >>> […]: Loaded N corresponding…' / 'Not enough…' log lines printed during pairwise correspondence loading before per-pair output is suppressed (the per-(labelA,labelB) summary is always emitted). Default: 1000")
+	protected int maxPerPairCorrLog = PairwiseResult.maxPerPairCorrLog;
+
+	@Option(names = { "--maxPerViewTransformLog" }, description = "max number of per-view 'Transformation Models:' lines printed after each global optimization round before output is suppressed (the identity-vs-non-identity summary is always emitted). Default: 1000")
+	protected int maxPerViewTransformLog = TransformationTools.maxPerViewTransformLog;
+
 	protected SpimData2 dataGlobal;
 	protected ArrayList< ViewId > viewIdsGlobal;
 
 	public void initRegistrationParameters() throws SpimDataException
 	{
+		// propagate log-cap knobs into their mvr static homes before any registration code runs
+		InterestPointMatchCreator.maxPerPairLog = maxPerPairLog;
+		PairwiseResult.maxPerPairCorrLog = maxPerPairCorrLog;
+		TransformationTools.maxPerViewTransformLog = maxPerViewTransformLog;
+
 		this.dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
@@ -139,6 +168,18 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			return new InterpolatedAffineModel3D( tm, rm, lambda );
 	}
 
+	/**
+	 * Same as the GUI (Interest_Point_Registration): groups, registration strategy, overlap-based pairs, connected subsets.
+	 */
+	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg, final Set< Group< ViewId > > groupsGlobal )
+	{
+		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
+		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
+		identifySubsets( setup, overlapDetection );
+
+		return setup;
+	}
+
 	// TODO: move to multiview-reconstruction (AdvancedRegistrationParameters)
 	public static PairwiseSetup< ViewId > pairwiseSetupInstance(
 			final RegistrationType registrationType,
@@ -176,6 +217,40 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			return new AllAgainstAllOverlap<>( 3 );
 		else
 			return new SimpleBoundingBoxOverlap<>( spimData );
+	}
+
+	public static HashSet< Pair< Integer, Integer > > parseVsComparisonsFile( final String filePath )
+	{
+		if ( filePath == null )
+			return null;
+
+		final HashSet< Pair< Integer, Integer > > pairs = new HashSet<>();
+
+		try ( final BufferedReader reader = new BufferedReader( new FileReader( filePath ) ) )
+		{
+			String line;
+			int lineNum = 0;
+			while ( (line = reader.readLine()) != null )
+			{
+				++lineNum;
+				line = line.trim();
+				if ( line.isEmpty() || line.startsWith( "#" ) )
+					continue;
+				final String[] parts = line.split( "," );
+				if ( parts.length != 2 )
+					throw new IllegalArgumentException( "vsComparisonsFile line " + lineNum + " must be 'vsIdA,vsIdB', got: '" + line + "'" );
+				final int a = Integer.parseInt( parts[0].trim() );
+				final int b = Integer.parseInt( parts[1].trim() );
+				pairs.add( new ValuePair<>( Math.min( a, b ), Math.max( a, b ) ) );
+			}
+		}
+		catch ( final IOException e )
+		{
+			throw new RuntimeException( "Could not read vsComparisonsFile '" + filePath + "': " + e.getMessage(), e );
+		}
+
+		System.out.println( "Loaded " + pairs.size() + " view setup ID comparison pairs from '" + filePath + "'." );
+		return pairs;
 	}
 
 }

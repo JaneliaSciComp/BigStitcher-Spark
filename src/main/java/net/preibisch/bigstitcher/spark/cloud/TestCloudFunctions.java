@@ -113,7 +113,11 @@ public class TestCloudFunctions implements Callable<Void>
 		final SparkConf conf = new SparkConf().setAppName("TestDAL");
 
 		if (localSparkBindAddress)
+		{
 			conf.set("spark.driver.bindAddress", "127.0.0.1");
+			conf.set("spark.driver.host", "localhost");
+			org.apache.spark.util.Utils.setCustomHostname("localhost");
+		}
 
 		System.out.println( conf.get( "spark.master" ) );
 

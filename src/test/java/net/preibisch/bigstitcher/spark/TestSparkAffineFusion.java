@@ -16,7 +16,7 @@ public class TestSparkAffineFusion
 					omeZarrPath
 			};
 
-			new CommandLine(new SparkAffineFusion()).execute(args);
+			new CommandLine(new SparkFusion()).execute(args);
 		}
 		catch (Exception e)
 		{

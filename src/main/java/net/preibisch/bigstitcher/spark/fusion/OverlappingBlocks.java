@@ -55,19 +55,22 @@ public class OverlappingBlocks
 	 * 		which views to check
 	 * @param interval
 	 * 		the interval that will be processed (in world coordinates)
+	 * @param expansion
+	 * 		how much the interval will be expanded to avoid accidental missed (e.g. affine could be 2)
 	 * @return list of views with overlapping blocks, and a prefetcher for those blocks.
 	 */
 	public static OverlappingBlocks find(
 			final SpimData data,
 			final HashMap< ViewId, AffineTransform3D > registrations,
 			final List<ViewId> viewIds,
-			Interval interval )
+			final Interval interval,
+			final int expansion )
 	{
 		final List< ViewId > overlapping = new ArrayList<>();
 		final List< Callable< Object > > prefetch = new ArrayList<>();
 
 		// expand to be conservative ...
-		final Interval expandedInterval = Intervals.expand( interval, 2 );
+		final Interval expandedInterval = Intervals.expand( interval, expansion );
 
 		for ( final ViewId viewId : viewIds )
 		{
