@@ -472,6 +472,25 @@
 
     </dependencies>
 
+    <build>
+        <plugins>
+            <!-- The scijava CI build runs javadoc (javadoc:javadoc on pull requests, javadoc:jar on deploy). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <configuration>
+                    <!-- On Java 9+ the plugin puts dependencies on the module path and derives automatic module
+                         names from jar file names. Scala-suffixed jars (spark-core_2.13) yield an invalid name
+                         ("spark.core.2.13") and abort javadoc. Stay in classic classpath mode instead. -->
+                    <legacyMode>true</legacyMode>
+                    <!-- Javadoc is not a deliverable of this project: don't fail the build on javadoc-tool errors
+                         such as unreachable external doc links (javadoc.scijava.org/Icy currently 404s). -->
+                    <failOnError>false</failOnError>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
     <profiles>
         <profile>
             <id>fatjar</id>
