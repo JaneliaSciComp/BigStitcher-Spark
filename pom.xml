@@ -86,6 +86,13 @@
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
 
+        <!-- Fat jar knobs, driven by the fatjar / fatjar-local profiles (see <build> and <profiles>). -->
+        <spark.scope>provided</spark.scope>
+        <fatjar.skip>true</fatjar.skip>
+        <fatjar.classifier>cluster</fatjar.classifier>
+        <!-- pom-scijava 44 manages log4j 2.25.1; Spark 4.1.2 ships its slf4j binding and bridges at 2.24.3. Keep one family. -->
+        <log4j.version>2.24.3</log4j.version>
+
 		<!--
 		<imglib2.version>7.1.2</imglib2.version>
 		<imglib2-realtransform.version>4.0.3</imglib2-realtransform.version>
@@ -301,7 +308,7 @@
                         <artifactId>stax-api</artifactId>
                 </exclusion>
             </exclusions>
-            <scope>provided</scope>
+            <scope>${spark.scope}</scope>
         </dependency>
         <dependency>
             <groupId>org.scala-lang</groupId>
@@ -488,74 +495,110 @@
                     <failOnError>false</failOnError>
                 </configuration>
             </plugin>
-        </plugins>
-    </build>
 
-    <profiles>
-        <profile>
-            <id>fatjar</id>
-            <build>
-                <plugins>
-                    <!-- Maven shade for Uber Jar -->
-                    <!-- https://maven.apache.org/plugins/maven-shade-plugin/shade-mojo.html -->
-                    <!-- https://databricks.gitbooks.io/databricks-spark-knowledge-base/content/troubleshooting/missing_dependencies_in_jar_files.html -->
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-shade-plugin</artifactId>
+            <!-- pom-scijava writes a Class-Path attribute (~370 jars) into the thin jar's manifest. Nothing here needs it,
+                 and the shade plugin uses that manifest as the base of the fat jars' manifest, where a Class-Path
+                 could pull in stray jars sitting next to the fat jar. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addClasspath>false</addClasspath>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <!-- Shaded "fat" jars for distribution; skipped unless one of the fatjar profiles is active:
+                   mvn package -Pfatjar        -> target/BigStitcher-Spark-<version>-cluster.jar (Spark NOT bundled; for spark-submit)
+                   mvn package -Pfatjar-local  -> target/BigStitcher-Spark-<version>-local.jar   (Spark bundled; java -jar ... <command>)
+                 The main (thin) artifact is left untouched, so deploys to maven.scijava.org are unaffected. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <dependencies>
+                    <dependency>
+                        <!-- Merges the Log4j2Plugins.dat plugin caches of log4j-core, log4j-1.2-api and the JSON layout.
+                             With plain first-wins merging Spark's default logging fails at startup. -->
+                        <groupId>org.apache.logging.log4j</groupId>
+                        <artifactId>log4j-transform-maven-shade-plugin-extensions</artifactId>
+                        <version>0.2.0</version>
+                    </dependency>
+                </dependencies>
+                <executions>
+                    <execution>
+                        <id>fatjar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
                         <configuration>
-                            <!-- Do not minimize for now to speed up packaging. -->
+                            <skip>${fatjar.skip}</skip>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>${fatjar.classifier}</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers combine.children="append">
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/mpicbg.spim.data.generic.sequence.ImgLoaderIo</resource>
                                 </transformer>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/org.janelia.saalfeldlab.n5.Compression$CompressionType</resource>
                                 </transformer>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/json/org.janelia.saalfeldlab.n5.serialization.NameConfig$Name</resource>
                                 </transformer>
-                                <!-- Merge META-INF/services/* (Java SPI) instead of letting one jar's
-                                     copy win. Needed for grpc's io.grpc.NameResolverProvider /
-                                     LoadBalancerProvider, which several grpc jars each register. -->
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!-- Merge META-INF/services/* (Java SPI) instead of letting one jar's copy win
+                                     (grpc providers, Hadoop FileSystems, SLF4J provider, ...). -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.logging.log4j.maven.plugins.shade.transformer.Log4j2PluginCacheFileTransformer"/>
+                                <!-- Dependency manifests are filtered out below (META-INF/*.MF), so this writes the only manifest.
+                                     Add-Opens replaces the add-opens JVM flags Spark 4 needs on Java 17/21; the JVM applies it
+                                     only when the jar is started with 'java -jar' (spark-submit adds its own flags). -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Manifest-Version>1.0</Manifest-Version>
+                                        <Main-Class>net.preibisch.bigstitcher.spark.BigStitcherSpark</Main-Class>
+                                        <Implementation-Title>${project.name}</Implementation-Title>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                        <Add-Opens>java.base/java.lang java.base/java.lang.invoke java.base/java.lang.reflect java.base/java.io java.base/java.net java.base/java.nio java.base/java.util java.base/java.util.concurrent java.base/java.util.concurrent.atomic java.base/jdk.internal.ref java.base/sun.nio.ch java.base/sun.nio.cs java.base/sun.security.action java.base/sun.util.calendar java.security.jgss/sun.security.krb5</Add-Opens>
+                                        <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                                    </manifestEntries>
+                                </transformer>
                             </transformers>
-                            <!--<minimizeJar>true</minimizeJar> -->
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>Angle0.tif</exclude>
-                                        <exclude>LICENSE</exclude>
-                                        <exclude>LICENSE.txt</exclude>
-                                        <exclude>META-INF/DEPENDENCIES</exclude>
-                                        <exclude>META-INF/LICENSE</exclude>
-                                        <exclude>META-INF/NOTICE</exclude>
-                                        <exclude>META-INF/BSDL</exclude>
-                                        <exclude>META-INF/COPYING</exclude>
-                                        <exclude>META-INF/LEGAL</exclude>
-                                        <exclude>META-INF/LICENSE.RUBY</exclude>
-                                        <exclude>META-INF/json/org.scijava.plugin.Plugin</exclude>
-                                        <exclude>META-INF/*.MF</exclude>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                        <exclude>META-INF/*.txt</exclude>
-                                        <exclude>module-info.class</exclude>
-                                        <exclude>plugins.config</exclude>
-					                    <exclude>META-INF/versions/9/module-info.class</exclude>
-					                    <exclude>META-INF/okio.kotlin_module</exclude>
-                                        <exclude>META-INF/services/com.fasterxml.jackson.core.JsonFactory</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                            <!-- Additional configuration. -->
+                               <filters>
+                                   <filter>
+                                       <artifact>*:*</artifact>
+                                       <excludes>
+                                           <exclude>Angle0.tif</exclude>
+                                           <exclude>LICENSE</exclude>
+                                           <exclude>LICENSE.txt</exclude>
+                                           <exclude>META-INF/DEPENDENCIES</exclude>
+                                           <exclude>META-INF/LICENSE</exclude>
+                                           <exclude>META-INF/NOTICE</exclude>
+                                           <exclude>META-INF/BSDL</exclude>
+                                           <exclude>META-INF/COPYING</exclude>
+                                           <exclude>META-INF/LEGAL</exclude>
+                                           <exclude>META-INF/LICENSE.RUBY</exclude>
+                                           <exclude>META-INF/json/org.scijava.plugin.Plugin</exclude>
+                                           <exclude>META-INF/*.MF</exclude>
+                                           <exclude>META-INF/*.SF</exclude>
+                                           <exclude>META-INF/*.DSA</exclude>
+                                           <exclude>META-INF/*.RSA</exclude>
+                                           <exclude>META-INF/*.txt</exclude>
+                                           <exclude>module-info.class</exclude>
+                                           <exclude>plugins.config</exclude>
+                            <exclude>META-INF/versions/*/module-info.class</exclude>
+                            <exclude>META-INF/okio.kotlin_module</exclude>
+                                           <exclude>META-INF/services/com.fasterxml.jackson.core.JsonFactory</exclude>
+                                       </excludes>
+                                   </filter>
+                               </filters>
                             <artifactSet>
                                 <excludes>
-				                    <exclude>xpp3:xpp3</exclude>
+                                    <exclude>xpp3:xpp3</exclude>
+                                    <!-- Bio-Formats drags in logback; Spark uses log4j2. Two SLF4J providers in one jar is a coin toss. -->
+                                    <exclude>ch.qos.logback:*</exclude>
                                 </excludes>
                             </artifactSet>
                             <relocations>
@@ -575,19 +618,29 @@
                                 </relocation>
                             </relocations>
                         </configuration>
-                        <!-- binds by default to package phase -->
-                        <executions>
-                            <execution>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>shade</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <!-- Maven shade end -->
-                </plugins>
-            </build>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- Spark-free shaded jar for spark-submit (the cluster/cloud Spark provides Spark itself). -->
+        <profile>
+            <id>fatjar</id>
+            <properties>
+                <fatjar.skip>false</fatjar.skip>
+                <fatjar.classifier>cluster</fatjar.classifier>
+            </properties>
+        </profile>
+        <!-- Self-contained shaded jar with Spark bundled, for 'java -jar ... <command>' on a workstation. -->
+        <profile>
+            <id>fatjar-local</id>
+            <properties>
+                <fatjar.skip>false</fatjar.skip>
+                <fatjar.classifier>local</fatjar.classifier>
+                <spark.scope>compile</spark.scope>
+            </properties>
         </profile>
     </profiles>
 
