@@ -441,7 +441,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final String tempLocation = URITools.appendName( dataGlobal.getBasePathURI(), InterestPointsN5.baseN5 );
 		final URI tempURI = URITools.toURI( tempLocation );
 		final URI baseDirURI = dataGlobal.getBasePathURI();
-		// without intensities the combine tasks write one staging blob per view straight into the interest point store's
+		// without intensities the combine tasks write one staging file per view straight into the interest point store's
 		// staging area (JVM-independent, one file each); the driver's XML save commits them, nothing is loaded into driver memory
 		final boolean useBlobs = !storeIntensities && !dryRun;
 		final String tempDataset = "spark_tmp_" + System.currentTimeMillis() + "_" + new Random( System.nanoTime() ).nextInt();
@@ -1019,14 +1019,13 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	}
 
 	/** stores the points as [n x size] doubles in dataset/points and, if not null, the intensities in dataset/intensities (same layout as the per-block results) */
-	/** one durable staging blob (points) + one (empty correspondences) per view; folded into the store by the next XML save */
+	/** one durable staging file (points + empty correspondences) per view; folded into the store by the next XML save */
 	static void writeStagingBlobs( final URI baseDir, final ViewId viewId, final String label, final List< InterestPoint > ips )
 	{
 		final InterestPointsN5 list = new InterestPointsN5( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label ) );
 		list.setInterestPoints( ips );
 		list.setCorrespondingInterestPoints( new ArrayList<>() );
-		list.saveInterestPoints( true );
-		list.saveCorrespondingInterestPoints( true );
+		InterestPointsN5.saveStaged( List.of( list ) );
 	}
 
 	static void saveInterestPoints( final N5Writer n5, final String dataset, final List< InterestPoint > ips, final List< Double > intensities )

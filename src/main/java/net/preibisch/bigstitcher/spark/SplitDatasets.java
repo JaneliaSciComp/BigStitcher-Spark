@@ -344,18 +344,15 @@ public class SplitDatasets extends AbstractBasic
 					intervals.add( Spark.deserializeInterval( si ) );
 
 				// Create saver that writes interest points on-the-fly.
-				// Executors run in separate JVMs and must not touch the shared packed index: the per-entry save
-				// writes one durable staging blob per entry, which the driver's XML save (commit) folds into the
-				// packed arrays.
+				// Executors run in separate JVMs and must not touch the shared index: all entries of this task go into
+				// ONE durable staging file, which the driver's XML save (commit) folds into the arrays.
 				final SplittingTools.InterestPointSaver saver = vipl -> {
 					try
 					{
+						final ArrayList< InterestPoints > all = new ArrayList<>();
 						for ( final ViewInterestPointLists v : vipl.values() )
-							for ( final InterestPoints ips : v.getHashMap().values() )
-							{
-								ips.saveInterestPoints( false );
-								ips.saveCorrespondingInterestPoints( false );
-							}
+							all.addAll( v.getHashMap().values() );
+						InterestPointsN5.saveStaged( all );
 					}
 					catch ( final Exception e )
 					{
@@ -575,13 +572,10 @@ public class SplitDatasets extends AbstractBasic
 						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
 				try ( final N5Writer corrN5Writer = URITools.instantiateN5Writer( StorageFormat.N5, corrContainerUri ) )
 				{
-					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> {
-						for ( final InterestPoints ips : vipl.getHashMap().values() )
-						{
-							final InterestPointsN5 n5ips = ( InterestPointsN5 ) ips;
-							n5ips.saveCorrespondingInterestPoints( false, corrN5Writer );
-						}
-					};
+					// executors never commit: collect the corrected lists of all new setups of this task and write them as ONE
+					// durable staging file at the end; the driver's XML save folds it in
+					final ArrayList< InterestPoints > pending = new ArrayList<>();
+					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> pending.addAll( vipl.getHashMap().values() );
 
 					// Share one IP-map cache across all newSetup iterations in this task so we don't
 					// reload the same target-view IP copies repeatedly. Single-threaded scope → plain HashMap is fine.
@@ -597,6 +591,7 @@ public class SplitDatasets extends AbstractBasic
 								corrSaver,
 								ipMapCache );
 					}
+					InterestPointsN5.saveStaged( pending );
 				}
 				catch ( final Exception e )
 				{
