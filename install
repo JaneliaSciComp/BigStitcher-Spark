@@ -81,7 +81,9 @@ else
 fi
 
 
-VERSION="0.1.0-SNAPSHOT"
+# project version from the pom, so the shims keep pointing at the right jar after a release bump
+VERSION=$(mvn -q -Denforcer.skip=true help:evaluate -Dexpression=project.version -DforceStdout)
+echo "BigStitcher-Spark version: $VERSION"
 INSTALL_DIR=$(pwd)
 #INSTALL_DIR=${1:-$(pwd)}
 
@@ -98,7 +100,8 @@ sleep 2
 mvn clean install
 #echo 'Building a farjar, which can also be used for cluster/cloud execution' 
 #mvn clean install -P fatjar
-mvn -Dmdep.outputFile=cp.txt -Dmdep.includeScope=runtime dependency:build-classpath
+# Spark is 'provided' for the cluster fatjar; the local shims need it on the classpath
+mvn -Dspark.scope=compile -Dmdep.outputFile=cp.txt -Dmdep.includeScope=runtime dependency:build-classpath
 
 # function that installs one command
 # $1 - command name
@@ -149,14 +152,6 @@ install_command clear-registrations "net.preibisch.bigstitcher.spark.ClearRegist
 install_command transform-points "net.preibisch.bigstitcher.spark.TransformPoints"
 install_command overlay-landmarks "net.preibisch.bigstitcher.spark.OverlayLandmarks"
 
-
-if [ $(pwd) == "$INSTALL_DIR" ]; then
-    echo "Installation directory equals current directory, we are done."
-else
-	echo "Creating directory $INSTALL_DIR and moving files..."
-    mkdir -p $INSTALL_DIR
-    mv affine-fusion $INSTALL_DIR/
-fi
 
 rm cp.txt
 

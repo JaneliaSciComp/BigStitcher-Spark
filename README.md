@@ -1,4 +1,4 @@
-[![Build Status](https://github.com/PreibischLab/BigStitcher-Spark/actions/workflows/build.yml/badge.svg)](https://github.com/PreibischLab/BigStitcher-Spark/actions/workflows/build.yml)
+[![Build Status](https://github.com/JaneliaSciComp/BigStitcher-Spark/actions/workflows/build.yml/badge.svg)](https://github.com/JaneliaSciComp/BigStitcher-Spark/actions/workflows/build.yml)
 
 # BigStitcher-Spark
 
@@ -48,18 +48,27 @@ Additonally there are some utility methods:
 
 ### To run it on your local computer<a name="installlocal">
 
-* Prerequisites:  **Java** (_[Zulu JDK 8 + FX](https://www.azul.com/downloads/?version=java-8-lts&package=jdk-fx#zulu) is tested, and Java >=21 currently does not work with the Spark version used_) and **[Apache Maven](https://maven.apache.org)** must be installed. Try `java -version` and `mvn -v` to confirm their functionality and versions. You have to set the `JAVA_HOME` environment variable for Maven to find the right Java.
-* Clone the repo and `cd` into `BigStitcher-Spark`
-* Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create the executable `resave`, `detect-interestpoints`, `register-interestpoints`, `stitching`, `solver`, `affine-fusion`, `nonrigid-fusion`, `downsample`, `clear-interestpoints` and `clear-registrations` in the working directory.
+* Prerequisite: **Java 21** (17 also works; Spark 4 dropped Java 8 and 11), e.g. [Zulu](https://www.azul.com/downloads/?version=java-21-lts&package=jdk) or [Temurin](https://adoptium.net). Check with `java -version`.
+* Download `BigStitcher-Spark-<version>-local.jar` from the [latest release](https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest) (Spark is bundled, nothing else to install). A stable link to the current version is `https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest/download/BigStitcher-Spark-local.jar`.
+* Run any module as a subcommand, e.g.
 
-If you run the code directly from your IDE, you will need to add JVM paramters for the local Spark execution (e.g. 8 cores, 50GB RAM):
+```
+java -Xmx64g -jar BigStitcher-Spark-local.jar resave -x ~/dataset.xml
+java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all commands
+```
+
+`-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
+
+**Building from source** instead: install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+
+If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
 
 ### To run it on a compute cluster<a name="installcluster">
 
-`mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
+Use `BigStitcher-Spark-<version>-cluster.jar` from the [latest release](https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest) (Spark is *not* bundled, the cluster's Spark 4.1 / Java 21 provides it), or build it yourself with `mvn clean package -Pfatjar` (`target/BigStitcher-Spark-<version>-cluster.jar`). Submit either with `spark-submit --class net.preibisch.bigstitcher.spark.<JavaClassName> ... BigStitcher-Spark-<version>-cluster.jar <arguments>` or, using the jar's entry point, `spark-submit ... BigStitcher-Spark-<version>-cluster.jar <cmd-line-tool-name> <arguments>`.
 
 ***Important:*** if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.
 ```
@@ -75,7 +84,7 @@ Please ask your sysadmin for help how to run it on your **cluster**, below are h
 
 ### To run it on the cloud<a name="installcloud">
 
-`mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
+Use the same `BigStitcher-Spark-<version>-cluster.jar` as for clusters (see above).
 
 BigStitcher-Spark is now fully "cloud-native". For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html) and [Google Serverless Batches](https://cloud.google.com/dataproc-serverless/docs/quickstarts/spark-batch). Note that some modules support prefetching `--prefetch`, which is important for cloud execution due to its delays as it pre-loads all image blocks in parallel before processing. We will soon add detailled information on how to run the examples on both cloud platforms (it works - if you need help now, please contact @StephanPreibisch).
 
