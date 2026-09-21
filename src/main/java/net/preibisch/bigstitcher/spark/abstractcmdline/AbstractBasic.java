@@ -36,6 +36,8 @@ import util.URITools;
 
 public abstract class AbstractBasic extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
+	static { net.preibisch.legacy.io.IOFunctions.printIJLog = false;  }
+
 	private static final long serialVersionUID = -4916959775650710928L;
 
 	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml or -x s3://mybucket/data/dataset.xml or -x file:/home/project.xml")

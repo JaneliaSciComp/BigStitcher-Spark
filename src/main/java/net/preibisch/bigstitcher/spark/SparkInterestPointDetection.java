@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -370,9 +371,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			return resultIntervals;
 		});
 
+		// overlappingOnly yields one (view, intersection) entry per overlapping partner. Partners that
+		// fully overlap (e.g. channels) produce identical intersections, so the same block would be
+		// detected twice and its temp datasets written and deleted concurrently. Keep each once.
+		final LinkedHashSet< String > seenIntervals = new LinkedHashSet<>();
+
 		metadataJobRDD.collect().forEach(
 				l -> l.forEach( md -> {
-					toProcess.add(new ValuePair<ViewId, Interval>(md._1(), new FinalInterval(md._2(), md._3())));
+					final String key = Group.pvid( md._1() ) + Arrays.toString( md._2() ) + Arrays.toString( md._3() );
+					if ( seenIntervals.add( key ) )
+						toProcess.add(new ValuePair<ViewId, Interval>(md._1(), new FinalInterval(md._2(), md._3())));
 					downsampledDimensions.put(md._1(), md._4());
 				}));
 
