@@ -1018,7 +1018,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		return tempDataset + "/combined/tp" + viewId.getTimePointId() + "_setup" + viewId.getViewSetupId();
 	}
 
-	/** stores the points as [n x size] doubles in dataset/points and, if not null, the intensities in dataset/intensities (same layout as the per-block results) */
 	/** one durable staging file (points + empty correspondences) per view; folded into the store by the next XML save */
 	static void writeStagingBlobs( final URI baseDir, final ViewId viewId, final String label, final List< InterestPoint > ips )
 	{
@@ -1028,6 +1027,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		InterestPointsN5.saveStaged( List.of( list ) );
 	}
 
+	/** stores the points as [n x size] doubles in dataset/points and, if not null, the intensities in dataset/intensities (same layout as the per-block results) */
 	static void saveInterestPoints( final N5Writer n5, final String dataset, final List< InterestPoint > ips, final List< Double > intensities )
 	{
 		final int n = ips.get( 0 ).getL().length;

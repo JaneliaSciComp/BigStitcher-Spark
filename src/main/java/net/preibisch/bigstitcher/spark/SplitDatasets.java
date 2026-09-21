@@ -15,8 +15,6 @@ import java.util.Set;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
 import bdv.ViewerImgLoader;
 import mpicbg.spim.data.SpimDataException;
@@ -566,11 +564,7 @@ public class SplitDatasets extends AbstractBasic
 					}
 				}
 
-				// Open one N5Writer on ${baseDir}/interestpoints.n5 per task and reuse it for every
-				// saveCorrespondingInterestPoints call across all newSetups in this (oldSetup, tp).
-				final URI corrContainerUri = URITools.toURI(
-						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
-				try ( final N5Writer corrN5Writer = URITools.instantiateN5Writer( StorageFormat.N5, corrContainerUri ) )
+				try
 				{
 					// executors never commit: collect the corrected lists of all new setups of this task and write them as ONE
 					// durable staging file at the end; the driver's XML save folds it in

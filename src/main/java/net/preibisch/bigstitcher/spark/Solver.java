@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -524,6 +525,8 @@ public class Solver extends AbstractRegistration
 
 		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = Collections.synchronizedList( new ArrayList<>() );
 		final Set< ViewId > connectedViews = Collections.synchronizedSet( new HashSet<>() );
+		// point maps are needed per (view, label), not per pair: built once here, used by every pair below
+		final Map< Pair< ViewId, String >, Map< Integer, InterestPoint > > pointMaps = new ConcurrentHashMap<>();
 
 		final ForkJoinPool pool = new ForkJoinPool( Math.max( 32, Runtime.getRuntime().availableProcessors() ) );
 
@@ -533,8 +536,7 @@ public class Solver extends AbstractRegistration
 
 			pool.submit( () -> ipsToLoad.parallelStream().forEach( info ->
 			{
-				dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getInterestPointsCopy();
-				dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getCorrespondingInterestPointsCopy();
+				pointMaps.put( info, dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getInterestPointsCopy() );
 
 				ViewUtil.progressPercentage(progress.incrementAndGet(), ipsToLoad.size() );
 			})).get();
@@ -573,9 +575,6 @@ public class Solver extends AbstractRegistration
 				return c != 0 ? c : Integer.compare( order.get( p.getB() ), order.get( q.getB() ) );
 			} );
 			System.out.println( "Views pairs with correspondences: " + tasks.size() );
-
-			// point maps are needed per (view, label), not per pair
-			final Map< Pair< ViewId, String >, Map< Integer, InterestPoint > > pointMaps = new java.util.concurrent.ConcurrentHashMap<>();
 
 			progress.set( 0 );
 
@@ -637,6 +636,7 @@ public class Solver extends AbstractRegistration
 		
 						for ( final CorrespondingInterestPoints p : cpA )
 						{
+							if ( p.getCorrespodingLabel().equals( labelB ) && p.getCorrespondingViewId().equals( vB ) )
 							{
 								InterestPoint ipA = ipListA.get( p.getDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
 								InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
