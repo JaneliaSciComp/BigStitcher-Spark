@@ -77,6 +77,9 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	@Option(names = { "--rangeTP" }, description = "the range of timepoints if timepointAlign == ALL_TO_ALL_RANGE (default: 5)")
 	protected Integer rangeTP = 5;
 
+	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
+	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
+
 	@Option(names = { "-tm", "--transformationModel" }, description = "which transformation model to use; TRANSLATION, RIGID or AFFINE (default: AFFINE)")
 	protected TransformationModel transformationModel = TransformationModel.AFFINE;
 
@@ -163,6 +166,18 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			return tm;
 		else
 			return new InterpolatedAffineModel3D( tm, rm, lambda );
+	}
+
+	/**
+	 * Same as the GUI (Interest_Point_Registration): groups, registration strategy, overlap-based pairs, connected subsets.
+	 */
+	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg, final Set< Group< ViewId > > groupsGlobal )
+	{
+		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
+		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
+		identifySubsets( setup, overlapDetection );
+
+		return setup;
 	}
 
 	// TODO: move to multiview-reconstruction (AdvancedRegistrationParameters)

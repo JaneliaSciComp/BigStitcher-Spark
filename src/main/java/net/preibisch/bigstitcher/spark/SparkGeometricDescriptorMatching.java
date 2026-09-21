@@ -62,7 +62,6 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.OverlapDetection;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
@@ -108,9 +107,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "-ipfr", "--interestpointsForReg" }, description = "which interest points to use for pairwise registrations, use OVERLAPPING_ONLY or ALL points (default: ALL)")
 	protected InterestPointOverlapType interestpointsForReg = InterestPointOverlapType.ALL;
-
-	@Option(names = { "-vr", "--viewReg" }, description = "which views to register with each other, compare OVERLAPPING_ONLY or ALL_AGAINST_ALL (default: OVERLAPPING_ONLY)")
-	protected OverlapType viewReg = OverlapType.OVERLAPPING_ONLY;
 
 
 	@Option(names = { "--interestPointMergeDistance" }, description = "when grouping of views is selected, merge interest points within that radius in px (default: 5.0)")
@@ -190,7 +186,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 
 		// identify groups/subsets
-		final PairwiseSetup< ViewId > setup = setupGroups( viewReg );
+		final PairwiseSetup< ViewId > setup = setupGroups( viewReg, AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints ) );
 
 		// optionally restrict to allowed view setup ID pairs
 		final HashSet< Pair< Integer, Integer > > vsComparisonPairs = parseVsComparisonsFile( vsComparisonsFile );
@@ -588,16 +584,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		System.out.println( "Done.");
 
 		return null;
-	}
-
-	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg )
-	{
-		final Set< Group< ViewId > > groupsGlobal = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
-		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
-		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
-		identifySubsets( setup, overlapDetection );
-
-		return setup;
 	}
 
 	public static < I extends InterestPoint> MatcherPairwise< I > createMatcherInstance(
