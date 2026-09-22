@@ -310,8 +310,14 @@ Cluster/cloud: submit the cluster jar via `spark-submit --class net.preibisch.bi
 
 ## References
 
-- mvr: https://github.com/PreibischLab/multiview-reconstruction
-- Repo: https://github.com/PreibischLab/BigStitcher-Spark
+All PreibischLab repositories moved to the JaneliaSciComp organization; `PreibischLab/...` URLs are GitHub redirects.
+
+- Repo: https://github.com/JaneliaSciComp/BigStitcher-Spark
+- Releases (local + cluster jars, `install-release`): https://github.com/JaneliaSciComp/BigStitcher-Spark/releases
+- Maven artifacts: https://maven.scijava.org/content/repositories/releases/net/preibisch/BigStitcher-Spark/
+- mvr: https://github.com/JaneliaSciComp/multiview-reconstruction
+- BigStitcher (GUI): https://github.com/JaneliaSciComp/BigStitcher
+- scijava-scripts (`release-version.sh`, `ci-build.sh`): https://github.com/scijava/scijava-scripts
 - N5 Zarr v3 blog: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/
 - Zarr spec: https://zarr-specs.readthedocs.io/
 - Apache Spark 4.1.2: https://spark.apache.org/docs/4.1.2/
