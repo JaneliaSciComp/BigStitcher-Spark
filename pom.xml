@@ -84,6 +84,10 @@
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
 
+        <!-- pom-scijava defaults releases to Maven Central (sonatype-oss-release). Like multiview-reconstruction we
+             release to maven.scijava.org; the scijava CI script reads this property to pick the credentials. -->
+        <releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
+
         <!-- Fat jar knobs, driven by the fatjar / fatjar-local profiles (see <build> and <profiles>). -->
         <spark.scope>provided</spark.scope>
         <fatjar.skip>true</fatjar.skip>
