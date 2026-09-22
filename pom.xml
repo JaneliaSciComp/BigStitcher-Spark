@@ -10,7 +10,7 @@
 
     <groupId>net.preibisch</groupId>
     <artifactId>BigStitcher-Spark</artifactId>
-    <version>0.1.1-SNAPSHOT</version>
+    <version>0.1.2-SNAPSHOT</version>
 
     <name>BigStitcher Spark</name>
     <description>Spark-based parallel BigStitcher project.</description>
