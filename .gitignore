@@ -24,3 +24,7 @@ solver
 split-images
 stitching
 transform-points
+bigstitcher-spark
+BigStitcher-Spark-*-local.jar
+BigStitcher-Spark-*-cluster.jar
+*.part

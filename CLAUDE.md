@@ -268,6 +268,7 @@ Known issue: mvr-side `TestN5Zarr` multi-resolution sharding tests hit NPE at `P
 ```bash
 mvn clean compile                # compile only
 ./install -t 8 -m 64             # build + generate command shims
+./install-release -t 8 -m 64     # no build: download the latest release's local jar + generate shims (java -jar based)
 mvn -DskipTests clean package -Pfatjar        # target/BigStitcher-Spark-<v>-cluster.jar (Spark not bundled; spark-submit)
 mvn -DskipTests package -Pfatjar-local        # target/BigStitcher-Spark-<v>-local.jar   (Spark bundled; java -jar)
 ```
