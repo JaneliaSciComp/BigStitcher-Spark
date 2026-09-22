@@ -10,7 +10,7 @@
 
     <groupId>net.preibisch</groupId>
     <artifactId>BigStitcher-Spark</artifactId>
-    <version>0.1.1-SNAPSHOT</version>
+    <version>0.1.1</version>
 
     <name>BigStitcher Spark</name>
     <description>Spark-based parallel BigStitcher project.</description>
@@ -65,7 +65,7 @@
     <scm>
         <connection>scm:git:https://github.com/JaneliaSciComp/BigStitcher-Spark</connection>
         <developerConnection>scm:git:git@github.com:JaneliaSciComp/BigStitcher-Spark</developerConnection>
-        <tag>HEAD</tag>
+        <tag>BigStitcher-Spark-0.1.1</tag>
         <url>https://github.com/JaneliaSciComp/BigStitcher-Spark</url>
     </scm>
     <issueManagement>
