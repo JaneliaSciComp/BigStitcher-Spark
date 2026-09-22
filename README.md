@@ -49,13 +49,14 @@ Additonally there are some utility methods:
 ### To run it on your local computer<a name="installlocal">
 
 * Prerequisite: **Java 21** (17 also works; Spark 4 dropped Java 8 and 11), e.g. [Zulu](https://www.azul.com/downloads/?version=java-21-lts&package=jdk) or [Temurin](https://adoptium.net). Check with `java -version`.
-* Download and run the `install-release` script. It fetches the latest release and creates one executable per module (`resave`, `detect-interestpoints`, ..., plus `bigstitcher-spark` for everything), preset with the given number of cores and memory in GB, without cloning or building anything:
+
+**Install Script** Download and run the `install-release` script. It fetches the latest release and creates one executable per module (`resave`, `detect-interestpoints`, ..., plus `bigstitcher-spark` for everything), preset with the given number of cores and memory in GB, without cloning or building anything:
 
 ```
 curl -fsSLO https://raw.githubusercontent.com/JaneliaSciComp/BigStitcher-Spark/main/install-release
-bash install-release -t 8 -m 64          # options: -t threads, -m GB, -v <version>, -d <dir>, -f
-./resave -x ~/dataset.xml
+./install-release    # options: -t threads, -m GB, -v <version>, -d <dir>, -f
 ```
+then run for example `./resave -x ~/dataset.xml`.
 
 **Manually** instead: download `BigStitcher-Spark-<version>-local.jar` from the [latest release](https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest) (Spark is bundled, nothing else to install; a stable link to the current version is `https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest/download/BigStitcher-Spark-local.jar`) and run any module as a subcommand:
 
