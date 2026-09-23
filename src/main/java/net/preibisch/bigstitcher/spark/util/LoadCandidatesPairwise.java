@@ -121,20 +121,36 @@ public class LoadCandidatesPairwise< I extends InterestPoint > implements Matche
 		for ( final I ip : listBIn )
 			mapB.putIfAbsent( ip.getId(), ip );
 
-		final long[][] rows;
+		// read view A's candidates with BigStitcher's own correspondence reader and keep those pointing to (viewB, labelB)
+		final String dataset = InterestPointsN5.corrDataset( InterestPointsN5.createN5datasetPath( vA.getTimePointId(), vA.getViewSetupId(), labelA ) );
+		final ArrayList< CorrespondingInterestPoints > stored;
+
 		try ( final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, URITools.toURI( candidatesPath ) ) )
 		{
-			rows = readCandidateRows( n5, candidatesPath, vA, labelA, vB, labelB );
+			if ( n5.exists( dataset ) )
+			{
+				stored = InterestPointsN5.readCorrespondences( n5, dataset );
+			}
+			else
+			{
+				System.out.println( "LOAD_CANDIDATES: no group '" + dataset + "' in " + candidatesPath + ", assuming 0 candidates." );
+				stored = new ArrayList<>();
+			}
 		}
 
 		final ArrayList< PointMatchGeneric< I > > candidates = new ArrayList<>();
 		final HashSet< Long > seen = new HashSet<>();
-		int notInLists = 0, duplicates = 0;
+		int forPair = 0, notInLists = 0, duplicates = 0;
 
-		for ( final long[] row : rows )
+		for ( final CorrespondingInterestPoints c : stored )
 		{
-			final I a = mapA.get( (int)row[ 0 ] );
-			final I b = mapB.get( (int)row[ 1 ] );
+			if ( !c.getCorrespodingLabel().equals( labelB ) || !c.getCorrespondingViewId().equals( vB ) )
+				continue; // (consensusSetId is deliberately ignored)
+
+			++forPair;
+
+			final I a = mapA.get( c.getDetectionId() );
+			final I b = mapB.get( c.getCorrespondingDetectionId() );
 
 			if ( a == null || b == null )
 			{
@@ -142,7 +158,7 @@ public class LoadCandidatesPairwise< I extends InterestPoint > implements Matche
 				continue;
 			}
 
-			if ( !seen.add( ( row[ 0 ] << 32 ) | ( row[ 1 ] & 0xffffffffL ) ) )
+			if ( !seen.add( ( (long)c.getDetectionId() << 32 ) | ( c.getCorrespondingDetectionId() & 0xffffffffL ) ) )
 			{
 				++duplicates;
 				continue;
@@ -153,7 +169,7 @@ public class LoadCandidatesPairwise< I extends InterestPoint > implements Matche
 
 		result.setCandidates( candidates );
 
-		final String prefix = "LOAD_CANDIDATES: " + rows.length + " candidates in store, " + candidates.size() + " used"
+		final String prefix = "LOAD_CANDIDATES: " + forPair + " candidates in store, " + candidates.size() + " used"
 				+ ( notInLists > 0 ? " (" + notInLists + " not in the interest point lists, e.g. filtered as non-overlapping)" : "" )
 				+ ( duplicates > 0 ? " (" + duplicates + " duplicates removed)" : "" ) + " -> ";
 
@@ -176,40 +192,6 @@ public class LoadCandidatesPairwise< I extends InterestPoint > implements Matche
 		result.setResult( System.currentTimeMillis(), prefix + ransacResult.getA() );
 
 		return result;
-	}
-
-	/**
-	 * Reads the candidate rows [detIdA, detIdB] stored under view A / label A that point to view B / label B,
-	 * using the same reader BigStitcher uses for its own correspondences ({@link InterestPointsN5#readCorrespondences}).
-	 * Returns an empty array (after logging) if the group or the partner entry is missing.
-	 */
-	protected static long[][] readCandidateRows(
-			final N5Reader n5,
-			final String candidatesPath,
-			final ViewId vA,
-			final String labelA,
-			final ViewId vB,
-			final String labelB )
-	{
-		final String dataset = InterestPointsN5.corrDataset( InterestPointsN5.createN5datasetPath( vA.getTimePointId(), vA.getViewSetupId(), labelA ) );
-
-		if ( !n5.exists( dataset ) )
-		{
-			System.out.println( "LOAD_CANDIDATES: no group '" + dataset + "' in " + candidatesPath + ", assuming 0 candidates." );
-			return new long[ 0 ][];
-		}
-
-		final ArrayList< CorrespondingInterestPoints > all = InterestPointsN5.readCorrespondences( n5, dataset );
-		final ArrayList< long[] > out = new ArrayList<>();
-
-		for ( final CorrespondingInterestPoints c : all )
-			if ( c.getCorrespodingLabel().equals( labelB ) && c.getCorrespondingViewId().equals( vB ) )
-				out.add( new long[] { c.getDetectionId(), c.getCorrespondingDetectionId() } ); // consensusSetId deliberately ignored
-
-		if ( out.isEmpty() )
-			System.out.println( "LOAD_CANDIDATES: '" + dataset + "' holds " + all.size() + " entries, none for partner " + vB.getTimePointId() + "," + vB.getViewSetupId() + "," + labelB + "." );
-
-		return out.toArray( new long[ 0 ][] );
 	}
 
 	@Override
