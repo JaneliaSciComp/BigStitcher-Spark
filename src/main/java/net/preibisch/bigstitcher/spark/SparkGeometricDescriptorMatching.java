@@ -43,6 +43,7 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
+import net.preibisch.bigstitcher.spark.util.LoadCandidatesPairwise;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -79,12 +80,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
-	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP };
+	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP, LOAD_CANDIDATES  };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP or LOAD_CANDIDATES to import your own match candidates and only run RANSAC")
 	protected Method registrationMethod = null;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
@@ -151,7 +152,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "--icpUseRANSAC" }, description = "ICP uses RANSAC at every iteration to filter correspondences (default: false)")
 	protected boolean icpUseRANSAC = false;
-	
+
+	@Option(names = { "--candidatesPath" }, description = "only for LOAD_CANDIDATES: path/URI of the N5 store itself (e.g. /data/candidates.n5) holding match candidates for each view pair in the interestpoints.n5 correspondences layout (tpId_<tp>_viewSetupId_<s>/<label>/correspondences, v2.0.0; consensusSetId column ignored), e.g. written by pcmatch match_pipeline.py --out-candidates; only RANSAC is run on them")
+	protected String candidatesPath = null;
+
 	//@Option(names = { "-p", "--pairsPerSparkJob" }, description = "how many pairs of views are processed per spark job (default: 1)")
 	//protected Integer pairsPerSparkJob = 1;
 
@@ -174,15 +178,35 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			return null;
 		}
 
-		if ( ransacIterations == null && registrationMethod == Method.ICP )
+		if ( registrationMethod == Method.LOAD_CANDIDATES && ( redundancy != 1 || significance != 3.0 || searchRadius != null ) )
 		{
-			ransacIterations = 200;
-			ransacMaxError = 2.5;
+			System.out.println( "LOAD_CANDIDATES does not support parameters redundancy, significance and searchRadius (candidates are loaded, not computed; only RANSAC runs)." );
+			return null;
 		}
-		else if ( ransacIterations == null )
+
+		if ( registrationMethod == Method.LOAD_CANDIDATES && ( groupTiles || groupIllums || groupChannels || splitTimepoints ) )
 		{
-			ransacIterations = 10000;
-			ransacMaxError = 5.0;
+			System.out.println( "LOAD_CANDIDATES does not support grouped views (--groupTiles/--groupIllums/--groupChannels/--splitTimepoints)." );
+			return null;
+		}
+
+		if ( registrationMethod != Method.LOAD_CANDIDATES && this.candidatesPath != null )
+		{
+			System.out.println( "--candidatesPath is only used with -m LOAD_CANDIDATES." );
+			return null;
+		}
+
+		// defaults are independent: a user-specified -rme must survive an omitted -rit (and vice versa)
+		if ( ransacIterations == null )
+			ransacIterations = ( registrationMethod == Method.ICP ) ? 200 : 10000;
+
+		if ( ransacMaxError == null )
+			ransacMaxError = ( registrationMethod == Method.ICP ) ? 2.5 : 5.0;
+
+		if ( registrationMethod == Method.LOAD_CANDIDATES && this.candidatesPath == null )
+		{
+			System.out.println( "Please supply path to stored correspondence candidates when using LOAD_CANDIDATES." );
+			return null;
 		}
 
 		// identify groups/subsets
@@ -210,6 +234,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		//final InterestpointGroupingType groupingType = InterestpointGroupingType.DO_NOT_GROUP; -- this is always ADD_ALL - either group or not (was only necessary in the GUI, because one could group for interest points and/or global opt
 
 		System.out.println( "Pairwise model = " + createModelInstance(transformationModel, regularizationModel, regularizationLambda).getClass().getSimpleName() );
+
+		if ( registrationMethod == Method.LOAD_CANDIDATES )
+			System.out.println( "Loading match candidates from: " + candidatesPath );
 
 		// set up ViewIds, Labels and Weights
 		final HashMap< String, Double > map = new HashMap<>();
@@ -240,6 +267,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final int icpMaxIterations = this.icpIterations;
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
 		final Method registrationMethod = this.registrationMethod;
+		final String candidatesPath = this.candidatesPath;
 		final double ratioOfDistance = this.significance;
 		final boolean limitSearchRadius = ( this.searchRadius == null ) ? false : true;
 		final double searchRadius = ( this.searchRadius == null ) ? 0 : this.searchRadius;
@@ -339,7 +367,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						searchRadius,
 						icpMaxError,
 						icpMaxIterations,
-						icpUseRANSAC);
+						icpUseRANSAC, candidatesPath );
 
 				// compute single pairwise match
 				final PairwiseResult<InterestPoint> result =
@@ -467,7 +495,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						searchRadius,
 						icpMaxError,
 						icpMaxIterations,
-						icpUseRANSAC);
+						icpUseRANSAC, candidatesPath );
 
 				// compute single pairwise match
 				final PairwiseResult<GroupedInterestPoint<ViewId>> result =
@@ -597,7 +625,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final double searchRadius,
 			final double icpMaxDistance,
 			final int icpMaxIterations,
-			final boolean icpUseRANSAC )
+			final boolean icpUseRANSAC,
+			final String candidatesPath )
 	{
 		MatcherPairwise< I > matcher;
 
@@ -628,7 +657,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					redundancy);
 			matcher = new RGLDMPairwise<>( rp, dp );
 		}
-		else
+		else if ( registrationMethod == Method.ICP )
 		{
 			final IterativeClosestPointParameters ip = new IterativeClosestPointParameters(
 					model,
@@ -640,6 +669,14 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					rp.getNumIterations(),
 					rp.getMinNumMatches() );
 			matcher = new IterativeClosestPointPairwise<>( ip );
+		}
+		else if ( registrationMethod == Method.LOAD_CANDIDATES )
+		{
+			matcher = new LoadCandidatesPairwise<>( rp, model, candidatesPath );
+		}
+		else
+		{
+			throw new IllegalArgumentException( "Unknown matching method: " + registrationMethod );
 		}
 
 		return matcher;
