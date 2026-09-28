@@ -36,6 +36,7 @@ import java.util.concurrent.Future;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
@@ -48,6 +49,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondenceTools;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
@@ -136,6 +138,55 @@ public class ClearInterestPoints extends AbstractSelectableViews
 		{
 			return null;
 		}
+	}
+
+	/** Deletes points and correspondences of every label of a view (store entries are committed by the next XML save). @return number of lists */
+	private static int deleteLists( final ViewInterestPointLists lists, final String message )
+	{
+		if ( lists == null )
+			return 0;
+		if ( message != null )
+			System.out.println( message );
+		for ( final InterestPoints list : lists.getHashMap().values() )
+		{
+			list.deleteInterestPoints();
+			list.deleteCorrespondingInterestPoints();
+		}
+		return lists.getHashMap().size();
+	}
+
+	/**
+	 * Removes the legacy per-view groups ({@code tpId_X_viewSetupId_Y}) of {@code interestpoints.n5} whose view matches;
+	 * a no-op if there is no legacy container (never creates one). @return number of groups removed
+	 */
+	private static int removeLegacyViewGroups( final URI containerUri, final java.util.function.Predicate< ViewId > remove, final boolean silent )
+	{
+		final List< String > groups = new ArrayList<>();
+		try ( final N5Reader n5 = URITools.instantiateN5Reader( StorageFormat.N5, containerUri ) )
+		{
+			for ( final String name : n5.list( "" ) )
+			{
+				final ViewId vid = parseViewIdFromGroupName( name );
+				if ( vid != null && remove.test( vid ) )
+					groups.add( name );
+			}
+		}
+		catch ( final Exception e )
+		{
+			return 0; // no legacy container
+		}
+		if ( groups.isEmpty() )
+			return 0;
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
+		{
+			for ( final String name : groups )
+			{
+				if ( !silent )
+					System.out.println( "  removing legacy N5 group '" + name + "'" );
+				n5Writer.remove( name );
+			}
+		}
+		return groups.size();
 	}
 
 	/** Plain {@link ViewId} copies (drops ViewDescription subclasses) so set membership is purely id-based. */
@@ -404,35 +455,15 @@ public class ClearInterestPoints extends AbstractSelectableViews
 							numThreads );
 					System.out.println( "Filtered " + correspondencesDropped + " correspondence(s) referencing views no longer in the SpimData." );
 
-					// (b) Walk the interestpoints.n5 container and remove any per-view group whose
-					// decoded ViewId is not in the valid set. This catches BOTH orphan-IP-map views
-					// AND stale N5 directories left over after a view was edited out of the XML
-					// entirely (no IP map entry to drive the GUI-style per-instance delete path).
+					// (b) Remove the orphan entries: through the store (committed by the XML save below), which also drops
+					// any legacy per-view group. Then sweep legacy groups whose view has no XML entry at all.
 					int n5GroupsRemoved = 0;
-					try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
-					{
-						final String[] topLevel = n5Writer.list( "" );
-						if ( topLevel != null )
-						{
-							for ( final String name : topLevel )
-							{
-								final ViewId vid = parseViewIdFromGroupName( name );
-								if ( vid == null )
-									continue; // unrecognized name — leave untouched
-								if ( validViewIds.contains( vid ) )
-									continue; // valid view — keep its data
+					for ( final ViewId viewId : orphanViewIds )
+						n5GroupsRemoved += deleteLists( ips.get( viewId ), silent ? null : "  removing orphan " + Group.pvid( viewId ) );
+					n5GroupsRemoved += removeLegacyViewGroups( containerUri, vid -> !validViewIds.contains( vid ), silent );
+					System.out.println( "Removed " + n5GroupsRemoved + " stale entry/entries for views no longer in the SpimData." );
 
-								if ( !silent )
-									System.out.println( "  removing stale N5 group '" + name + "'" );
-								n5Writer.remove( name );
-								n5GroupsRemoved++;
-							}
-						}
-					}
-					System.out.println( "Removed " + n5GroupsRemoved + " stale N5 group(s) for views no longer in the SpimData." );
-
-					// (c) Drop orphan in-memory XML map entries. (b) already wiped any matching N5
-					// dirs, so no per-instance N5 delete is needed here.
+					// (c) Drop orphan in-memory XML map entries.
 					for ( final ViewId viewId : orphanViewIds )
 						ips.remove( viewId );
 
@@ -545,6 +576,14 @@ public class ClearInterestPoints extends AbstractSelectableViews
 						{
 							n5Writer.remove();
 						}
+
+						final URI storeUri = URITools.toURI( URITools.appendName( dataGlobal.getBasePathURI(), PackedInterestPointStore.ZARR_CONTAINER ) );
+						System.out.println( "Removing interest point store '" + storeUri + "' ... " );
+
+						try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.ZARR, storeUri ) )
+						{
+							n5Writer.remove();
+						}
 					}
 					else
 					{
@@ -552,33 +591,14 @@ public class ClearInterestPoints extends AbstractSelectableViews
 						final int correspondencesDropped = CorrespondenceTools.removeCorrespondencesToViews( vip, restriction, numThreads );
 						System.out.println( "Removed " + correspondencesDropped + " correspondence(s) in unselected views that pointed into the selection." );
 
-						// (b) Remove the per-view N5 groups (all labels at once) of the selected views. One
-						// listing instead of per-view exists() calls; also catches stale groups that have no
-						// XML entry. Skip entirely when no selected view has an entry, so we never create an
-						// empty container where none existed.
+						// (b) Remove every (view, label) entry of the selected views through the store (committed by the
+						// XML save below; also drops legacy per-view groups), then sweep legacy groups without an XML entry.
 						int n5GroupsRemoved = 0;
-						if ( ips.keySet().stream().anyMatch( restriction::contains ) )
-						{
-							try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
-							{
-								final String[] topLevel = n5Writer.list( "" );
-								if ( topLevel != null )
-								{
-									for ( final String name : topLevel )
-									{
-										final ViewId vid = parseViewIdFromGroupName( name );
-										if ( vid == null || !restriction.contains( vid ) )
-											continue;
-
-										if ( !silent )
-											System.out.println( "  removing N5 group '" + name + "'" );
-										n5Writer.remove( name );
-										n5GroupsRemoved++;
-									}
-								}
-							}
-						}
-						System.out.println( "Removed " + n5GroupsRemoved + " per-view N5 group(s)." );
+						for ( final Entry< ViewId, ViewInterestPointLists > ip : ips.entrySet() )
+							if ( restriction.contains( ip.getKey() ) )
+								n5GroupsRemoved += deleteLists( ip.getValue(), silent ? null : "  removing " + Group.pvid( ip.getKey() ) );
+						n5GroupsRemoved += removeLegacyViewGroups( containerUri, vid -> restriction.contains( vid ) && !ips.containsKey( vid ), silent );
+						System.out.println( "Removed " + n5GroupsRemoved + " (view, label) entry/entries." );
 
 						// (c) Drop the XML map entries of the selected views.
 						int entriesRemoved = 0;
