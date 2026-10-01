@@ -133,11 +133,11 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	protected Double ransacMaxError = null;
 
 	// TODOL ignored by ICP
-	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.1)")
-	protected Double ransacMinInlierRatio = 0.1;
+	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.05; if multi-consensus is chosen 0.0)")
+	protected Double ransacMinInlierRatio = null;
 
-	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "ransac minimal number of required inliers (default: 12)")
-	protected Integer ransacMinNumInliers = 12;
+	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "ransac minimal number of required inliers (default: 12; if multi-consensus is chosen 30)")
+	protected Integer ransacMinNumInliers = null;
 
 	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "ransac perform multiconsensus matching (default: false)")
 	protected boolean ransacMultiConsensus = false;
@@ -233,9 +233,15 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
-		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
-		final int ransacMinNumInliers = this.ransacMinNumInliers;
 		final boolean ransacMultiConsensus = this.ransacMultiConsensus;
+		// multi-consensus: sets are accepted by the min number of inliers alone; the inlier ratio would refer to the shrinking
+		// remainder of each pass, so it is ignored unless set by hand
+		final double ransacMinInlierRatio = ( this.ransacMinInlierRatio != null ) ? this.ransacMinInlierRatio : ( ransacMultiConsensus ? 0.0 : 0.05 );
+		final int ransacMinNumInliers = ( this.ransacMinNumInliers != null ) ? this.ransacMinNumInliers : ( ransacMultiConsensus ? 30 : 12 );
+		if ( ransacMultiConsensus && this.ransacMinInlierRatio == null )
+			System.out.println( "Multi-consensus RANSAC: min inlier ratio is ignored (0.0), sets are accepted by the min number of inliers (" + ransacMinNumInliers + ") alone." );
+		else if ( ransacMultiConsensus )
+			System.out.println( "Multi-consensus RANSAC with a user-set min inlier ratio of " + ransacMinInlierRatio + " (relative to the remaining candidates of each pass)." );
 		final double icpMaxError = this.icpMaxError;
 		final int icpMaxIterations = this.icpIterations;
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
