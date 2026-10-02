@@ -39,7 +39,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.PackedInterestPointStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
 import net.preibisch.mvrecon.tests.TestRegistration;
@@ -88,7 +88,7 @@ public class TestClearInterestPoints
 		assertTrue( corrsTo( before, V1, V0 ) > 0, "fixture: (0,1) -> (0,0) correspondences" );
 		assertTrue( corrsTo( before, V2, V0 ) > 0, "fixture: (0,2) -> (0,0) correspondences" );
 		assertTrue( corrsTo( before, V1, V2 ) > 0, "fixture: (0,1) -> (0,2) correspondences" );
-		assertTrue( Files.isDirectory( tempDir.resolve( PackedInterestPointStore.ZARR_CONTAINER ) ), "fixture: store exists" );
+		assertTrue( Files.isDirectory( tempDir.resolve( InterestPointsZarrStore.ZARR_CONTAINER ) ), "fixture: store exists" );
 	}
 
 	// ------------------------------------------------------------------ helpers
@@ -142,11 +142,10 @@ public class TestClearInterestPoints
 		return n;
 	}
 
-
-	/** does the packed store hold points for (view, label)? */
-	boolean stored( final ViewId v, final String label )
+	/** Returns whether the interest point store holds points for (view, label). */
+	boolean stored( final ViewId viewId, final String label )
 	{
-		return PackedInterestPointStore.get( tempDir.toUri() ).hasPoints( PackedInterestPointStore.Key.of( v, label ) );
+		return InterestPointsZarrStore.get( tempDir.toUri() ).hasPoints( InterestPointsZarrStore.Key.of( viewId, label ) );
 	}
 
 	// ------------------------------------------------------------------ tests
@@ -195,7 +194,7 @@ public class TestClearInterestPoints
 		assertFalse( hasEntry( after, V0 ), "(0,0) entry removed from XML map" );
 		assertTrue( hasEntry( after, V1 ) );
 		assertTrue( hasEntry( after, V2 ) );
-		assertTrue( Files.isDirectory( tempDir.resolve( PackedInterestPointStore.ZARR_CONTAINER ) ), "store itself kept" );
+		assertTrue( Files.isDirectory( tempDir.resolve( InterestPointsZarrStore.ZARR_CONTAINER ) ), "store itself kept" );
 		assertFalse( stored( V0, LABEL ), "stored data of (0,0) removed" );
 		assertTrue( stored( V1, LABEL ) );
 		assertTrue( stored( V2, LABEL ) );
@@ -232,7 +231,7 @@ public class TestClearInterestPoints
 
 		assertTrue( after.getViewInterestPoints().getViewInterestPoints().isEmpty(), "IP map empty" );
 		assertFalse( Files.exists( tempDir.resolve( "interestpoints.n5" ) ), "legacy container removed" );
-		assertFalse( Files.exists( tempDir.resolve( PackedInterestPointStore.ZARR_CONTAINER ) ), "store removed" );
+		assertFalse( Files.exists( tempDir.resolve( InterestPointsZarrStore.ZARR_CONTAINER ) ), "store removed" );
 	}
 
 	@Test

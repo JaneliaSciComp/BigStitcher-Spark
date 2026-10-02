@@ -86,6 +86,8 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
@@ -446,9 +448,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final String tempLocation = URITools.appendName( dataGlobal.getBasePathURI(), InterestPointsN5.baseN5 );
 		final URI tempURI = URITools.toURI( tempLocation );
 		final URI baseDirURI = dataGlobal.getBasePathURI();
-		// the combine tasks write one staging file per view (points, and the intensities as a point attribute) straight into
-		// the interest point store's staging area (JVM-independent); the driver's XML save commits them, nothing is loaded into driver memory
-		final boolean useBlobs = !dryRun;
+		// the combine tasks write each view's points to a staging file of the store; the driver's XML save commits them
+		final boolean writeToStore = !dryRun;
 		final String tempDataset = "spark_tmp_" + System.currentTimeMillis() + "_" + new Random( System.nanoTime() ).nextInt();
 
 		System.out.println( "Creating temporary N5 for dataset for spark jobs in '" + tempURI + ":/" + tempDataset + "'" );
@@ -851,8 +852,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
 				}
 
-				if ( useBlobs )
-					writeStagingBlobs( baseDirURI, viewId, label, myIpsNewId, storeIntensities ? myIntensities : null );
+				if ( writeToStore )
+				{
+					final List< Double > intensities = storeIntensities ? myIntensities : null;
+					writeStagingFile( baseDirURI, viewId, label, myIpsNewId, intensities );
+				}
+
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, myIpsNewId.size() );
@@ -861,8 +866,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			{
 				System.out.println( Group.pvid( viewId ) + ": no points found." );
 
-				if ( useBlobs )
-					writeStagingBlobs( baseDirURI, viewId, label, new ArrayList<>(), null );
+				if ( writeToStore )
+					writeStagingFile( baseDirURI, viewId, label, new ArrayList<>(), null );
+
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, 0 );
@@ -902,8 +908,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Computed all interest points, statistics:" );
 
-		for ( final Tuple2< ViewId, Integer > t : combined )
-			System.out.println( Group.pvid( t._1() ) + ": " + t._2() );
+		for ( final Tuple2< ViewId, Integer > viewAndCount : combined )
+			System.out.println( Group.pvid( viewAndCount._1() ) + ": " + viewAndCount._2() );
 
 		if ( !dryRun )
 		{
@@ -913,7 +919,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
-			// entries for ALL processed views (also those without points); the data is in the staging files, save() below commits them
+			// add entries for all processed views, including those without points; the XML save commits their staged data
 			InterestPointTools.addInterestPointEntries( dataGlobal, label, viewIdsGlobal, params );
 
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
@@ -927,15 +933,30 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	}
 
 	/**
-	 * one durable staging file (points, their intensities if not null, empty correspondences) per view; folded into the
-	 * store by the next XML save
+	 * Writes the points of one view (with their intensities if not null, and no correspondences) to a durable staging
+	 * file of the interest point store; the next XML save commits it.
 	 */
-	static void writeStagingBlobs( final URI baseDir, final ViewId viewId, final String label, final List< InterestPoint > ips, final List< Double > intensities )
+	static void writeStagingFile(
+			final URI baseDir,
+			final ViewId viewId,
+			final String label,
+			final List< InterestPoint > points,
+			final List< Double > intensities )
 	{
-		final InterestPointsN5 list = new InterestPointsN5( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label ) );
-		list.setInterestPoints( ips, intensities == null ? null : Map.of( InterestPointsN5.INTENSITY, intensities.stream().mapToDouble( Double::doubleValue ).toArray() ) );
-		list.setCorrespondingInterestPoints( new ArrayList<>() );
-		InterestPointsN5.saveStaged( List.of( list ) );
+		final int[] ids = new int[ points.size() ];
+		final double[][] locations = new double[ points.size() ][];
+		for ( int i = 0; i < ids.length; ++i )
+		{
+			ids[ i ] = points.get( i ).getId();
+			locations[ i ] = points.get( i ).getL();
+		}
+		final Map< String, double[] > attributes = intensities == null ? null
+				: Map.of( InterestPointsZarr.INTENSITY, intensities.stream().mapToDouble( Double::doubleValue ).toArray() );
+
+		final InterestPointsZarrStore.Key key = InterestPointsZarrStore.Key.of( viewId, label );
+		InterestPointsZarrStore.get( baseDir ).writeStagingFile(
+				Map.of( key, InterestPointsZarrStore.Points.of( ids, locations, attributes ) ),
+				Map.of( key, List.of() ) );
 	}
 
 	public static void filterPoints(

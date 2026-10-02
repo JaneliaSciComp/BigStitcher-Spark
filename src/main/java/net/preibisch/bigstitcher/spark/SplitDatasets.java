@@ -50,7 +50,7 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.splitting.SplitViewerImgLo
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -342,15 +342,15 @@ public class SplitDatasets extends AbstractBasic
 					intervals.add( Spark.deserializeInterval( si ) );
 
 				// Create saver that writes interest points on-the-fly.
-				// Executors run in separate JVMs and must not touch the shared index: all entries of this task go into
-				// ONE durable staging file, which the driver's XML save (commit) folds into the arrays.
+				// Executors must not commit to the shared store: each task writes one durable staging file,
+				// which the driver's XML save commits.
 				final SplittingTools.InterestPointSaver saver = vipl -> {
 					try
 					{
-						final ArrayList< InterestPoints > all = new ArrayList<>();
-						for ( final ViewInterestPointLists v : vipl.values() )
-							all.addAll( v.getHashMap().values() );
-						InterestPointsN5.saveStaged( all );
+						final ArrayList< InterestPoints > allLists = new ArrayList<>();
+						for ( final ViewInterestPointLists viewLists : vipl.values() )
+							allLists.addAll( viewLists.getHashMap().values() );
+						InterestPointsZarr.saveStaged( allLists );
 					}
 					catch ( final Exception e )
 					{
@@ -566,8 +566,7 @@ public class SplitDatasets extends AbstractBasic
 
 				try
 				{
-					// executors never commit: collect the corrected lists of all new setups of this task and write them as ONE
-					// durable staging file at the end; the driver's XML save folds it in
+					// collect the corrected lists of all new setups and write them as one staging file (executors never commit)
 					final ArrayList< InterestPoints > pending = new ArrayList<>();
 					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> pending.addAll( vipl.getHashMap().values() );
 
@@ -585,7 +584,7 @@ public class SplitDatasets extends AbstractBasic
 								corrSaver,
 								ipMapCache );
 					}
-					InterestPointsN5.saveStaged( pending );
+					InterestPointsZarr.saveStaged( pending );
 				}
 				catch ( final Exception e )
 				{

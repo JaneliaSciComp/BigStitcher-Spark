@@ -569,8 +569,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		{
 			System.out.println( "Saving corresponding interest points (in parallel) ...");
 
-			// saves every list whose correspondences were modified by addCorrespondences/clearCorrespondences above,
-			// then commits them to the packed interest point store in one go (legacy stores: one group per entry as before)
+			// saves and commits every list whose correspondences were modified above
 			XmlIoSpimData2.saveInterestPointsInParallel( dataGlobal );
 		}
 
