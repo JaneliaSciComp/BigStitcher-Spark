@@ -944,18 +944,18 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final List< Double > intensities )
 	{
 		final int[] ids = new int[ points.size() ];
-		final double[][] locations = new double[ points.size() ][];
+		final double[] loc = new double[ 3 * points.size() ];
 		for ( int i = 0; i < ids.length; ++i )
 		{
 			ids[ i ] = points.get( i ).getId();
-			locations[ i ] = points.get( i ).getL();
+			System.arraycopy( points.get( i ).getL(), 0, loc, 3 * i, 3 );
 		}
 		final Map< String, double[] > attributes = intensities == null ? null
 				: Map.of( InterestPointsZarr.INTENSITY, intensities.stream().mapToDouble( Double::doubleValue ).toArray() );
 
 		final InterestPointsZarrStore.Key key = InterestPointsZarrStore.Key.of( viewId, label );
 		InterestPointsZarrStore.get( baseDir ).writeStagingFile(
-				Map.of( key, InterestPointsZarrStore.Points.of( ids, locations, attributes ) ),
+				Map.of( key, new InterestPointsZarrStore.Points( ids, loc, attributes ) ),
 				Map.of( key, List.of() ) );
 	}
 
