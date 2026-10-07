@@ -62,13 +62,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMPairwise;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.DescriptorSearch;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters;
 import picocli.CommandLine;
@@ -79,12 +78,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
-	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP };
+	public enum Method { FAST_ROTATION, PRECISE_TRANSLATION, ICP };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION or ICP")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, PRECISE_TRANSLATION or ICP")
 	protected Method registrationMethod = null;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
@@ -92,6 +91,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "-sr", "--searchRadius" }, description = "Only for PRECISE_TRANSLATION; limits the search range for corresponding points in global coordinate space (default: no limit)")
 	protected Double searchRadius = null;
+
+	@Option(names = { "--descriptorSearch" }, description = "Only for PRECISE_TRANSLATION; how descriptors are compared: AUTO (chooses per view pair), FLAT_KDTREE, BLOCKED_BRUTE_FORCE or LEGACY (the original loop) (default: AUTO)")
+	protected DescriptorSearch descriptorSearch = DescriptorSearch.AUTO;
 
 	@Option(names = { "-r", "--redundancy" }, description = "the redundancy of the local descriptor (default: 1)")
 	protected Integer redundancy = 1;
@@ -246,6 +248,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final int icpMaxIterations = this.icpIterations;
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
 		final Method registrationMethod = this.registrationMethod;
+		final DescriptorSearch descriptorSearch = this.descriptorSearch;
 		final double ratioOfDistance = this.significance;
 		final boolean limitSearchRadius = ( this.searchRadius == null ) ? false : true;
 		final double searchRadius = ( this.searchRadius == null ) ? 0 : this.searchRadius;
@@ -343,6 +346,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						ratioOfDistance,
 						limitSearchRadius,
 						searchRadius,
+						descriptorSearch,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC);
@@ -471,6 +475,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						ratioOfDistance,
 						limitSearchRadius,
 						searchRadius,
+						descriptorSearch,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC);
@@ -601,6 +606,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final double ratioOfDistance,
 			final boolean limitSearchRadius,
 			final double searchRadius,
+			final DescriptorSearch descriptorSearch,
 			final double icpMaxDistance,
 			final int icpMaxIterations,
 			final boolean icpUseRANSAC )
@@ -617,11 +623,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 			matcher = new GeometricHashingPairwise<>( rp, gp );
 		}
-		else if ( registrationMethod == Method.FAST_TRANSLATION )
-		{
-			final FRGLDMParameters fp = new FRGLDMParameters(model, (float)ratioOfDistance, redundancy);
-			matcher = new FRGLDMPairwise<>( rp, fp );
-		}
 		else if ( registrationMethod == Method.PRECISE_TRANSLATION )
 		{
 			final RGLDMParameters dp = new RGLDMParameters(
@@ -631,7 +632,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					limitSearchRadius,
 					searchRadius,
 					numNeighbors,
-					redundancy);
+					redundancy,
+					descriptorSearch );
 			matcher = new RGLDMPairwise<>( rp, dp );
 		}
 		else
