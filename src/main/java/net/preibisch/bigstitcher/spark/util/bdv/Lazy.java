@@ -14,10 +14,12 @@ import net.imglib2.util.Intervals;
 
 /**
  * Minimal port of hot-knife's {@code org.janelia.saalfeldlab.hotknife.util.Lazy}:
- * just the {@code process(Consumer)}-based factory used by
- * {@link OverlayLandmarks#createMipmapSource}. The full hot-knife
- * implementation also exposes ImageJ-Ops-based overloads which require
- * dependencies BSS doesn't carry; those are omitted here.
+ * just the {@code process(Consumer)}-based factory, used by
+ * {@link net.preibisch.bigstitcher.spark.OverlayLandmarks} (to build mipmap
+ * sources on demand) and by
+ * {@link net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract}.
+ * The full hot-knife implementation also exposes ImageJ-Ops-based overloads
+ * which require dependencies BSS doesn't carry; those are omitted here.
  */
 public class Lazy
 {
@@ -28,6 +30,16 @@ public class Lazy
 	 * is populated on demand by {@code op}. The operator receives, per
 	 * requested cell, a {@code RandomAccessibleInterval} writable view at the
 	 * cell's interval and must fill it.
+	 *
+	 * @param <O> the pixel type of the resulting image
+	 * @param targetInterval defines the dimensions of the resulting image (its
+	 *            min is ignored; the image is zero-based)
+	 * @param blockSize the cell dimensions of the cached image
+	 * @param type an instance of the pixel type
+	 * @param accessFlags the {@link AccessFlags} for the cell storage, e.g.
+	 *            {@link AccessFlags#VOLATILE} for use in BigDataViewer
+	 * @param op fills a requested cell; called lazily, once per cell
+	 * @return the lazily populated, cached image
 	 */
 	public static < O extends NativeType< O > > CachedCellImg< O, ? > process(
 			final RandomAccessibleInterval< O > targetInterval,
