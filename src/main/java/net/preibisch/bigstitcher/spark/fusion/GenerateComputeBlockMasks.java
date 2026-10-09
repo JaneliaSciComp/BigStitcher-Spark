@@ -109,9 +109,8 @@ public class GenerateComputeBlockMasks
 	 * @param gridBlock block descriptor: {@code gridBlock[0]} is the block offset relative to
 	 *            {@code minBB}, {@code gridBlock[1]} the block size (both in output pixels)
 	 * @return the mask as {@link UnsignedByteType} (0/255) if {@code uint8}, as {@link UnsignedShortType}
-	 *         (0/65535) if {@code uint16}, otherwise as {@link FloatType} (0/1); for the two integer
-	 *         variants the image spans the whole bounding box {@code [minBB, maxBB]} (zero outside the
-	 *         block), the float variant is the zero-min block itself
+	 *         (0/65535) if {@code uint16}, otherwise as {@link FloatType} (0/1); in all cases the image
+	 *         spans the whole bounding box {@code [minBB, maxBB]} and is zero outside the rendered block
 	 */
 	public RandomAccessibleInterval call( final long[][] gridBlock )
 	{
@@ -200,7 +199,7 @@ A:			while ( c.hasNext() )
 		else
 		{
 			return Converters.convertRAI(
-					img,
+					fullImg,
 					(i, o) -> o.set( i.get() > 0 ? 1.0f : 0.0f ),
 					new FloatType());
 
