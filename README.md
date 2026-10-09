@@ -182,14 +182,12 @@ A typical, simple command line call to register each timepoint alignment individ
 
 Please run `match-interestpoints` without parameters to get help for all command line arguments. `-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
 
-`-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
+`-m` defines the matching method; `FAST_ROTATION`, `PRECISE_TRANSLATION` or `ICP`.
 * `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other.
   * `-s` defines the significance during descriptor matching, to establish a correspondence the best matching descriptor has to be `s` times better than the second best matching descriptor.
   * `-r` is the level of redundancy during descriptor matching, it adds extra neighbors to each descriptor and tests all combinations of neighboring points. 
-* `FAST_TRANSLATION` is a translation invariant method that uses geometric hashing and can find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
-  * supports the same parameters `-r`, `-s` as FAST_ROTATION above
 * `PRECISE_TRANSLATION` is a translation invariant method that uses exhaustive search to find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
-  * supports the same parameters `-r`, `-s` as FAST_ROTATION above, and additionally support `-n` to specify the number of neighboring points that are used to build geometric descriptors
+  * supports the same parameters `-r`, `-s` as FAST_ROTATION above, and additionally support `-n` to specify the number of neighboring points that are used to build geometric descriptors, `-sr` to limit the search to a radius around each point, and `--descriptorSearch` to pick the descriptor comparison (`AUTO` chooses per view pair between a flat KD-tree and a blocked brute force sweep; `LEGACY` is the original exhaustive loop)
 * `ICP` is a method that iteratively assignes closest pairs of points between two images until convergence and can be used for fine alignment.
   * `-ime` is the ICP maximum allowed error, `-iit` defines the number of ICP iterations and `--icpUseRANSAC` enables RANSAC at every ICP iteration
 

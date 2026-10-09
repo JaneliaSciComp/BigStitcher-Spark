@@ -63,13 +63,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMPairwise;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.fastrgldm.FRGLDMParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.ransac.RANSACParameters;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.DescriptorSearch;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters;
 import picocli.CommandLine;
@@ -80,12 +79,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
-	public enum Method { FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP, LOAD_CANDIDATES  };
+	public enum Method { FAST_ROTATION, PRECISE_TRANSLATION, ICP, LOAD_CANDIDATES };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, FAST_TRANSLATION, PRECISE_TRANSLATION, ICP or LOAD_CANDIDATES to import your own match candidates and only run RANSAC")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, PRECISE_TRANSLATION, ICP or LOAD_CANDIDATES to import your own match candidates and only run RANSAC")
 	protected Method registrationMethod = null;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
@@ -93,6 +92,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 	@Option(names = { "-sr", "--searchRadius" }, description = "Only for PRECISE_TRANSLATION; limits the search range for corresponding points in global coordinate space (default: no limit)")
 	protected Double searchRadius = null;
+
+	@Option(names = { "--descriptorSearch" }, description = "Only for PRECISE_TRANSLATION; how descriptors are compared: AUTO (chooses per view pair), FLAT_KDTREE, BLOCKED_BRUTE_FORCE or LEGACY (the original loop) (default: AUTO)")
+	protected DescriptorSearch descriptorSearch = DescriptorSearch.AUTO;
 
 	@Option(names = { "-r", "--redundancy" }, description = "the redundancy of the local descriptor (default: 1)")
 	protected Integer redundancy = 1;
@@ -134,11 +136,11 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	protected Double ransacMaxError = null;
 
 	// TODOL ignored by ICP
-	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.1)")
-	protected Double ransacMinInlierRatio = 0.1;
+	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "ransac min inlier ratio (default: 0.05; if multi-consensus is chosen 0.0)")
+	protected Double ransacMinInlierRatio = null;
 
-	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "ransac minimal number of required inliers (default: 12)")
-	protected Integer ransacMinNumInliers = 12;
+	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "ransac minimal number of required inliers (default: 12; if multi-consensus is chosen 30)")
+	protected Integer ransacMinNumInliers = null;
 
 	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "ransac perform multiconsensus matching (default: false)")
 	protected boolean ransacMultiConsensus = false;
@@ -260,14 +262,21 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final InterestPointOverlapType interestpointsForReg = this.interestpointsForReg;
 		final int ransacIterations = this.ransacIterations;
 		final double ransacMaxEpsilon = this.ransacMaxError;
-		final double ransacMinInlierRatio = this.ransacMinInlierRatio;
-		final int ransacMinNumInliers = this.ransacMinNumInliers;
 		final boolean ransacMultiConsensus = this.ransacMultiConsensus;
+		// multi-consensus: sets are accepted by the min number of inliers alone; the inlier ratio would refer to the shrinking
+		// remainder of each pass, so it is ignored unless set by hand
+		final double ransacMinInlierRatio = ( this.ransacMinInlierRatio != null ) ? this.ransacMinInlierRatio : ( ransacMultiConsensus ? 0.0 : 0.05 );
+		final int ransacMinNumInliers = ( this.ransacMinNumInliers != null ) ? this.ransacMinNumInliers : ( ransacMultiConsensus ? 30 : 12 );
+		if ( ransacMultiConsensus && this.ransacMinInlierRatio == null )
+			System.out.println( "Multi-consensus RANSAC: min inlier ratio is ignored (0.0), sets are accepted by the min number of inliers (" + ransacMinNumInliers + ") alone." );
+		else if ( ransacMultiConsensus )
+			System.out.println( "Multi-consensus RANSAC with a user-set min inlier ratio of " + ransacMinInlierRatio + " (relative to the remaining candidates of each pass)." );
 		final double icpMaxError = this.icpMaxError;
 		final int icpMaxIterations = this.icpIterations;
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
 		final Method registrationMethod = this.registrationMethod;
 		final String candidatesPath = this.candidatesPath;
+		final DescriptorSearch descriptorSearch = this.descriptorSearch;
 		final double ratioOfDistance = this.significance;
 		final boolean limitSearchRadius = ( this.searchRadius == null ) ? false : true;
 		final double searchRadius = ( this.searchRadius == null ) ? 0 : this.searchRadius;
@@ -365,6 +374,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						ratioOfDistance,
 						limitSearchRadius,
 						searchRadius,
+						descriptorSearch,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC, candidatesPath );
@@ -493,6 +503,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						ratioOfDistance,
 						limitSearchRadius,
 						searchRadius,
+						descriptorSearch,
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC, candidatesPath );
@@ -623,6 +634,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final double ratioOfDistance,
 			final boolean limitSearchRadius,
 			final double searchRadius,
+			final DescriptorSearch descriptorSearch,
 			final double icpMaxDistance,
 			final int icpMaxIterations,
 			final boolean icpUseRANSAC,
@@ -640,11 +652,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 			matcher = new GeometricHashingPairwise<>( rp, gp );
 		}
-		else if ( registrationMethod == Method.FAST_TRANSLATION )
-		{
-			final FRGLDMParameters fp = new FRGLDMParameters(model, (float)ratioOfDistance, redundancy);
-			matcher = new FRGLDMPairwise<>( rp, fp );
-		}
 		else if ( registrationMethod == Method.PRECISE_TRANSLATION )
 		{
 			final RGLDMParameters dp = new RGLDMParameters(
@@ -654,7 +661,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					limitSearchRadius,
 					searchRadius,
 					numNeighbors,
-					redundancy);
+					redundancy,
+					descriptorSearch );
 			matcher = new RGLDMPairwise<>( rp, dp );
 		}
 		else if ( registrationMethod == Method.ICP )
