@@ -127,8 +127,6 @@
 
 		<mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
 
-		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
-		<ome-codecs.version>0.3.0</ome-codecs.version>
     </properties>
 
     <repositories>
@@ -440,14 +438,17 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- old bioformats -->
+        <!-- Bio-Formats at the pom-scijava managed version (8.4.0 with pom-scijava 44), the same version
+             multiview-reconstruction is built against. It is excluded from mvr/BigStitcher above and re-declared
+             here only to exclude com.esotericsoftware:kryo (5.x, used by the Memoizer), which clashes with Spark's kryo-shaded 4.x.
+             Do not pin a version here: maven.scijava.org has no checksums for the old 6.x artifacts and the
+             repository is configured with checksumPolicy=fail. -->
         <dependency>
             <groupId>org.openmicroscopy</groupId>
             <artifactId>ome-common</artifactId>
-            <version>6.0.4</version>
             <exclusions>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -455,10 +456,9 @@
         <dependency>
             <groupId>ome</groupId>
             <artifactId>formats-bsd</artifactId>
-            <version>6.5.1</version>
             <exclusions>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -466,14 +466,13 @@
         <dependency>
             <groupId>ome</groupId>
             <artifactId>formats-gpl</artifactId>
-            <version>6.5.1</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.systems.cisd</groupId>
                     <artifactId>jhdf5</artifactId>
                 </exclusion>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
