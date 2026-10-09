@@ -112,7 +112,7 @@
 		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
 		<multiview-reconstruction.version>9.1.0</multiview-reconstruction.version>
-		<BigStitcher.version>3.0.0</BigStitcher.version>
+		<BigStitcher.version>3.1.0</BigStitcher.version>
 
 		<!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
 		<n5.version>4.0.1</n5.version>
