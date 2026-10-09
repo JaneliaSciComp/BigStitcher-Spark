@@ -45,15 +45,16 @@ import net.preibisch.legacy.io.IOFunctions;
 import util.Lazy;
 
 /**
- * Lazy, cell-wise background correction used before interest point detection: for each requested
+ * Lazy, cell-wise background normalization used before interest point detection: for each requested
  * output cell every XY slice of the source is median-filtered (ImageJ {@code RankFilters}, radius
- * {@code radiusXY}) and each output pixel is set to {@code value / median}, or to 0 where the median is
- * not positive. Instances serve as the cell loader of the cached image created by {@link #init}.
+ * {@code radiusXY}) and each output pixel is set to {@code value / median}, i.e. the image is divided by
+ * its local background, or set to 0 where the median is not positive. Instances serve as the cell
+ * loader of the cached image created by {@link #init}.
  * 2D sources are treated as 3D with a single slice; more than 3 dimensions are not supported.
  *
  * @param <T> the pixel type of the source image
  */
-public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> implements Consumer<RandomAccessibleInterval<FloatType>>
+public class LazyBackgroundNormalize<T extends RealType<T> & NativeType<T>> implements Consumer<RandomAccessibleInterval<FloatType>>
 {
 	final private int radiusXY;
 	final long[] globalMin;
@@ -70,7 +71,7 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 	 *            {@code radiusXY} in X and Y
 	 * @param radiusXY the radius of the median filter in XY (pixels)
 	 */
-	public LazyBackgroundSubtract(
+	public LazyBackgroundNormalize(
 			final long[] min,
 			RandomAccessible<T> source,
 			final int radiusXY )
@@ -137,7 +138,7 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 			//ImageJFunctions.show( imgMedian );
 			//ImageJFunctions.show( img );
 
-			// subtract only the center
+			// divide only the center (the output cell) by its median; the margin was just filter support
 			final Cursor< FloatType > out = Views.flatIterable( Views.hyperSlice( output, 2, z ) ).cursor();
 			final Cursor< FloatType > median = Views.flatIterable( imgMedianCrop ).cursor();
 			final Cursor< FloatType > image = Views.flatIterable( imgCrop ).cursor();
@@ -162,7 +163,7 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 	 * Creates a lazily evaluated, cached {@link FloatType} image of {@code processingInterval} in which
 	 * each pixel of {@code input} is divided by the median of its XY neighborhood of radius
 	 * {@code radiusXY}. Cells of {@code blockSize} are computed on demand by a
-	 * {@link LazyBackgroundSubtract}.
+	 * {@link LazyBackgroundNormalize}.
 	 *
 	 * @param <T> the pixel type of the input
 	 * @param input the input image; must be defined on {@code processingInterval} expanded by
@@ -180,8 +181,8 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 	{
 		final long[] min = processingInterval.minAsLongArray();
 
-		final LazyBackgroundSubtract<T> lazyBG =
-				new LazyBackgroundSubtract<>(
+		final LazyBackgroundNormalize<T> lazyBG =
+				new LazyBackgroundNormalize<>(
 						min,
 						input,
 						radiusXY );
@@ -213,7 +214,7 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 
 		ImageJFunctions.show( inputCropped );
 
-		RandomAccessibleInterval<FloatType> bgCorrected = LazyBackgroundSubtract.init(
+		RandomAccessibleInterval<FloatType> bgCorrected = LazyBackgroundNormalize.init(
 				inputCropped,
 				new FinalInterval(inputCropped),
 				10,

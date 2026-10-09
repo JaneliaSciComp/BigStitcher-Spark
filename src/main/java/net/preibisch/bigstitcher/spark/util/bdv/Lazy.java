@@ -17,7 +17,7 @@ import net.imglib2.util.Intervals;
  * just the {@code process(Consumer)}-based factory, used by
  * {@link net.preibisch.bigstitcher.spark.OverlayLandmarks} (to build mipmap
  * sources on demand) and by
- * {@link net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract}.
+ * {@link net.preibisch.bigstitcher.spark.detection.LazyBackgroundNormalize}.
  * The full hot-knife implementation also exposes ImageJ-Ops-based overloads
  * which require dependencies BSS doesn't carry; those are omitted here.
  */

@@ -77,7 +77,7 @@ import net.imglib2.util.Util;
 import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
-import net.preibisch.bigstitcher.spark.detection.LazyBackgroundSubtract;
+import net.preibisch.bigstitcher.spark.detection.LazyBackgroundNormalize;
 import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
@@ -572,7 +572,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( medianFilter != null && medianFilter > 0 )
 			{
-				inputImage = LazyBackgroundSubtract.init(
+				inputImage = LazyBackgroundNormalize.init(
 						(RandomAccessible)Views.extendMirrorDouble( input.getA() ),
 						new FinalInterval(input.getA()),
 						medianFilter,

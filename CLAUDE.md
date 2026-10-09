@@ -42,7 +42,7 @@ src/main/java/net/preibisch/bigstitcher/spark/
 │   └── AbstractSelectableViews.java      # View-selection args
 ├── cloud/                                # Cloud test/loader
 ├── detection/
-│   └── LazyBackgroundSubtract.java
+│   └── LazyBackgroundNormalize.java
 ├── fusion/
 │   ├── GenerateComputeBlockMasks.java
 │   ├── OverlappingBlocks.java
