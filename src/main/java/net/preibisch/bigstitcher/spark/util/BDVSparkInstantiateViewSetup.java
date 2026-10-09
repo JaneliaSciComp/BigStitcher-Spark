@@ -38,10 +38,10 @@ import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 /**
  * {@link InstantiateViewSetup} used when a fused volume is added to a BDV-compatible dataset and its
  * {@link ViewSetup} does not exist yet. Attributes start from the highest existing angle, illumination,
- * channel and tile id (or 0 if there are no setups). The angle, illumination and tile id are incremented
- * if the corresponding view-selection option ({@code --angleId}, {@code --illuminationId},
- * {@code --tileId}) was given; the channel id is incremented if tiles were selected, or if no selection
- * was given at all and the time point already exists. The voxel size is set to 1x1x1 {@code px}.
+ * channel and tile id (or 0 if there are no setups). Each id is incremented if the corresponding
+ * view-selection option ({@code --angleId}, {@code --illuminationId}, {@code --channelId},
+ * {@code --tileId}) was given; the channel id is also incremented if no selection was given at all and
+ * the time point already exists. The voxel size is set to 1x1x1 {@code px}.
  */
 public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 {
@@ -57,9 +57,8 @@ public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 	 * @param angleIds the {@code --angleId} selection, or {@code null}; non-null yields a new angle id
 	 * @param illuminationIds the {@code --illuminationId} selection, or {@code null}; non-null yields a
 	 *        new illumination id
-	 * @param channelIds the {@code --channelId} selection, or {@code null} (currently not evaluated)
-	 * @param tileIds the {@code --tileId} selection, or {@code null}; non-null yields a new tile id and a
-	 *        new channel id
+	 * @param channelIds the {@code --channelId} selection, or {@code null}; non-null yields a new channel id
+	 * @param tileIds the {@code --tileId} selection, or {@code null}; non-null yields a new tile id
 	 */
 	public BDVSparkInstantiateViewSetup(
 			final String angleIds,
@@ -122,7 +121,7 @@ public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 			i0 = new Illumination( i0.getId() + 1 );
 		if ( tileIds != null )
 			t0 = new Tile( t0.getId() + 1 );
-		if ( tileIds != null || ( angleIds == null && illuminationIds == null && tileIds == null && tpExists ) ) // nothing was defined, then increase channel
+		if ( channelIds != null || ( angleIds == null && illuminationIds == null && tileIds == null && tpExists ) ) // nothing was defined, then increase channel
 			c0 = new Channel( c0.getId() + 1 );
 
 		final VoxelDimensions vd0 = new FinalVoxelDimensions( "px", 1, 1, 1 );
