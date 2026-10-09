@@ -138,11 +138,13 @@
         </repository>
         -->
 
+		<!-- Default (warn) checksum policy on purpose: maven.scijava.org serves a few old artifacts
+		     without .sha1/.md5 files (e.g. ome:jxrlib-all:0.2.4, Bio-Formats' JPEG-XR codec), which a
+		     "fail" policy rejects and which breaks CI on a cold Maven cache. The ome repository below
+		     stays as a fallback for maven.scijava.org outages. -->
 		<repository>
-		<id>scijava.public</id>
+			<id>scijava.public</id>
 			<url>https://maven.scijava.org/content/groups/public</url>
-			<releases><checksumPolicy>fail</checksumPolicy></releases>
-			<snapshots><checksumPolicy>fail</checksumPolicy></snapshots>
 		</repository>
 		<repository>
 			<id>ome</id>
@@ -153,16 +155,6 @@
             <id>jitpack.io</id>
             <url>https://jitpack.io</url>
         </repository>
-
-		<!-- Same URL as scijava.public above, but with Maven's default (warn) checksum policy, and listed
-		     LAST so the strict definition and the ome fallback are always tried first. maven.scijava.org serves
-		     a few old artifacts without .sha1/.md5 files (e.g. ome:jxrlib-all:0.2.4, Bio-Formats' JPEG-XR codec),
-		     which the strict definition rejects ("Checksum validation failed, no checksums available") and which
-		     the GitHub runners could not obtain from the ome repository either, breaking CI on a cold cache. -->
-		<repository>
-			<id>scijava.public.lenient</id>
-			<url>https://maven.scijava.org/content/groups/public</url>
-		</repository>
     </repositories>
 
     <dependencies>
