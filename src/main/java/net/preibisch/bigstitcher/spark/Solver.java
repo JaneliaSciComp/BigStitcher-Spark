@@ -49,7 +49,6 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.RegularizationModel;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -192,7 +191,7 @@ public class Solver extends AbstractRegistration
 		this.setRegion();
 		initRegistrationParameters();
 
-		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
+		if ( !this.setupParameters( dataGlobal ) )
 			return null;
 
 		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal;
@@ -486,13 +485,14 @@ public class Solver extends AbstractRegistration
 
 	/**
 	 * Builds the point-match creator for a solve from the pairwise stitching results stored in the dataset.
-	 * If {@code vsComparisonPairs} is given, only results whose two view setup IDs form an allowed pair are
-	 * kept. Results whose stored hash does not match the current {@link ViewRegistration}s of the two views
-	 * (i.e. the views were transformed after stitching) are dropped with an explanatory message.
+	 * Only results between selected views are used, i.e. all views of both groups of a result must be in
+	 * {@code viewIdsGlobal}. If {@code vsComparisonPairs} is given, only results whose two view setup IDs
+	 * form an allowed pair are kept. Results whose stored hash does not match the current
+	 * {@link ViewRegistration}s of the two views (i.e. the views were transformed after stitching) are
+	 * dropped with an explanatory message.
 	 *
 	 * @param dataGlobal the dataset holding the stitching results and view registrations
-	 * @param viewIdsGlobal the views being solved; currently not used, all stored pairwise results are
-	 *             considered
+	 * @param viewIdsGlobal the views being solved; results involving any other view are ignored
 	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
 	 *             allow all pairs
 	 * @return a creator over the remaining stitching results, or {@code null} if no link remains
@@ -503,6 +503,15 @@ public class Solver extends AbstractRegistration
 			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
+
+		// only process links between selected views (as the GUI does), i.e. drop every result in which
+		// one of the two groups contains a view that is not part of this solve
+		final HashSet< ViewId > selectedViews = new HashSet<>( viewIdsGlobal );
+		final int numAll = results.size();
+		results = results.stream().filter( psr ->
+				selectedViews.containsAll( psr.pair().getA().getViews() ) && selectedViews.containsAll( psr.pair().getB().getViews() ) )
+			.collect( Collectors.toList() );
+		System.out.println( "Selected views filter: kept " + results.size() + " of " + numAll + " stitching pairs." );
 
 		if ( vsComparisonPairs != null )
 		{
@@ -812,13 +821,12 @@ public class Solver extends AbstractRegistration
 	 * dropped with a warning.
 	 *
 	 * @param dataGlobal the dataset against which the given view IDs are validated
-	 * @param viewIdsGlobal the selected views; currently not used
 	 * @return always {@code true}
 	 * @throws IllegalArgumentException if {@code --enableMapbackViews} is used without
 	 *             {@code --disableFixedViews} or together with {@code -rtp TO_REFERENCE_TIMEPOINT}, or if
 	 *             none of the given fixed or mapback views exists in the dataset
 	 */
-	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
+	public boolean setupParameters( final SpimData2 dataGlobal )
 	{
 		if ( !disableFixedViews && enableMapbackViews )
 			throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
