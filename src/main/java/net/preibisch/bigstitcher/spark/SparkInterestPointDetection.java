@@ -105,14 +105,36 @@ import scala.Tuple4;
 import util.Grid;
 import util.URITools;
 
+/**
+ * Spark command-line tool for distributed Difference-of-Gaussian (DoG) interest point detection.
+ * Each selected view is virtually downsampled ({@code --downsampleXY}, {@code --downsampleZ}),
+ * optionally restricted to the regions that overlap other views ({@code --overlappingOnly}), cut into
+ * blocks of {@code --blockSize} and every block is processed as one Spark task. Per-block detections
+ * are written to a temporary N5 inside {@code interestpoints.n5}, merged per view (dropping points
+ * closer than {@link #combineDistance} to an already collected one), optionally limited to the
+ * brightest {@code --maxSpots}, and finally stored under {@code --label} in the XML and
+ * {@code interestpoints.n5} unless this is a dry run.
+ */
 public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -7654397945854689628L;
 
+	/**
+	 * Distance (in full-resolution pixel coordinates of the view) below which an interest point found in
+	 * one processed region is treated as a duplicate of a point already collected for the same view and
+	 * is dropped when the per-region results of {@code --overlappingOnly} are merged.
+	 */
 	public static double combineDistance = 0.5; // when to merge interestpoints that were found in overlapping ROIS (overlappingOnly)
 
+	/** Which Difference-of-Gaussian extrema to detect. */
 	public enum IP { MIN, MAX, BOTH };
-	public enum Localization { NONE, QUADRATIC };
+	/** Sub-pixel localization of the detected peaks. */
+	public enum Localization {
+		/** No refinement; integer peak positions. */
+		NONE,
+		/** Refine each peak to sub-pixel precision by a quadratic fit around the detected extremum. */
+		QUADRATIC
+	};
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label for the interest points (e.g. beads)")
 	protected String label = null;
@@ -1031,6 +1053,17 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		}
 	}
 
+	/**
+	 * Keeps only the {@code maxSpots} brightest interest points. Both lists are modified in place: the
+	 * points are sorted by descending intensity, truncated to {@code maxSpots} entries and the kept
+	 * points receive new consecutive ids starting at 0. {@code maxSpots} must not exceed the number of
+	 * points.
+	 *
+	 * @param myIps the interest points, in the same order as {@code myIntensities}; replaced by the
+	 *            filtered points
+	 * @param myIntensities the intensity of each interest point; replaced by the filtered intensities
+	 * @param maxSpots the number of points to keep
+	 */
 	public static void filterPoints(
 			final List< InterestPoint > myIps,
 			final List< Double > myIntensities,
@@ -1056,6 +1089,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	}
 
 	// TODO: this has been pushed up to the multiview-reconstruction code, use new version
+	/**
+	 * Opens a view and downsamples it by the given factors, reading the closest suitable pre-computed
+	 * level if the loader is a {@link MultiResolutionImgLoader} and downsampling the remainder 2x per
+	 * step and dimension.
+	 *
+	 * @param imgLoader the image loader of the dataset
+	 * @param vd the view to open
+	 * @param downsampleFactors the downsampling per dimension ({@code x, y[, z]}, z defaults to 1),
+	 *            expected to be powers of two
+	 * @param virtualDownsampling if {@code true} the remaining downsampling is done lazily and
+	 *            block-wise ({@code LazyDownsample2x}), otherwise eagerly ({@code Downsample.simple2x})
+	 * @return the downsampled image and the transformation that maps its pixel coordinates to the
+	 *         full-resolution pixel coordinates of the view
+	 */
 	public static Pair<RandomAccessibleInterval, AffineTransform3D> openAndDownsample(
 			final BasicImgLoader imgLoader,
 			final ViewId vd,

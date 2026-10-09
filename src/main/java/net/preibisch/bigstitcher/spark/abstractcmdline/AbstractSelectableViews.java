@@ -31,6 +31,12 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import picocli.CommandLine.Option;
 
+/**
+ * Base class of the command-line tools that work on a subset of the views of a BigStitcher project. It adds
+ * the view-selection options, either explicit view ids ({@code -vi}) or attribute filters ({@code --angleId},
+ * {@code --tileId}, {@code --illuminationId}, {@code --channelId}, {@code --timepointId}), and resolves
+ * them against the loaded dataset.
+ */
 public abstract class AbstractSelectableViews extends AbstractBasic implements Callable<Void>, Serializable //implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 6343769494141756973L;
@@ -57,12 +63,23 @@ public abstract class AbstractSelectableViews extends AbstractBasic implements C
 	 * True when the user passed any view-selection flag (-vi, --angleId, --tileId, --illuminationId,
 	 * --channelId, --timepointId). Intended for messaging only: whether a selection actually restricts
 	 * anything is a set comparison against the dataset's views, not a question of which flags were typed.
+	 *
+	 * @return {@code true} if at least one view-selection option was specified
 	 */
 	protected boolean hasViewSelection()
 	{
 		return vi != null || angleIds != null || tileIds != null || illuminationIds != null || channelIds != null || timepointIds != null;
 	}
 
+	/**
+	 * Resolves the view-selection options of this command against the given dataset; see
+	 * {@link #loadViewIds(SpimData2, String[], String, String, String, String, String)}.
+	 *
+	 * @param dataGlobal the loaded dataset whose present views are selected from
+	 * @return the sorted list of selected view ids, never empty
+	 * @throws IllegalArgumentException if {@code -vi} is combined with attribute filters, or if no view
+	 *         matches the selection
+	 */
 	public ArrayList< ViewId > loadViewIds( final SpimData2 dataGlobal ) throws IllegalArgumentException
 	{
 		return loadViewIds(dataGlobal, vi, angleIds, channelIds, illuminationIds, tileIds, timepointIds);
@@ -89,6 +106,24 @@ public abstract class AbstractSelectableViews extends AbstractBasic implements C
 		return viewIdsGlobal;*/
 	}
 
+	/**
+	 * Selects the views to process: with {@code vi} the explicitly listed view ids that exist and are present
+	 * in the dataset; otherwise the present views matching all given attribute id lists, where {@code null}
+	 * means "all" for that attribute; without any selection every present view. The result is sorted and
+	 * printed to {@code stdout}.
+	 *
+	 * @param dataGlobal the loaded dataset
+	 * @param vi explicit view ids as {@code "timepointId,viewSetupId"} strings, or {@code null}; must not be
+	 *        combined with any of the attribute id lists
+	 * @param angleIds comma-separated angle ids, or {@code null} for all
+	 * @param channelIds comma-separated channel ids, or {@code null} for all
+	 * @param illuminationIds comma-separated illumination ids, or {@code null} for all
+	 * @param tileIds comma-separated tile ids, or {@code null} for all
+	 * @param timepointIds comma-separated timepoint ids, or {@code null} for all
+	 * @return the sorted list of selected view ids, never empty
+	 * @throws IllegalArgumentException if {@code vi} is combined with attribute filters, or if no view
+	 *         matches the selection
+	 */
 	public static ArrayList< ViewId > loadViewIds(
 			final SpimData2 dataGlobal,
 			final String[] vi,

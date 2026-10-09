@@ -70,6 +70,14 @@ import picocli.CommandLine.Option;
 import scala.Tuple2;
 import util.URITools;
 
+/**
+ * Spark command-line tool that splits every view setup of a dataset into smaller, overlapping virtual
+ * views, either on a uniform grid ({@code --splitMethod uniform}) or with an interest-point driven
+ * oct-tree ({@code --splitMethod octtree}), and writes a new XML ({@code --xmlout}) whose image loader
+ * reads the sub-volumes from the original data. The split intervals, the interest points of the new
+ * views and their correspondences are computed as Spark tasks; optionally fake corresponding interest
+ * points are added to the overlaps of the split views ({@code --fakeInterestPoints}).
+ */
 public class SplitDatasets extends AbstractBasic
 {
 	private static final long serialVersionUID = -1983886010602093434L;
@@ -152,7 +160,6 @@ public class SplitDatasets extends AbstractBasic
 
 	@Option(names = { "--assignIlluminations" }, description = "assign old tile id's as illumination id's, this can be great for visualization")
 	private boolean assignIlluminations = false;
-
 
 	@Override
 	public Void call() throws Exception
@@ -734,6 +741,32 @@ public class SplitDatasets extends AbstractBasic
 	/**
 	 * Create a SplitView from a URI and configuration parameters.
 	 * Can be called on both the driver and Spark executors.
+	 *
+	 * @param xmlURI the dataset XML, loaded to configure the splitter
+	 * @param minStepSize the minimum step size per dimension (derived from the multi-resolution
+	 *            pyramid); all split sizes and overlaps are multiples of it
+	 * @param splitMethod {@code "octtree"} (case-insensitive) for oct-tree splitting, anything else
+	 *            for uniform splitting
+	 * @param targetImageSizeString uniform: target image size per dimension as CSV, e.g.
+	 *            {@code 512,512,256}; rounded up to a multiple of {@code minStepSize}
+	 * @param targetOverlapString uniform: target overlap per dimension as CSV, e.g. {@code 32,32,32};
+	 *            rounded up to a multiple of {@code minStepSize}
+	 * @param optimize uniform: whether to optimize image size and overlap
+	 * @param labelsString oct-tree: comma-separated interest point labels (required)
+	 * @param criterionType oct-tree: {@code "consensus"} (case-insensitive) for a
+	 *            {@link ConsensusSetCriterion}, anything else for a {@link CrossViewCorrespondenceCriterion}
+	 * @param maxCorrespondences oct-tree: number of correspondences above which a node is split
+	 * @param tolerance oct-tree, consensus criterion: the tolerance mode
+	 * @param toleranceValue oct-tree, consensus criterion: tolerance as a percentage or an absolute
+	 *            count, depending on {@code tolerance}
+	 * @param minTileSizeString oct-tree: minimum tile size per dimension in voxels as CSV, or
+	 *            {@code null}; mutually exclusive with {@code minSizeMultiplierString}
+	 * @param minSizeMultiplierString oct-tree: minimum tile size as per-dimension multiplier of
+	 *            {@code minStepSize} as CSV, or {@code null}; if both are {@code null}, 4 is used per axis
+	 * @param minSplitLevels oct-tree: minimum number of split levels to enforce
+	 * @return the configured {@link SplitView}, or {@code null} if the parameters are missing or
+	 *         invalid (an error message is printed)
+	 * @throws SpimDataException if the XML cannot be loaded
 	 */
 	public static SplitView createSplitView(
 			final URI xmlURI,
@@ -931,7 +964,7 @@ public class SplitDatasets extends AbstractBasic
 		return URITools.toURI( out );
 	}
 
-	public static void main( final String... args ) throws SpimDataException
+	public static void main( final String... args )
 	{
 		System.out.println( Arrays.toString( args ) );
 		System.exit( new CommandLine( new SplitDatasets() ).execute( args ) );

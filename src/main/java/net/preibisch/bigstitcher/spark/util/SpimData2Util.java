@@ -44,8 +44,27 @@ import net.imglib2.util.ValuePair;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
+/**
+ * Debugging helpers that dump the contents of an {@code interestpoints.n5} container (interest points
+ * and their correspondences, as written by multiview-reconstruction's {@code InterestPointsN5}) to
+ * {@code System.out}.
+ */
 public class SpimData2Util
 {
+	/**
+	 * Prints the correspondences stored for one view and label of an {@code interestpoints.n5}
+	 * container: lists all top-level groups, decodes the {@code idMap} attribute
+	 * ({@code "tp,setup,label"} to numeric code) of the selected group's {@code correspondences} dataset
+	 * and then prints each stored correspondence as detection id, corresponding view/label and
+	 * corresponding detection id. Reads three values per entry from the {@code data} dataset (the v1
+	 * {@code 3 x N} layout; a fourth consensus-set column would be ignored).
+	 *
+	 * @param n5Dir local path of the N5 container
+	 * @param ipName the interest point label, e.g. {@code "beads"}
+	 * @param index index into the listed top-level groups ({@code tpId_..._viewSetupId_...}) selecting
+	 *        the view to print
+	 * @throws IOException if the container cannot be read
+	 */
 	public static void printCorrespondingInterestPoints(
 			final String n5Dir,
 			final String ipName,
@@ -131,6 +150,18 @@ public class SpimData2Util
 			System.out.println( "id=" + idR.setPositionAndGet( 0, i ) + ", [" + locR.setPositionAndGet( 0, i ) + ", " + locR.setPositionAndGet( 1, i ) + ", " + locR.setPositionAndGet( 2, i ) + "]");*/
 	}
 
+	/**
+	 * Prints the interest points stored for one view and label of an {@code interestpoints.n5}
+	 * container: lists all top-level groups, then prints the id and 3D location of every point from the
+	 * {@code interestpoints/id} and {@code interestpoints/loc} datasets of the selected group.
+	 *
+	 * @param <S> integer pixel type of the {@code id} dataset
+	 * @param <T> real pixel type of the {@code loc} dataset
+	 * @param n5Dir local path of the N5 container
+	 * @param ipName the interest point label, e.g. {@code "beads"}
+	 * @param index index into the listed top-level groups selecting the view to print
+	 * @throws IOException if the container cannot be read
+	 */
 	public static <S extends NativeType<S> & IntegerType<S>, T extends NativeType<T> & RealType<T>> void printInterestPoints(
 			final String n5Dir,
 			final String ipName,

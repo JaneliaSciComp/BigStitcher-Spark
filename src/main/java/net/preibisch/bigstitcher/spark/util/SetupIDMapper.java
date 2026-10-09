@@ -10,14 +10,39 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewSetup;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
+/**
+ * Computes a re-numbering of the {@code ViewSetup} ids of a dataset, as a map from old to new id.
+ */
 public interface SetupIDMapper
 {
+	/**
+	 * Builds the mapping for the given dataset.
+	 *
+	 * @param data the dataset whose view setups are to be re-numbered
+	 * @return map from current (old) {@code ViewSetup} id to new id
+	 */
 	Map< Integer, Integer > map( final SpimData2 data );
 
+	/**
+	 * Mapper for tile grids acquired on the Keller lab mirror scope. The existing ids number the tiles
+	 * row-first starting at the bottom-right corner (id {@code = row * columnCount + (columnCount - 1 - col)},
+	 * rows counted from the bottom). The new ids follow acquisition order, where every 4th row is acquired
+	 * in parallel: for each of the four interleaved row sets ({@code 0,4,8,...}, then {@code 1,5,9,...},
+	 * etc.) the columns are visited right to left and, within a column, the rows of that set bottom to
+	 * top. Only single-angle, single-illumination, single-channel datasets with exactly
+	 * {@code rowCount * columnCount} view setups are supported. {@link #map(SpimData2)} also prints the
+	 * grid of {@code old>new} assignments to {@code System.out}.
+	 */
 	public static class KellerMirrorScopeMapper implements SetupIDMapper
 	{
 		final int rowCount, columnCount;
 
+		/**
+		 * Creates a mapper for a tile grid of the given size.
+		 *
+		 * @param rowCount number of tile rows
+		 * @param columnCount number of tile columns
+		 */
 		public KellerMirrorScopeMapper( final int rowCount, final int columnCount )
 		{
 			this.rowCount = rowCount;

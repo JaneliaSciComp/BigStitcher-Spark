@@ -34,6 +34,12 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import picocli.CommandLine.Option;
 import util.URITools;
 
+/**
+ * Base class of the command-line tools that operate on an existing BigStitcher project. It adds the required
+ * {@code -x}/{@code --xml} option and loads the project ({@link SpimData2}) from that location, which can be
+ * a local path or a URI such as {@code s3://bucket/dataset.xml}. Loading this class also turns off the
+ * ImageJ log output of the legacy {@code IOFunctions}.
+ */
 public abstract class AbstractBasic extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
 	static { net.preibisch.legacy.io.IOFunctions.printIJLog = false;  }
@@ -43,9 +49,17 @@ public abstract class AbstractBasic extends AbstractInfrastructure implements Ca
 	@Option(names = { "-x", "--xml" }, required = true, description = "Path to the existing BigStitcher project xml, e.g. -x /home/project.xml or -x s3://mybucket/data/dataset.xml or -x file:/home/project.xml")
 	protected String xmlURIString = null;
 
-	// will be assigned in loadSpimData2()
 	protected URI xmlURI = null;
 
+	/**
+	 * Parses {@code --xml} into {@link #xmlURI} and loads the BigStitcher project from it, with the image
+	 * loader configured for single-threaded Spark tasks (zero fetcher threads).
+	 *
+	 * @return the loaded project, or {@code null} if loading failed (a one-line error is printed to
+	 *         {@code stderr} instead of a stack trace)
+	 * @throws SpimDataException if the project cannot be loaded; this implementation catches it and
+	 *         returns {@code null} instead
+	 */
 	public SpimData2 loadSpimData2() throws SpimDataException
 	{
 		System.out.println( "'" + xmlURIString + "'" );
@@ -66,6 +80,15 @@ public abstract class AbstractBasic extends AbstractInfrastructure implements Ca
 		}
 	}
 
+	/**
+	 * Loads the project like {@link #loadSpimData2()} and then sets the number of fetcher threads of the
+	 * image loader if it is a {@link ViewerImgLoader}, e.g. for multi-threaded local processing instead
+	 * of the Spark default of {@code 0}.
+	 *
+	 * @param numFetcherThreads number of fetcher threads to use for loading image blocks
+	 * @return the loaded project, or {@code null} if loading failed
+	 * @throws SpimDataException if the project cannot be loaded
+	 */
 	public SpimData2 loadSpimData2( final int numFetcherThreads ) throws SpimDataException
 	{
 		final SpimData2 data = loadSpimData2();

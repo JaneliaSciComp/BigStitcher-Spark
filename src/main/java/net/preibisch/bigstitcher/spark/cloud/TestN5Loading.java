@@ -35,6 +35,11 @@ import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.explorer.ViewSetupExplorer;
 import util.URITools;
 
+/**
+ * Manual test for loading a (local or cloud) BigStitcher dataset the way the Spark jobs do and opening it
+ * in the BigStitcher GUI. Not part of the processing pipeline; earlier experiments (BDV display,
+ * reading interest points from S3) are kept as commented-out code.
+ */
 public class TestN5Loading
 {
 	/*
@@ -112,6 +117,14 @@ public class TestN5Loading
 		System.out.println( "Done.");
 	}
 	*/
+	/**
+	 * Starts ImageJ, loads the dataset via {@code Spark.getSparkJobSpimData2}, requests the default
+	 * number of fetcher threads ({@code setNumFetcherThreads(-1)}) if the image loader is a
+	 * {@link ViewerImgLoader}, and opens the BigStitcher {@link ViewSetupExplorer} on it.
+	 *
+	 * @param xml URI of the dataset XML
+	 * @throws SpimDataException if the dataset cannot be loaded
+	 */
 	public static void testBigStitcherGUI( final URI xml ) throws SpimDataException
 	{
 		new ImageJ();

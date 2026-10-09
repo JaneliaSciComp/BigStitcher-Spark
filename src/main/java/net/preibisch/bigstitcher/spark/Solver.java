@@ -42,7 +42,6 @@ import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.models.TranslationModel3D;
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.multithreading.SimpleMultiThreading;
@@ -82,6 +81,17 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * Command-line tool that runs the global optimization ("solve") of a BigStitcher dataset, turning pairwise
+ * links between views into one transformation per view. The links come either from corresponding interest
+ * points ({@code -s IP}, one or more labels with weights) or from the pairwise stitching results stored in
+ * the XML ({@code -s STITCHING}). Views can be grouped (illuminations, channels, tiles) or split per
+ * timepoint; the independent registration subsets and the default fixed views are determined exactly like
+ * in the GUI, and one of the {@link GlobalOpt}, {@link GlobalOptIterative} or {@link GlobalOptTwoRound}
+ * variants is run. Optionally the result of every subset is mapped back onto a reference view
+ * ({@code --enableMapbackViews}, requires {@code --disableFixedViews}). The solved transformations are
+ * appended to the views' {@link ViewRegistration}s and, unless {@code --dryRun} is set, the XML is saved.
+ */
 public class Solver extends AbstractRegistration
 {
 	/*
@@ -95,13 +105,25 @@ public class Solver extends AbstractRegistration
 	*/
 	private static final long serialVersionUID = 5220898723968914742L;
 
-	public enum SolverSource { IP, STITCHING };
+	/** Where the pairwise links for the solve come from. */
+	public enum SolverSource
+	{
+		/** Corresponding interest points of the given {@code --label}(s). */
+		IP,
+		/** Pairwise stitching results (image-correlation shifts) stored in the XML. */
+		STITCHING
+	};
+
+	/** Whether the views are pre-aligned before the global optimization starts. */
 	public enum PreAlign { PREALIGN, NO_PREALIGN };
 
 	public ArrayList< ViewId > fixedViewIds;
 
+	/** Type of transformation model used to map the solved result back onto a reference view. */
 	public enum MapbackModel { TRANSLATION, RIGID };
+
 	public ArrayList< ViewId > mapBackViewIds;
+
 	public Model<?> mapBackModel;
 
 	@Option(names = { "-s", "--sourcePoints" }, required = true, description = "which source to use for the solve, IP (interest points) or STITCHING")
@@ -462,6 +484,19 @@ public class Solver extends AbstractRegistration
 		return null;
 	}
 
+	/**
+	 * Builds the point-match creator for a solve from the pairwise stitching results stored in the dataset.
+	 * If {@code vsComparisonPairs} is given, only results whose two view setup IDs form an allowed pair are
+	 * kept. Results whose stored hash does not match the current {@link ViewRegistration}s of the two views
+	 * (i.e. the views were transformed after stitching) are dropped with an explanatory message.
+	 *
+	 * @param dataGlobal the dataset holding the stitching results and view registrations
+	 * @param viewIdsGlobal the views being solved; currently not used, all stored pairwise results are
+	 *             considered
+	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
+	 *             allow all pairs
+	 * @return a creator over the remaining stitching results, or {@code null} if no link remains
+	 */
 	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
@@ -511,6 +546,28 @@ public class Solver extends AbstractRegistration
 		return new ImageCorrelationPointMatchCreator(results);
 	}
 
+	/**
+	 * Builds the point-match creator for a solve from the stored corresponding interest points. All interest
+	 * points and correspondences of the requested views and labels are first loaded in parallel. Then, for
+	 * every pair of views (optionally restricted by {@code vsComparisonPairs}) and every combination of their
+	 * labels, the correspondences of view A that point to view B are turned into point matches whose
+	 * coordinates are transformed into global space with the views' current registration models, and added
+	 * as inliers of a {@link PairwiseResult} that carries both labels (used to assign the label weights).
+	 * Pairs in which both views are fixed, or both belong to the same group, are skipped. Views without any
+	 * connection are added as a self-pair without inliers so that they still take part in the solve. If
+	 * loading fails with an {@link InterruptedException} or {@link ExecutionException}, the stack trace is
+	 * printed and the JVM exits with status 1.
+	 *
+	 * @param dataGlobal the dataset holding interest points, correspondences and view registrations
+	 * @param viewIdsGlobal the views to connect
+	 * @param labelMap for every view, the interest point labels to use mapped to their weights
+	 * @param groups groups of views that are treated as one view; pairs within a group are not connected
+	 * @param fixedViewIds views held fixed during the solve; pairs of two fixed views are not connected
+	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
+	 *             allow all pairs
+	 * @return a creator over all connected pairs (plus the unconnected views), or {@code null} if no pair
+	 *         at all was found
+	 */
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
@@ -685,7 +742,12 @@ public class Solver extends AbstractRegistration
 			return null;
 	}
 
-	/** GUI "Fix first view": the first (sorted) view of every subset. */
+	/**
+	 * GUI "Fix first view": the first (sorted) view of every subset.
+	 *
+	 * @param subsets the independent registration subsets; empty subsets are skipped
+	 * @return the first view of every non-empty subset
+	 */
 	public static HashSet< ViewId > assembleFixed( final List< Subset< ViewId > > subsets )
 	{
 		final HashSet< ViewId > fixed = new HashSet<>();
@@ -698,8 +760,13 @@ public class Solver extends AbstractRegistration
 	}
 
 	/**
-	 * GUI "Map back to first/user defined view": one reference view per subset.
+	 * GUI "Map back to first/user defined view": one reference view per subset. For each subset the first
+	 * view of {@code mapBackViewIds} that it contains is used; if there is none, the first (sorted) view of
+	 * the subset. The chosen reference views are printed.
 	 *
+	 * @param subsets the independent registration subsets; empty subsets are skipped
+	 * @param mapBackViewIds user-defined reference views, or {@code null} to use the first view of every
+	 *             subset
 	 * @return for every view the mapback (reference) view of its subset
 	 */
 	public static HashMap< ViewId, ViewId > assembleMapBack(
@@ -735,6 +802,22 @@ public class Solver extends AbstractRegistration
 		return map;
 	}
 
+	/**
+	 * Validates the fixed-view and mapback options and resolves them against the dataset. With
+	 * {@code --disableFixedViews}, {@link #fixedViewIds} is set to {@code null}; if
+	 * {@code --enableMapbackViews} is also set, {@code --mapbackViews} is parsed into {@link #mapBackViewIds}
+	 * ({@code null} if not given, meaning the first view of every subset) and {@link #mapBackModel} is
+	 * instantiated according to {@code --mapbackModel}. Otherwise {@code --fixedViews} is parsed into
+	 * {@link #fixedViewIds} ({@code null} if not given). View IDs that do not exist in the dataset are
+	 * dropped with a warning.
+	 *
+	 * @param dataGlobal the dataset against which the given view IDs are validated
+	 * @param viewIdsGlobal the selected views; currently not used
+	 * @return always {@code true}
+	 * @throws IllegalArgumentException if {@code --enableMapbackViews} is used without
+	 *             {@code --disableFixedViews} or together with {@code -rtp TO_REFERENCE_TIMEPOINT}, or if
+	 *             none of the given fixed or mapback views exists in the dataset
+	 */
 	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
 	{
 		if ( !disableFixedViews && enableMapbackViews )
@@ -815,7 +898,7 @@ public class Solver extends AbstractRegistration
 		return true;
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new Solver()).execute(args));

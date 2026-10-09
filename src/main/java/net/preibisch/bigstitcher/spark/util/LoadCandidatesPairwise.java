@@ -71,6 +71,9 @@ public class LoadCandidatesPairwise< I extends InterestPoint > implements Matche
 	final String candidatesPath;
 
 	/**
+	 * Creates a matcher that reads the candidates of each view pair from {@code candidatesPath} and fits
+	 * {@code model} to them with RANSAC.
+	 *
 	 * @param rp RANSAC parameters (epsilon, min inlier ratio, min matches, iterations, multi-consensus)
 	 * @param model the transformation model to fit
 	 * @param candidatesPath path or URI of the N5 store (the store itself, e.g. /data/candidates.n5)

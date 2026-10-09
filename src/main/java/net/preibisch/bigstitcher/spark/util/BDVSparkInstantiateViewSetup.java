@@ -35,6 +35,14 @@ import mpicbg.spim.data.sequence.VoxelDimensions;
 import net.imglib2.Dimensions;
 import net.preibisch.mvrecon.process.n5api.SpimData2Tools.InstantiateViewSetup;
 
+/**
+ * {@link InstantiateViewSetup} used when a fused volume is added to a BDV-compatible dataset and its
+ * {@link ViewSetup} does not exist yet. Attributes start from the highest existing angle, illumination,
+ * channel and tile id (or 0 if there are no setups). The angle, illumination and tile id are incremented
+ * if the corresponding view-selection option ({@code --angleId}, {@code --illuminationId},
+ * {@code --tileId}) was given; the channel id is incremented if tiles were selected, or if no selection
+ * was given at all and the time point already exists. The voxel size is set to 1x1x1 {@code px}.
+ */
 public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 {
 	final String angleIds;
@@ -42,6 +50,17 @@ public class BDVSparkInstantiateViewSetup implements InstantiateViewSetup
 	final String channelIds;
 	final String tileIds;
 
+	/**
+	 * Creates the factory. The arguments are the raw command-line selection strings; only whether each
+	 * one is {@code null} (option not given) is evaluated.
+	 *
+	 * @param angleIds the {@code --angleId} selection, or {@code null}; non-null yields a new angle id
+	 * @param illuminationIds the {@code --illuminationId} selection, or {@code null}; non-null yields a
+	 *        new illumination id
+	 * @param channelIds the {@code --channelId} selection, or {@code null} (currently not evaluated)
+	 * @param tileIds the {@code --tileId} selection, or {@code null}; non-null yields a new tile id and a
+	 *        new channel id
+	 */
 	public BDVSparkInstantiateViewSetup(
 			final String angleIds,
 			final String illuminationIds, 

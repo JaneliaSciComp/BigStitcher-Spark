@@ -66,6 +66,7 @@ import util.URITools;
  */
 public class ClearInterestPoints extends AbstractSelectableViews
 {
+	/** Operation selected with {@code --clearMode}. */
 	public enum ClearMode
 	{
 		/**

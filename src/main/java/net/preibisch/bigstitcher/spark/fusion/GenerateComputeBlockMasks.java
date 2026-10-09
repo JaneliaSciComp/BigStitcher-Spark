@@ -45,6 +45,12 @@ import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 
+/**
+ * Renders the coverage mask of one fusion grid block: every output pixel of the block is mapped
+ * back into each overlapping view through the inverse of its registration and marked if it falls
+ * inside the (optionally offset) image bounds of at least one view. Backs the {@code --masks} mode
+ * of {@code SparkFusion}, which writes these masks instead of fused intensities.
+ */
 public class GenerateComputeBlockMasks
 {
 	private final long[] minBB, maxBB;
@@ -61,6 +67,21 @@ public class GenerateComputeBlockMasks
 
 	private final double[] maskOffset;
 
+	/**
+	 * Creates a mask generator for the given views and output bounding box.
+	 *
+	 * @param dataLocal the dataset, used to look up the image dimensions of each view
+	 * @param registrations transform of each view into the output (world) coordinate system
+	 * @param overlappingViews the views whose footprint is painted into the mask
+	 * @param minBB min of the fused bounding box in output pixels; grid block offsets are relative to it
+	 * @param maxBB max (inclusive) of the fused bounding box in output pixels
+	 * @param uint8 if {@code true}, {@link #call} returns an {@link UnsignedByteType} mask (0/255)
+	 * @param uint16 if {@code true} (and {@code uint8} is {@code false}), {@link #call} returns an
+	 *            {@link UnsignedShortType} mask (0/65535); if both are {@code false} a {@link FloatType}
+	 *            mask (0/1) is returned
+	 * @param maskOffset per-dimension amount, in raw (non-isotropic) input pixels of a view, by which
+	 *            the view bounds are grown (positive) or shrunk (negative) before testing
+	 */
 	public GenerateComputeBlockMasks(
 			final SpimData2 dataLocal,
 			final HashMap< ViewId, AffineTransform3D > registrations,
@@ -81,6 +102,17 @@ public class GenerateComputeBlockMasks
 		this.maskOffset = maskOffset;
 	}
 
+	/**
+	 * Computes the mask for one grid block. A pixel is set to the maximum value as soon as one of
+	 * the overlapping views contains its inverse-transformed position; all other pixels stay 0.
+	 *
+	 * @param gridBlock block descriptor: {@code gridBlock[0]} is the block offset relative to
+	 *            {@code minBB}, {@code gridBlock[1]} the block size (both in output pixels)
+	 * @return the mask as {@link UnsignedByteType} (0/255) if {@code uint8}, as {@link UnsignedShortType}
+	 *         (0/65535) if {@code uint16}, otherwise as {@link FloatType} (0/1); for the two integer
+	 *         variants the image spans the whole bounding box {@code [minBB, maxBB]} (zero outside the
+	 *         block), the float variant is the zero-min block itself
+	 */
 	public RandomAccessibleInterval call( final long[][] gridBlock )
 	{
 		final int n = minBB.length;

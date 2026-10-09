@@ -89,6 +89,15 @@ import scala.Tuple2;
 import util.Grid;
 import util.URITools;
 
+/**
+ * Spark command-line tool ({@code nonrigid-fusion}) that fuses the selected views of a BigStitcher
+ * dataset non-rigidly into an N5, OME-ZARR or HDF5 dataset (optionally as a BigDataViewer-compatible
+ * dataset with XML project). On top of the affine registrations, each view is deformed with a
+ * model interpolated from its corresponding interest points ({@code --interestPoints}), as
+ * implemented by {@code NonRigidTools}. The bounding box is fused block-wise on Spark workers,
+ * either writing each block directly or, for sharded ZARR v3 output, rendering sub-blocks and
+ * assembling them per shard before writing; a multi-resolution pyramid can be appended.
+ */
 public class SparkNonRigidFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	/**
@@ -1055,10 +1064,20 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	{
 		private static final long serialVersionUID = 1L;
 
+		/** Zero-min offset of this sub-block within its shard (in voxels). */
 		final long[] localOffset;
+		/** Dimensions of this sub-block (in voxels). */
 		final int[] size;
+		/** Rendered pixels as a flat {@code byte[]}, {@code short[]} or {@code float[]}, depending on the output data type. */
 		final Object data;
 
+		/**
+		 * Creates a carrier for one rendered sub-block.
+		 *
+		 * @param localOffset zero-min offset of the sub-block within its shard (in voxels)
+		 * @param size dimensions of the sub-block (in voxels)
+		 * @param data rendered pixels as a flat {@code byte[]}, {@code short[]} or {@code float[]}
+		 */
 		public FusedBlock( final long[] localOffset, final int[] size, final Object data )
 		{
 			this.localOffset = localOffset;

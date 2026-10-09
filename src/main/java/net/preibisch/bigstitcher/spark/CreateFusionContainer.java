@@ -23,7 +23,6 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.saalfeldlab.n5.universe.metadata.ome.ngff.OmeNgffMetadata;
 
 import bdv.util.MipmapTransforms;
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.Angle;
@@ -62,11 +61,40 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
 
+/**
+ * Command-line tool ({@code create-fusion-container}, runs without Spark) that creates the empty
+ * output container a subsequent {@link SparkFusion} writes into: an N5, OME-ZARR (v2, or v3 with
+ * optional sharding) or HDF5 container with the datasets of all multi-resolution levels for every
+ * channel and timepoint, laid out either as plain 5D OME-ZARR or as a BigDataViewer-compatible
+ * dataset with an accompanying XML project. Data type, compression, block/shard size, bounding
+ * box, downsampling pyramid and anisotropy handling are decided here and recorded as
+ * {@code Bigstitcher-Spark/*} attributes in the container root, from where the fusion reads them.
+ */
 public class CreateFusionContainer extends AbstractBasic implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -9140450542904228386L;
 
-	public static enum Compressions { Lz4, Gzip, Zstandard, Blosc, Bzip2, Xz, Raw };
+	/**
+	 * Compression codecs selectable via {@code --compression}; mapped to the corresponding N5
+	 * {@code Compression} implementations, honouring {@code --compressionLevel} where supported.
+	 */
+	public static enum Compressions
+	{
+		/** LZ4 compression (no level). */
+		Lz4,
+		/** Gzip compression (default level 1). */
+		Gzip,
+		/** Zstandard compression (default level 3); the default codec. */
+		Zstandard,
+		/** Blosc compression (no level). */
+		Blosc,
+		/** Bzip2 compression (no level). */
+		Bzip2,
+		/** XZ compression (default level 6). */
+		Xz,
+		/** No compression. */
+		Raw
+	};
 
 	@Option(names = { "-o", "--outputPath" }, required = true, description = "OME-ZARR/N5/HDF5 path for saving, e.g. -o /home/fused.zarr, file:/home/fused.n5 or e.g. s3://myBucket/data.zarr")
 	private String outputPathURIString = null;
@@ -655,7 +683,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		return BigDecimal.valueOf( value ).round( new MathContext( CALIBRATION_SIGNIFICANT_DIGITS, RoundingMode.HALF_UP ) ).doubleValue();
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 
 		//final XmlIoSpimData io = new XmlIoSpimData();

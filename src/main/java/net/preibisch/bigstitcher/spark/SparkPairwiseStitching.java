@@ -34,7 +34,6 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.base.Entity;
 import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.sequence.Angle;
@@ -70,6 +69,14 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 
+/**
+ * Spark command-line tool for distributed pairwise stitching. The selected views are grouped by
+ * channel and illumination and compared tile against tile within each timepoint and angle; for every
+ * overlapping pair of groups one Spark task computes the phase-correlation shift at the given
+ * downsampling ({@code --downsampling}), optionally with sub-pixel accuracy. The results are filtered
+ * by correlation ({@code --minR}, {@code --maxR}) and by maximum shift, stored as the dataset's
+ * pairwise stitching results and, unless this is a dry run, saved to the XML.
+ */
 public class SparkPairwiseStitching extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = 2745578960909812636L;
@@ -413,7 +420,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		return null;
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new SparkPairwiseStitching()).execute(args));

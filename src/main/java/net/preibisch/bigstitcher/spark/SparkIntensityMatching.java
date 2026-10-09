@@ -17,7 +17,6 @@ import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RealInterval;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
@@ -32,8 +31,18 @@ import picocli.CommandLine.Option;
 import scala.Tuple2;
 import util.URITools;
 
+/**
+ * Spark command-line tool that computes pairwise intensity matches between overlapping views, the input
+ * for {@link IntensitySolver}. The bounds of all selected views are computed on the driver, and every pair
+ * of views whose bounds intersect becomes one Spark task that samples both images at {@code --renderScale},
+ * splits each view into a grid of {@code --numCoefficients} coefficient regions and matches the intensities
+ * of overlapping regions with the chosen {@link IntensityMatchingMethod}. The resulting
+ * {@link ViewPairCoefficientMatches} (and the coefficient grid size) are written to {@code --outputPath}
+ * with {@link ViewPairCoefficientMatchesIO}.
+ */
 public class SparkIntensityMatching extends AbstractSelectableViews
 {
+	/** How the intensities of two overlapping coefficient regions are matched. */
 	public enum IntensityMatchingMethod
 	{
 		RANSAC, HISTOGRAM
@@ -201,7 +210,7 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 				.collect( Collectors.toList() );
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new SparkIntensityMatching()).execute(args));

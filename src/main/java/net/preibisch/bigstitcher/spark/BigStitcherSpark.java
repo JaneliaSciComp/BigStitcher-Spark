@@ -92,7 +92,12 @@ public class BigStitcherSpark implements Runnable
 		throw new ParameterException( spec.commandLine(), "Missing required subcommand." );
 	}
 
-	/** The fully wired command line; commands are instantiated lazily, only when invoked. */
+	/**
+	 * The fully wired command line; commands are instantiated lazily, only when invoked.
+	 *
+	 * @return a new {@link CommandLine} for this class with every entry of {@link #COMMANDS} registered as a
+	 *         subcommand, each with the standard help options and the shared {@link Version} provider
+	 */
 	public static CommandLine commandLine()
 	{
 		final CommandLine top = new CommandLine( new BigStitcherSpark() );

@@ -81,6 +81,9 @@
 		<package-name>net.preibisch.bigstitcher.spark</package-name>
 
         <scijava.jvm.version>21</scijava.jvm.version>
+        <!-- Link to the Java 21 API docs (with module info) instead of the Java 8 default, which javadoc
+             otherwise reports as "packages ... are in the unnamed module". -->
+        <scijava.javadoc.url.java>https://javadoc.scijava.org/Java21/</scijava.javadoc.url.java>
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
 
@@ -496,6 +499,10 @@
                     <!-- Javadoc is not a deliverable of this project: don't fail the build on javadoc-tool errors
                          such as unreachable external doc links (javadoc.scijava.org/Icy currently 404s). -->
                     <failOnError>false</failOnError>
+                    <!-- Check references, HTML, syntax and accessibility, but do not require a comment on every
+                         public/protected member (the command-line option fields and Serializable fields are
+                         described by their picocli annotations, not by Javadoc). -->
+                    <doclint>all,-missing</doclint>
                 </configuration>
             </plugin>
 

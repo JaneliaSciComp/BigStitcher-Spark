@@ -62,6 +62,14 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
 
+/**
+ * Spark command-line tool that re-saves all views of a dataset into one N5, Zarr v2 or (optionally
+ * sharded) Zarr v3 container ({@code --storage}, {@code --n5Path}) with a multi-resolution pyramid
+ * ({@code --downsampling}, proposed automatically if not given). Full-resolution blocks are copied from
+ * the original image loader and each lower level is computed from the previous one, both as Spark
+ * tasks with retries for failed blocks. Finally a new XML ({@code --xmlout}) that points to the new
+ * container is written.
+ */
 public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Serializable
 {
 	/*

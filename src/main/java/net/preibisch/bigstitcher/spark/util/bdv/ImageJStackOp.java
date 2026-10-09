@@ -65,6 +65,20 @@ public class ImageJStackOp<T extends RealType<T> & NativeType<T>> implements Con
 	final int padding;
 	final boolean doNothingIfAllBlack;
 
+	/**
+	 * Creates the op.
+	 *
+	 * @param input the (unbounded) source to read from; for each output block the region enlarged by
+	 *        {@code padding} pixels in x and y is read so the 2D filter has context at block borders
+	 * @param sliceFilter the ImageJ filter applied in place to every 2D slice, handed over as a
+	 *        {@link FloatProcessor}
+	 * @param padding number of pixels of context read around the block in the first two dimensions
+	 * @param minIntensity lower bound; set as display-range minimum of the {@code FloatProcessor} given to
+	 *        {@code sliceFilter} and used to clamp the filtered values written back to the output
+	 * @param maxIntensity upper bound, used like {@code minIntensity}
+	 * @param doNothingIfAllBlack if {@code true}, a block whose padded input is entirely zero is filled
+	 *        with zeros and the filter is skipped
+	 */
 	public ImageJStackOp(
 			final RandomAccessible<T> input,
 			final Consumer<FloatProcessor> sliceFilter,
@@ -81,6 +95,17 @@ public class ImageJStackOp<T extends RealType<T> & NativeType<T>> implements Con
 		this.doNothingIfAllBlack = doNothingIfAllBlack;
 	}
 
+	/**
+	 * Creates the op without intensity clamping, i.e. with
+	 * {@code minIntensity = -Float.MAX_VALUE} and {@code maxIntensity = Float.MAX_VALUE}.
+	 *
+	 * @param input the source to read from, see
+	 *        {@link #ImageJStackOp(RandomAccessible, Consumer, int, double, double, boolean)}
+	 * @param sliceFilter the ImageJ filter applied in place to every 2D slice
+	 * @param padding number of pixels of context read around the block in the first two dimensions
+	 * @param doNothingIfAllBlack if {@code true}, all-zero blocks are filled with zeros and the filter is
+	 *        skipped
+	 */
 	public ImageJStackOp(
 			final RandomAccessible<T> input,
 			final Consumer<FloatProcessor> sliceFilter,

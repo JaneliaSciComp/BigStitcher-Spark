@@ -57,7 +57,6 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -117,9 +116,23 @@ import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
+/**
+ * Spark command-line tool ({@code fusion}) that fuses the registered views of a BigStitcher
+ * dataset into an output container (N5, OME-ZARR or HDF5) previously created with
+ * {@link CreateFusionContainer}, from whose {@code Bigstitcher-Spark/*} attributes the data type,
+ * bounding box, block/shard layout, multi-resolution levels and BDV/OME-ZARR format are read.
+ * The bounding box is split into grid blocks that are fused independently on Spark workers,
+ * transforming each contributing view either affinely ({@link FusionMethod#AFFINE}) or with a
+ * thin-plate-spline ({@link FusionMethod#THIN_PLATE_SPLINE}, using cached displacement fields).
+ * Optionally applies intensity-correction coefficients, prefetches the required input blocks per
+ * job, or writes coverage masks instead of fused intensities ({@code --masks}).
+ */
 public class SparkFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
+	/** Pixel type of the fused output volume. */
 	public enum DataTypeFusion { UINT8, UINT16, FLOAT32 }
+
+	/** How each input view is transformed into the fused output space. */
 	public enum FusionMethod { AFFINE, THIN_PLATE_SPLINE }
 
 	private static final long serialVersionUID = -6103761116219617153L;
@@ -180,6 +193,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 	// === Thin-Plate-Spline displacement-field cache (only used with -fm THIN_PLATE_SPLINE) ===
 
+	/** Component type of the cached thin-plate-spline displacement fields ({@code --dfieldType}). */
 	public enum DfieldType { FLOAT32, FLOAT64 }
 
 	@Option(names = { "--dfieldSpacing" }, description = "TPS only: dfield grid spacing per dim (default: 8,8,8). Larger = less memory but more interpolation error.")
@@ -240,9 +254,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private String intensityN5Dataset = "intensity";
 
 	URI outPathURI = null;
-	/**
-	 * Prefetching now works with a Executors.newCachedThreadPool();
-	 */
+	// Prefetching now works with a Executors.newCachedThreadPool();
 	//static final int N_PREFETCH_THREADS = 72;
 
 	URI intensityN5PathURI = null;
@@ -1748,7 +1760,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		}
 	}
 
-	public static void main(final String... args) throws SpimDataException {
+	public static void main(final String... args) {
 
 		//final XmlIoSpimData io = new XmlIoSpimData();
 		//final SpimData spimData = io.load( "/Users/preibischs/Documents/Microscopy/Stitching/Truman/standard/output/dataset.xml" );

@@ -44,6 +44,15 @@ import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import util.Lazy;
 
+/**
+ * Lazy, cell-wise background correction used before interest point detection: for each requested
+ * output cell every XY slice of the source is median-filtered (ImageJ {@code RankFilters}, radius
+ * {@code radiusXY}) and each output pixel is set to {@code value / median}, or to 0 where the median is
+ * not positive. Instances serve as the cell loader of the cached image created by {@link #init}.
+ * 2D sources are treated as 3D with a single slice; more than 3 dimensions are not supported.
+ *
+ * @param <T> the pixel type of the source image
+ */
 public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> implements Consumer<RandomAccessibleInterval<FloatType>>
 {
 	final private int radiusXY;
@@ -51,6 +60,16 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 	final private RandomAccessible<T> source;
 	final int n;
 
+	/**
+	 * Creates the operator; a 2D source is extended to 3D, a source with more than 3 dimensions causes
+	 * a {@code RuntimeException}.
+	 *
+	 * @param min the global min of the processed interval; output cells (which start at the origin)
+	 *            are translated by it before the source is read
+	 * @param source the input image; must be defined on the processed interval expanded by
+	 *            {@code radiusXY} in X and Y
+	 * @param radiusXY the radius of the median filter in XY (pixels)
+	 */
 	public LazyBackgroundSubtract(
 			final long[] min,
 			RandomAccessible<T> source,
@@ -139,6 +158,20 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 		}
 	}
 
+	/**
+	 * Creates a lazily evaluated, cached {@link FloatType} image of {@code processingInterval} in which
+	 * each pixel of {@code input} is divided by the median of its XY neighborhood of radius
+	 * {@code radiusXY}. Cells of {@code blockSize} are computed on demand by a
+	 * {@link LazyBackgroundSubtract}.
+	 *
+	 * @param <T> the pixel type of the input
+	 * @param input the input image; must be defined on {@code processingInterval} expanded by
+	 *            {@code radiusXY} in X and Y
+	 * @param processingInterval the interval to compute; the result is located at this interval
+	 * @param radiusXY the radius of the median filter in XY (pixels)
+	 * @param blockSize the cell size of the cached result
+	 * @return the background-corrected image, located at {@code processingInterval}
+	 */
 	public static final <T extends RealType<T> & NativeType<T>> RandomAccessibleInterval<FloatType> init(
 			final RandomAccessible< T > input,
 			final Interval processingInterval,

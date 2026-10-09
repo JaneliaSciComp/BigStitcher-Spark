@@ -38,6 +38,13 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * Command-line tool that removes view transformations from the registrations of the selected views of a
+ * BigStitcher project: either the last {@code --remove N} transformations, or everything beyond the first
+ * {@code --keep N}, counted in the order the transforms are applied (e.g. calibration first). Exactly one of
+ * the two options has to be given. The removed transforms are printed and the XML is saved unless
+ * {@code --dryRun} is set. Not a Spark job.
+ */
 public class ClearRegistrations extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = -526317635920954010L;

@@ -38,7 +38,6 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
 import mpicbg.models.Model;
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
@@ -75,11 +74,44 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple3;
 
+/**
+ * Spark command-line tool that finds corresponding interest points between pairs of views, the input for
+ * {@link Solver} with {@code -s IP}. The pairs of views (or of view groups, when grouping/splitting is
+ * requested) to compare are set up like in the GUI, optionally restricted to the view setup pairs listed
+ * in {@code --vsComparisonsFile}. Every pair becomes one Spark task that loads and transforms the interest
+ * points of the selected labels, finds candidate correspondences with the chosen {@link Method} and filters
+ * them with RANSAC (optionally multi-consensus). The resulting correspondences are collected on the driver,
+ * added to the views' interest point lists (after clearing the old ones if {@code --clearCorrespondences}
+ * is set) and, unless {@code --dryRun} is set, saved.
+ */
 public class SparkGeometricDescriptorMatching extends AbstractRegistration
 {
 	private static final long serialVersionUID = 6114598951078086239L;
 
-	public enum Method { FAST_ROTATION, PRECISE_TRANSLATION, ICP, LOAD_CANDIDATES };
+	/** The pairwise matching method, see {@link SparkGeometricDescriptorMatching#createMatcherInstance}. */
+	public enum Method
+	{
+		/**
+		 * Fast descriptor-based matching (rotation invariant) using geometric hashing,
+		 * {@link GeometricHashingPairwise}.
+		 */
+		FAST_ROTATION,
+		/**
+		 * Precise descriptor-based matching (translation invariant), {@link RGLDMPairwise}; the only
+		 * method that supports {@code --numNeighbors}, {@code --searchRadius} and {@code --descriptorSearch}.
+		 */
+		PRECISE_TRANSLATION,
+		/**
+		 * Iterative closest point matching, {@link IterativeClosestPointPairwise}, controlled by
+		 * {@code --icpMaxError}, {@code --icpIterations} and {@code --icpUseRANSAC}.
+		 */
+		ICP,
+		/**
+		 * Load precomputed match candidates from the N5 store at {@code --candidatesPath} and only run
+		 * RANSAC on them, {@link LoadCandidatesPairwise}.
+		 */
+		LOAD_CANDIDATES
+	};
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
@@ -625,6 +657,37 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		return null;
 	}
 
+	/**
+	 * Creates the pairwise matcher for the given {@link Method}: {@link GeometricHashingPairwise} for
+	 * {@code FAST_ROTATION}, {@link RGLDMPairwise} for {@code PRECISE_TRANSLATION},
+	 * {@link IterativeClosestPointPairwise} for {@code ICP} and {@link LoadCandidatesPairwise} for
+	 * {@code LOAD_CANDIDATES}. Parameters that the chosen method does not use are ignored.
+	 *
+	 * @param <I> the type of interest point the matcher operates on
+	 * @param rp the RANSAC parameters (max error, min inlier ratio, min number of inliers, iterations,
+	 *             multi-consensus) used to filter the candidates; ICP takes its RANSAC settings from here, too
+	 * @param registrationMethod which matcher to create
+	 * @param model the transformation model that is fitted to the candidates
+	 * @param numNeighbors number of neighboring points used to build a local descriptor
+	 *             ({@code PRECISE_TRANSLATION} only)
+	 * @param redundancy redundancy of the local descriptor ({@code FAST_ROTATION} and
+	 *             {@code PRECISE_TRANSLATION})
+	 * @param ratioOfDistance how much better the best descriptor match has to be compared to the second best
+	 *             one ({@code FAST_ROTATION} and {@code PRECISE_TRANSLATION})
+	 * @param limitSearchRadius whether to limit the search for corresponding points to {@code searchRadius}
+	 *             ({@code PRECISE_TRANSLATION} only)
+	 * @param searchRadius the search radius in global coordinates in px; ignored if
+	 *             {@code limitSearchRadius} is {@code false}
+	 * @param descriptorSearch how descriptors are compared ({@code PRECISE_TRANSLATION} only)
+	 * @param icpMaxDistance the maximal distance in px for an ICP correspondence ({@code ICP} only)
+	 * @param icpMaxIterations the maximal number of ICP iterations ({@code ICP} only)
+	 * @param icpUseRANSAC whether ICP runs RANSAC in every iteration to filter the correspondences
+	 *             ({@code ICP} only)
+	 * @param candidatesPath path/URI of the N5 store holding the precomputed match candidates
+	 *             ({@code LOAD_CANDIDATES} only, otherwise ignored)
+	 * @return the matcher
+	 * @throws IllegalArgumentException if {@code registrationMethod} is {@code null} or unknown
+	 */
 	public static < I extends InterestPoint> MatcherPairwise< I > createMatcherInstance(
 			final RANSACParameters rp,
 			final Method registrationMethod,
@@ -690,6 +753,17 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		return matcher;
 	}
 
+	/**
+	 * Builds the per-view label map that is handed to the Spark tasks: every view is mapped to the same
+	 * {@code map} instance of label to weight. Before that it checks that every label exists for every view;
+	 * if one is missing an error is printed and the JVM exits with status 1. The keys are plain
+	 * {@link ViewId} copies (not {@code ViewDescription}s) so that the map is serializable.
+	 *
+	 * @param data the dataset whose interest point lists are checked
+	 * @param viewIds the views to include
+	 * @param map the labels to use mapped to their weights; shared by all views
+	 * @return for every view a copy of its {@link ViewId} mapped to {@code map}
+	 */
 	public static HashMap< ViewId, HashMap< String, Double > > buildLabelMap(
 			final SpimData2 data,
 			final List< ViewId > viewIds,
@@ -724,7 +798,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		return labelMapGlobal;
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new SparkGeometricDescriptorMatching()).execute(args));
