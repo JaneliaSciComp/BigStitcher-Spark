@@ -89,7 +89,8 @@ public class CLLCN extends BlockStatistics {
 	 * Stretches contrast by the local block standard deviation: each pixel's deviation from the
 	 * display-range midpoint is scaled by {@code fpLength / (2 * meanFactor * std)}, so a deviation of
 	 * {@code meanFactor} local standard deviations maps onto half the display range. The local mean is
-	 * not removed. There is no guard against zero standard deviation. Operates in place on {@code fp}.
+	 * not removed. Pixels in blocks with zero standard deviation are set to the display-range midpoint.
+	 * Operates in place on {@code fp}.
 	 *
 	 * @param blockRadiusX half width of the local block
 	 * @param blockRadiusY half height of the local block
@@ -127,8 +128,9 @@ public class CLLCN extends BlockStatistics {
 				final double std = var < 0 ? 0 : Math.sqrt(var);
 				final float v = fp.getf(i);
 				final double d = meanFactor * std;
+				final double s = d == 0 ? 0 : 0.5 / d * fpLength;
 
-				fp.setf(i, (float)((v - fpMean) / 2 / d * fpLength + fpMean));
+				fp.setf(i, (float)((v - fpMean) * s + fpMean));
 			}
 		}
 	}
@@ -215,8 +217,8 @@ public class CLLCN extends BlockStatistics {
 	/**
 	 * Centers and stretches in one pass: maps the local range
 	 * {@code [mean - meanFactor*std, mean + meanFactor*std]} of each pixel's block linearly onto the
-	 * display range {@code [fp.getMin(), fp.getMax()]}. There is no guard against zero standard
-	 * deviation. Operates in place on {@code fp}.
+	 * display range {@code [fp.getMin(), fp.getMax()]}. Pixels in blocks with zero standard deviation
+	 * are set to the display-range midpoint. Operates in place on {@code fp}.
 	 *
 	 * @param blockRadiusX half width of the local block
 	 * @param blockRadiusY half height of the local block
@@ -255,9 +257,9 @@ public class CLLCN extends BlockStatistics {
 				final double std = var < 0 ? 0 : Math.sqrt(var);
 				final float v = fp.getf(i);
 				final double d = meanFactor * std;
-				final double min = mean - d;
+				final double s = d == 0 ? 0 : 0.5 / d * fpLength;
 
-				fp.setf(i, (float)((v - min) / 2 / d * fpLength + fpMin));
+				fp.setf(i, (float)((v - mean) * s + fpLength / 2.0 + fpMin));
 			}
 		}
 	}
@@ -266,7 +268,7 @@ public class CLLCN extends BlockStatistics {
 	/**
 	 * Contrast-limited variant of {@link #runCenterStretch(int, int, float)}, using the same soft
 	 * limiter as {@link #runStretch(int, int, float, float, float)}. Pixels in blocks with zero standard
-	 * deviation end up as {@code NaN} (no guard). Operates in place on {@code fp}.
+	 * deviation are set to the display-range midpoint. Operates in place on {@code fp}.
 	 *
 	 * @param blockRadiusX half width of the local block
 	 * @param blockRadiusY half height of the local block
@@ -325,12 +327,8 @@ public class CLLCN extends BlockStatistics {
 						gamma,
 						gradientOnePointMinusLimit,
 						limitMinusGradientOnePointPowGamma);
-				final double min = mean - fpLength / s * 0.5;
 
-//				if (d != 0 )
-//					System.out.println(0.5 / d * fpLength + " " + s);
-
-				fp.setf(i, (float)((v - min) * s + fpMin));
+				fp.setf(i, (float)((v - mean) * s + fpLength / 2.0 + fpMin));
 			}
 		}
 	}
