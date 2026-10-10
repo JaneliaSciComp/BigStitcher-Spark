@@ -40,7 +40,6 @@ import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.SpimData;
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
@@ -123,11 +122,10 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	 * their static homes in multiview-reconstruction, and resolves {@code --referenceTP}: it defaults to the
 	 * timepoint of the first selected view and must otherwise be one of the selected timepoints.
 	 *
-	 * @throws SpimDataException if the dataset cannot be loaded
 	 * @throws IllegalArgumentException if the dataset or no views could be loaded, or if the reference
 	 *         timepoint is not part of the selected views
 	 */
-	public void initRegistrationParameters() throws SpimDataException
+	public void initRegistrationParameters()
 	{
 		// propagate log-cap knobs into their mvr static homes before any registration code runs
 		InterestPointMatchCreator.maxPerPairLog = maxPerPairLog;

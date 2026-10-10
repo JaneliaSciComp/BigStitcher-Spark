@@ -57,10 +57,8 @@ public abstract class AbstractBasic extends AbstractInfrastructure implements Ca
 	 *
 	 * @return the loaded project, or {@code null} if loading failed (a one-line error is printed to
 	 *         {@code stderr} instead of a stack trace)
-	 * @throws SpimDataException if the project cannot be loaded; this implementation catches it and
-	 *         returns {@code null} instead
 	 */
-	public SpimData2 loadSpimData2() throws SpimDataException
+	public SpimData2 loadSpimData2()
 	{
 		System.out.println( "'" + xmlURIString + "'" );
 		System.out.println( "xml: " + (xmlURI = URITools.toURI(xmlURIString)) );
@@ -87,9 +85,8 @@ public abstract class AbstractBasic extends AbstractInfrastructure implements Ca
 	 *
 	 * @param numFetcherThreads number of fetcher threads to use for loading image blocks
 	 * @return the loaded project, or {@code null} if loading failed
-	 * @throws SpimDataException if the project cannot be loaded
 	 */
-	public SpimData2 loadSpimData2( final int numFetcherThreads ) throws SpimDataException
+	public SpimData2 loadSpimData2( final int numFetcherThreads )
 	{
 		final SpimData2 data = loadSpimData2();
 		if ( data == null )
