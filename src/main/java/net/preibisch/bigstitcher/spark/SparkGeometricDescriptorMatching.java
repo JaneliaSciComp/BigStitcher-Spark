@@ -340,7 +340,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			System.out.println( "NO grouping." );
 
 			final ArrayList<MatchingTask<ViewId>> tasksList =
-					MatcherPairwiseTools.getTasksList( Spark.toViewIds( setup.getPairs() ), labelMapGlobal, matchAcrossLabels );
+					MatcherPairwiseTools.getTasksList( Spark.toViewIdPairs( setup.getPairs() ), labelMapGlobal, matchAcrossLabels );
 
 			System.out.println( "The following ViewIds will be matched to each other: ");
 			setup.getPairs().forEach( pair -> System.out.println( "\t" + Group.pvid( pair.getA() ) + " <=> " + Group.pvid( pair.getB() ) ) );
@@ -459,7 +459,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			rddResults = rdd.map( task ->
 			{
 				final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-				//final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
 
 				final ArrayList< ViewId > views = new ArrayList<>();
 				views.addAll( task.vA.getViews() );

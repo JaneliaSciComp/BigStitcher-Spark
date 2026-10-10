@@ -24,8 +24,8 @@ package net.preibisch.bigstitcher.spark.util;
 import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import org.apache.spark.SparkEnv;
 import org.slf4j.Logger;
@@ -41,7 +41,6 @@ import net.imglib2.FinalInterval;
 import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.img.Img;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Pair;
@@ -54,196 +53,16 @@ import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingRes
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
 /**
- * Static helpers for running BigStitcher / multiview-reconstruction code inside Spark jobs: converting
- * {@link ViewId}s, {@link Group}s of views, view pairs and {@link Interval}s to and from plain primitive arrays
- * (which Spark can serialize cheaply), re-wrapping {@code ViewDescription}-backed objects as plain
- * {@link ViewId}s, and loading a {@link SpimData2} instance configured for use inside a Spark task.
+ * Static helpers for running BigStitcher / multiview-reconstruction code inside Spark jobs: copying
+ * {@link ViewId}s, {@link Group}s of views and view pairs into plain, serializable instances (dropping
+ * {@code ViewDescription} state, which references the whole sequence description), converting
+ * {@link Interval}s to and from primitive arrays, and loading a {@link SpimData2} instance configured for use
+ * inside a Spark task.
  */
 public class Spark {
 
 	/** Maximum number of Spark partitions a job is split into; set from {@code --maxPartitions} (default 10000). */
 	public static int maxPartitions = 10_000;
-
-	/**
-	 * Converts serialized view ids back into {@link ViewId}s.
-	 *
-	 * @param serializedViewIds one {@code {timepointId, viewSetupId}} pair per view, as created by
-	 *        {@link #serializeViewIds(List)}
-	 * @return the corresponding {@link ViewId}s, in the same order
-	 */
-	public static List< ViewId > deserializeViewIds( final int[][] serializedViewIds )
-	{
-		final List< ViewId > viewIds = new ArrayList<>( serializedViewIds.length );
-		for ( int[] sid : serializedViewIds )
-			viewIds.add( deserializeViewId( sid ) );
-		return viewIds;
-	}
-	
-	/**
-	 * Converts a serialized pair of view ids back into a {@link Pair} of {@link ViewId}s.
-	 *
-	 * @param serializedPair two serialized view ids ({@code {timepointId, viewSetupId}} each), as created by
-	 *        {@link #serializeViewIdPairForRDD(Pair)}
-	 * @return the pair of {@link ViewId}s (entry 0 as {@code A}, entry 1 as {@code B})
-	 */
-	public static Pair<ViewId, ViewId> derserializeViewIdPairsForRDD( final int[][] serializedPair )
-	{
-		return new ValuePair<ViewId, ViewId>(deserializeViewId( serializedPair[ 0 ] ), deserializeViewId( serializedPair[ 1 ] ));
-	}
-
-	/**
-	 * Converts the {@code i}-th entry of an array of serialized view ids into a {@link ViewId}.
-	 *
-	 * @param serializedViewIds one {@code {timepointId, viewSetupId}} pair per view
-	 * @param i index of the entry to deserialize
-	 * @return the {@link ViewId} at index {@code i}
-	 */
-	public static ViewId deserializeViewIds( final int[][] serializedViewIds, final int i )
-	{
-		return deserializeViewId( serializedViewIds[i] );
-	}
-
-	/**
-	 * Converts a serialized view id back into a {@link ViewId}.
-	 *
-	 * @param serializedViewIds {@code {timepointId, viewSetupId}}, as created by {@link #serializeViewId(ViewId)}
-	 * @return the corresponding {@link ViewId}
-	 */
-	public static ViewId deserializeViewId( final int[] serializedViewIds )
-	{
-		return new ViewId( serializedViewIds[0], serializedViewIds[1] );
-	}
-
-	/**
-	 * Serializes {@link ViewId}s into a primitive array that Spark can ship to executors.
-	 *
-	 * @param viewIds the views to serialize
-	 * @return one {@code {timepointId, viewSetupId}} pair per view, in list order
-	 */
-	public static int[][] serializeViewIds( final List< ViewId > viewIds )
-	{
-		final int[][] serializedViewIds = new int[ viewIds.size() ][ 2 ];
-
-		for ( int i = 0; i < viewIds.size(); ++i )
-		{
-			serializedViewIds[ i ][ 0 ] = viewIds.get( i ).getTimePointId();
-			serializedViewIds[ i ][ 1 ] = viewIds.get( i ).getViewSetupId();
-		}
-
-		return serializedViewIds;
-	}
-
-	/**
-	 * Converts a serialized pair of view groups back into a {@link Pair} of {@link Group}s of {@link ViewId}s.
-	 *
-	 * @param serializedPair {@code [group][view]{timepointId, viewSetupId}} with exactly two groups, as created by
-	 *        {@link #serializeGroupedViewIdPairForRDD(Pair)}
-	 * @return the pair of groups (group 0 as {@code A}, group 1 as {@code B})
-	 */
-	public static Pair<Group<ViewId>, Group<ViewId>> deserializeGroupedViewIdPairForRDD( final int[][][] serializedPair )
-	{
-		final ArrayList< ViewId > pairA = new ArrayList<>( serializedPair[ 0 ].length );
-		final ArrayList< ViewId > pairB = new ArrayList<>( serializedPair[ 1 ].length );
-
-		for ( int a = 0; a < serializedPair[ 0 ].length; ++a )
-			pairA.add( deserializeViewId( serializedPair[ 0 ][ a ]) );
-
-		for ( int b = 0; b < serializedPair[ 1 ].length; ++b )
-			pairB.add( deserializeViewId( serializedPair[ 1 ][ b ]) );
-
-		return new ValuePair<Group<ViewId>, Group<ViewId>>( new Group<>( pairA ), new Group<>( pairB ) );
-	}
-
-	/**
-	 * Serializes a list of view pairs into primitive arrays suitable for {@code JavaSparkContext.parallelize}.
-	 *
-	 * @param pairs the view pairs to serialize
-	 * @return one {@code int[2][2]} array per pair (see {@link #serializeViewIdPairForRDD(Pair)}), in list order
-	 */
-	public static ArrayList<int[][]> serializeViewIdPairsForRDD( final List< Pair<ViewId, ViewId> > pairs )
-	{
-		final ArrayList<int[][]> ser = new ArrayList<>();
-
-		for ( final Pair<ViewId, ViewId> pair : pairs )
-			ser.add( serializeViewIdPairForRDD( pair ) );
-
-		return ser;
-	}
-
-	/**
-	 * Serializes a pair of views into a primitive array.
-	 *
-	 * @param pair the view pair to serialize
-	 * @return {@code {serialized A, serialized B}}, each entry being {@code {timepointId, viewSetupId}}
-	 */
-	public static int[][] serializeViewIdPairForRDD( final Pair<ViewId, ViewId> pair )
-	{
-		final int[][] pairInt = new int[2][];
-
-		pairInt[0] = serializeViewId( pair.getA() );
-		pairInt[1] = serializeViewId( pair.getB() );
-
-		return pairInt;
-	}
-
-	/**
-	 * Serializes a list of pairs of view groups into primitive arrays suitable for
-	 * {@code JavaSparkContext.parallelize}.
-	 *
-	 * @param pairs the pairs of view groups to serialize
-	 * @return one {@code int[2][][]} array per pair (see {@link #serializeGroupedViewIdPairForRDD(Pair)}), in list
-	 *         order
-	 */
-	public static ArrayList<int[][][]> serializeGroupedViewIdPairsForRDD( final List< ? extends Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>>> pairs )
-	{
-		final ArrayList<int[][][]> ser = new ArrayList<>();
-
-		for ( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair : pairs )
-			ser.add( serializeGroupedViewIdPairForRDD( pair ) );
-
-		return ser;
-	}
-
-	/**
-	 * Serializes a pair of view groups into a primitive array.
-	 *
-	 * @param pair the pair of view groups to serialize
-	 * @return {@code [group][view]{timepointId, viewSetupId}}, with the views of {@code A} at index 0 and those of
-	 *         {@code B} at index 1
-	 */
-	public static int[][][] serializeGroupedViewIdPairForRDD( final Pair<? extends Group<? extends ViewId>, ? extends Group<? extends ViewId>> pair )
-	{
-		final int[][][] pairInt = new int[2][][];
-
-		pairInt[0] = new int[ pair.getA().getViews().size() ][];
-		pairInt[1] = new int[ pair.getB().getViews().size() ][];
-
-		int i = 0;
-		for ( final ViewId viewId : pair.getA().getViews() )
-			pairInt[0][i++] = serializeViewId( viewId );
-
-		i = 0;
-		for ( final ViewId viewId : pair.getB().getViews() )
-			pairInt[1][i++] = serializeViewId( viewId );
-
-		return pairInt;
-	}
-
-	/**
-	 * Serializes {@link ViewId}s into a list of primitive arrays suitable for {@code JavaSparkContext.parallelize}.
-	 *
-	 * @param viewIds the views to serialize
-	 * @return one {@code {timepointId, viewSetupId}} array per view, in list order
-	 */
-	public static ArrayList<int[]> serializeViewIdsForRDD( final List< ViewId > viewIds )
-	{
-		final ArrayList<int[]> serializedViewIds = new ArrayList<>();
-
-		for ( int i = 0; i < viewIds.size(); ++i )
-			serializedViewIds.add( serializeViewId( viewIds.get( i ) ) );
-
-		return serializedViewIds;
-	}
 
 	/**
 	 * Reads interest points back from a 2D image of coordinates (e.g. the temporary N5 {@code points} dataset
@@ -272,17 +91,6 @@ public class Spark {
 	}
 
 	/**
-	 * Serializes a view id into a primitive array.
-	 *
-	 * @param viewId the view to serialize
-	 * @return {@code {timepointId, viewSetupId}}
-	 */
-	public static int[] serializeViewId( final ViewId viewId )
-	{
-		return new int[] { viewId.getTimePointId(), viewId.getViewSetupId() };
-	}
-
-	/**
 	 * Converts a serialized interval back into an {@link Interval}.
 	 *
 	 * @param serializedInterval {@code {min, max}}, as created by {@link #serializeInterval(Interval)}
@@ -306,15 +114,15 @@ public class Spark {
 
 	/**
 	 * A {@link Serializable} stand-in for a {@link PairwiseStitchingResult} over {@link ViewId}s that stores the
-	 * view pair, affine transform and bounding box as primitive arrays, so the result of a pairwise stitching
-	 * task can be returned from a Spark executor.
+	 * view pair as plain {@link Group}s of {@link ViewId}s and the affine transform and bounding box as primitive
+	 * arrays, so the result of a pairwise stitching task can be returned from a Spark executor.
 	 */
 	public static class SerializablePairwiseStitchingResult implements Serializable
 	{
 		private static final long serialVersionUID = -8920256594391301778L;
 
-		/** The compared pair of view groups, serialized as {@code [group][view]{timepointId, viewSetupId}}. */
-		final int[][][] pair; // Pair< Group<ViewId>, Group<ViewId> > pair;
+		/** The compared pair of view groups, as plain {@link ViewId}s. */
+		final Group< ViewId > groupA, groupB; // Pair< Group<ViewId>, Group<ViewId> > pair;
 		/** The 3D affine transform mapping A to B, as a 3 by 4 matrix ({@code matrix[row][column]}). */
 		final double[][] matrix = new double[3][4]; //AffineTransform3D transform;
 		/** Minimum and maximum of the bounding box (in global space) in which the pair was compared. */
@@ -335,7 +143,8 @@ public class Spark {
 			this.hash = result.getHash();
 			this.min = result.getBoundingBox().minAsDoubleArray();
 			this.max = result.getBoundingBox().maxAsDoubleArray();
-			this.pair = Spark.serializeGroupedViewIdPairForRDD( result.pair() );
+			this.groupA = Spark.toGroupViewIds( result.pair().getA() );
+			this.groupB = Spark.toGroupViewIds( result.pair().getB() );
 			((AffineTransform3D)result.getTransform()).toMatrix( matrix );
 		}
 
@@ -350,7 +159,7 @@ public class Spark {
 			t.set( matrix );
 
 			return new PairwiseStitchingResult<>(
-					Spark.deserializeGroupedViewIdPairForRDD( pair ),
+					new ValuePair<>( groupA, groupB ),
 					new FinalRealInterval(min, max),
 					t,
 					r,
@@ -408,25 +217,46 @@ public class Spark {
 	private static final Logger LOG = LoggerFactory.getLogger(Spark.class);
 
 	/**
-	 * Copies view pairs into plain {@link ViewId}/{@link ValuePair} instances, dropping any subclass state
-	 * (e.g. {@code ViewDescription}) so the list can be serialized by Spark.
+	 * Copies a view id into a plain {@link ViewId}, dropping any subclass state (e.g. {@code ViewDescription},
+	 * which references the whole sequence description and therefore cannot be serialized by Spark).
+	 *
+	 * @param viewId the view to copy
+	 * @return a new plain {@link ViewId} with the same timepoint and view setup id
+	 */
+	public static ViewId toViewId( final ViewId viewId )
+	{
+		return new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() );
+	}
+
+	/**
+	 * Copies views into plain {@link ViewId}s (see {@link #toViewId(ViewId)}) so the list can be serialized by
+	 * Spark.
+	 *
+	 * @param viewIds the views to copy
+	 * @return a new list of plain {@link ViewId}s, in iteration order
+	 */
+	public static ArrayList< ViewId > toViewIds( final Collection< ? extends ViewId > viewIds )
+	{
+		final ArrayList< ViewId > serializableList = new ArrayList<>( viewIds.size() );
+
+		for ( final ViewId viewId : viewIds )
+			serializableList.add( toViewId( viewId ) );
+
+		return serializableList;
+	}
+
+	/**
+	 * Copies view pairs into plain {@link ViewId}/{@link ValuePair} instances (see {@link #toViewId(ViewId)}).
+	 * Note that {@link ValuePair} itself is not {@link Serializable}.
 	 *
 	 * @param pairList the pairs to copy
 	 * @return a new list of pairs of plain {@link ViewId}s, in the same order
 	 */
-	public static ArrayList< Pair<ViewId, ViewId> > toViewIds( final List<Pair<ViewId, ViewId>> pairList )
+	public static ArrayList< Pair<ViewId, ViewId> > toViewIdPairs( final List< ? extends Pair< ? extends ViewId, ? extends ViewId > > pairList )
 	{
 		final ArrayList< Pair<ViewId, ViewId> > serializableList = new ArrayList<>();
 
-		pairList.forEach( pair -> serializableList.add(
-				new ValuePair<>(
-						new ViewId(
-								pair.getA().getTimePointId(),
-								pair.getA().getViewSetupId()),
-						new ViewId(
-								pair.getB().getTimePointId(),
-								pair.getB().getViewSetupId())
-						)));
+		pairList.forEach( pair -> serializableList.add( new ValuePair<>( toViewId( pair.getA() ), toViewId( pair.getB() ) ) ) );
 
 		return serializableList;
 	}
@@ -438,7 +268,7 @@ public class Spark {
 	 * @param pairList the pairs of groups to copy
 	 * @return a new list of pairs of groups of plain {@link ViewId}s, in the same order
 	 */
-	public static ArrayList< Pair<Group<ViewId>, Group<ViewId>> > toGroupViewIds( final List<Pair<Group<ViewId>, Group<ViewId>>> pairList )
+	public static ArrayList< Pair<Group<ViewId>, Group<ViewId>> > toGroupViewIds( final List< ? extends Pair< ? extends Group< ? extends ViewId >, ? extends Group< ? extends ViewId > > > pairList )
 	{
 		final ArrayList< Pair<Group<ViewId>, Group<ViewId>> > serializableList = new ArrayList<>();
 
@@ -457,11 +287,8 @@ public class Spark {
 	 * @param group the group to copy
 	 * @return a new group containing a plain {@link ViewId} for each view of {@code group}
 	 */
-	public static Group<ViewId> toGroupViewIds( final Group<ViewId> group )
+	public static Group<ViewId> toGroupViewIds( final Group< ? extends ViewId > group )
 	{
-		return new Group<>(
-				group.getViews().stream().map( viewId -> new ViewId(
-						viewId.getTimePointId(),
-						viewId.getViewSetupId()) ).collect( Collectors.toList() ) );
+		return new Group<>( toViewIds( group.getViews() ) );
 	}
 }

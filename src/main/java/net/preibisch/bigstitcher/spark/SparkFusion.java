@@ -1131,7 +1131,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private static final class PerUTaskSpec implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
-		final int[] uvidSerialized;
+		final ViewId uvid;
 		final URI xmlURI;
 		final URI outPathURI;
 		final StorageFormat storageType;
@@ -1149,7 +1149,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > donatedNails;
 
 		PerUTaskSpec(
-				final int[] uvidSerialized,
+				final ViewId uvid,
 				final URI xmlURI, final URI outPathURI, final StorageFormat storageType,
 				final double anisotropyFactor,
 				final String correspondenceLabel, final int minNumCorrespondences,
@@ -1159,7 +1159,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				final double[] dfieldSpacing, final int[] dfieldBlockSize, final DfieldType dfieldType,
 				final List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > donatedNails )
 		{
-			this.uvidSerialized = uvidSerialized;
+			this.uvid = uvid;
 			this.xmlURI = xmlURI;
 			this.outPathURI = outPathURI;
 			this.storageType = storageType;
@@ -1187,7 +1187,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private static final class PerUTaskResult implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
-		final int[] uvidSerialized;
+		final ViewId uvid;
 		final String dsPath;
 		final long[] bboxMin;
 		final long[] bboxMax;
@@ -1196,12 +1196,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records;
 
 		PerUTaskResult(
-				final int[] uvidSerialized, final String dsPath,
+				final ViewId uvid, final String dsPath,
 				final long[] bboxMin, final long[] bboxMax, final long[] numBlocks,
 				final List< DfieldBlockSpec > blockSpecs,
 				final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records )
 		{
-			this.uvidSerialized = uvidSerialized;
+			this.uvid = uvid;
 			this.dsPath = dsPath;
 			this.bboxMin = bboxMin;
 			this.bboxMax = bboxMax;
@@ -1342,7 +1342,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		for ( final ViewId uvid : underlyingToCompute )
 		{
 			perUSpecs.add( new PerUTaskSpec(
-					Spark.serializeViewId( uvid ),
+					uvid,
 					xmlURIFinal, outPathURIFinal, storageTypeFinal,
 					anisotropyFactor,
 					correspondenceLabel, minNumCorrespondences,
@@ -1365,7 +1365,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final List< PerUTaskResult > perUResults = sc.parallelize(
 					perUSpecs, Math.min( Spark.maxPartitions, perUSpecs.size() ) ).map( spec ->
 			{
-				final ViewId uvid = Spark.deserializeViewId( spec.uvidSerialized );
+				final ViewId uvid = spec.uvid;
 				final SpimData2 data = Spark.getSparkJobSpimData2( spec.xmlURI );
 				final SplitViewerImgLoader sil = ( SplitViewerImgLoader ) data.getSequenceDescription().getImgLoader();
 				final SequenceDescription uSD = sil.underlyingSequenceDescription();
@@ -1425,7 +1425,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							blockSpecs.add( new DfieldBlockSpec( new long[] { bx, by, bz }, bbox, lm, dsPath ) );
 
 				return new PerUTaskResult(
-						spec.uvidSerialized, dsPath,
+						spec.uvid, dsPath,
 						bbox.minAsLongArray(), bbox.maxAsLongArray(), numBlocks,
 						blockSpecs, records );
 			} ).collect();
@@ -1437,7 +1437,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					for ( final SplitImgLoaderThinPlateSplineFusion.LandmarkRecord rec : res.records )
 						landmarkVisitor.accept( rec );
 
-				final ViewId uvid = Spark.deserializeViewId( res.uvidSerialized );
+				final ViewId uvid = res.uvid;
 				final Interval bbox = new FinalInterval( res.bboxMin, res.bboxMax );
 				System.out.println( "Phase 1.5: " + Group.pvid( uvid )
 						+ " bbox=" + Util.printInterval( bbox )

@@ -217,12 +217,18 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		final JavaSparkContext sc = new JavaSparkContext(conf);
 		sc.setLogLevel("ERROR");
 
-		final JavaRDD<int[][][]> rdd = sc.parallelize( Spark.serializeGroupedViewIdPairsForRDD( groupedPairs ), Math.min( Spark.maxPartitions, groupedPairs.size() ) );
+		// plain copies of the groups (the dataset's ViewDescriptions cannot be serialized by Spark),
+		// wrapped in Tuple2 since ValuePair is not Serializable
+		final List< Tuple2< Group< ViewId >, Group< ViewId > > > tasks = Spark.toGroupViewIds( groupedPairs ).stream()
+				.map( pair -> new Tuple2<>( pair.getA(), pair.getB() ) )
+				.collect( Collectors.toList() );
 
-		final JavaRDD<Tuple2<int[][][], Spark.SerializablePairwiseStitchingResult>> rddResults = rdd.map( serializedGroupPair ->
+		final JavaRDD<Tuple2<Group<ViewId>, Group<ViewId>>> rdd = sc.parallelize( tasks, Math.min( Spark.maxPartitions, tasks.size() ) );
+
+		final JavaRDD<Tuple2<Tuple2<Group<ViewId>, Group<ViewId>>, Spark.SerializablePairwiseStitchingResult>> rddResults = rdd.map( groupPair ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-			final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( serializedGroupPair );
+			final Pair<Group<ViewId>, Group<ViewId>> pair = new ValuePair<>( groupPair._1(), groupPair._2() );
 			final ViewRegistrations vrs = data.getViewRegistrations();
 
 			final PairwiseStitchingParameters params = new PairwiseStitchingParameters();
@@ -303,7 +309,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			{
 				System.out.println( new Date( System.currentTimeMillis() ) + ": Compute pairwise: " + pair.getA() + " <> " + pair.getB() + ": No shift found." );
 
-				return new Tuple2<>(serializedGroupPair, null);
+				return new Tuple2<>( groupPair, null );
 			}
 			else
 			{
@@ -326,7 +332,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 								result.getA().getB(),
 								oldTransformHash );
 
-				return new Tuple2<>( serializedGroupPair, new Spark.SerializablePairwiseStitchingResult( pairwiseStitchingResult ) );
+				return new Tuple2<>( groupPair, new Spark.SerializablePairwiseStitchingResult( pairwiseStitchingResult ) );
 			}
 		});
 
@@ -337,9 +343,9 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 		System.out.println( "\nCollecting results\n" );
 
-		for ( final Tuple2<int[][][], SerializablePairwiseStitchingResult> result : rddResults.collect() )
+		for ( final Tuple2<Tuple2<Group<ViewId>, Group<ViewId>>, SerializablePairwiseStitchingResult> result : rddResults.collect() )
 		{
-			final Pair<Group<ViewId>, Group<ViewId>> pair = Spark.deserializeGroupedViewIdPairForRDD( result._1() );
+			final Pair<Group<ViewId>, Group<ViewId>> pair = new ValuePair<>( result._1()._1(), result._1()._2() );
 
 			if (result._2() != null )
 			{
