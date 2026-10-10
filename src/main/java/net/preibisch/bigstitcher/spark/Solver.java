@@ -311,7 +311,6 @@ public class Solver extends AbstractRegistration
 
 		final PointMatchCreator pmc;
 
-		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
 			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
 		else
@@ -489,15 +488,18 @@ public class Solver extends AbstractRegistration
 	 * {@code viewIdsGlobal}. If {@code vsComparisonPairs} is given, only results whose two view setup IDs
 	 * form an allowed pair are kept. Results whose stored hash does not match the current
 	 * {@link ViewRegistration}s of the two views (i.e. the views were transformed after stitching) are
-	 * dropped with an explanatory message.
+	 * dropped with an explanatory message. Selected views without any remaining result are reported and
+	 * still take part in the solve (without links), so that the two-round methods can place them using
+	 * the metadata weak links, like {@link #setupPointMatchesFromInterestPoints} does for interest points.
 	 *
 	 * @param dataGlobal the dataset holding the stitching results and view registrations
 	 * @param viewIdsGlobal the views being solved; results involving any other view are ignored
 	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
 	 *             allow all pairs
-	 * @return a creator over the remaining stitching results, or {@code null} if no link remains
+	 * @return a creator over the remaining stitching results (plus the unconnected selected views), or
+	 *         {@code null} if no link remains
 	 */
-	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
+	public static PointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
 			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
@@ -552,7 +554,55 @@ public class Solver extends AbstractRegistration
 			return null;
 		}
 
-		return new ImageCorrelationPointMatchCreator(results);
+		final ImageCorrelationPointMatchCreator pmc = new ImageCorrelationPointMatchCreator( results );
+
+		// ImageCorrelationPointMatchCreator only knows the views of its results, so a selected view without
+		// any (remaining) stitching result would get no tile in the global optimization: one-round methods
+		// store identity for it anyway, but the two-round methods could not place it using the metadata weak
+		// links either. Add such views to the set of views (without links), as the interest point path does.
+		final HashSet< ViewId > connectedViews = pmc.getAllViews();
+		final List< ViewId > unconnectedViews =
+				viewIdsGlobal.stream().filter( v -> !connectedViews.contains( v ) ).sorted().collect( Collectors.toList() );
+
+		System.out.println( "Total number of pairs of views that are connected: " + results.size() );
+		System.out.println( "Total number of views: " + viewIdsGlobal.size() );
+		System.out.println( "Total number of connected views: " + connectedViews.size() + " (" + unconnectedViews.size() + " missing that are not connected)");
+
+		if ( unconnectedViews.isEmpty() )
+			return pmc;
+
+		System.out.println( "The following views have no stitching result and are added to the global optimization without links:" );
+		unconnectedViews.forEach( v -> System.out.println( "\t" + Group.pvid( v ) ) );
+
+		final HashSet< ViewId > allViews = new HashSet<>( connectedViews );
+		allViews.addAll( unconnectedViews );
+
+		return new PointMatchCreator()
+		{
+			@Override
+			public HashSet< ViewId > getAllViews()
+			{
+				return new HashSet<>( allViews ); // GlobalOpt modifies the returned set
+			}
+
+			@Override
+			public < M extends Model< M > > void assignWeights(
+					final HashMap< ViewId, Tile< M > > tileMap,
+					final ArrayList< Group< ViewId > > groups,
+					final Collection< ViewId > fixedViews )
+			{
+				pmc.assignWeights( tileMap, groups, fixedViews );
+			}
+
+			@Override
+			public < M extends Model< M > > void assignPointMatches(
+					final HashMap< ViewId, Tile< M > > tileMap,
+					final ArrayList< Group< ViewId > > groups,
+					final Collection< ViewId > fixedViews )
+			{
+				pmc.assignPointMatches( tileMap, groups, fixedViews );
+			}
+		};
 	}
 
 	/**
