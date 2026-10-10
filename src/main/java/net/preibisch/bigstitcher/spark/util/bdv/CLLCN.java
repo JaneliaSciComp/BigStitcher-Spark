@@ -208,6 +208,11 @@ public class CLLCN extends BlockStatistics {
 						gradientOnePointMinusLimit,
 						limitMinusGradientOnePointPowGamma);
 
+				// TODO: fpLength is applied twice here: once inside the argument of limit() (as in the
+				// unlimited runStretch, where s = 0.5 / d * fpLength is used directly) and again below.
+				// Below the limit this stretches fpLength times stronger than the unlimited variant, and
+				// the limited runCenterStretch does not multiply again either. Same in the hot-knife
+				// original (org.janelia.saalfeldlab.hotknife.ops.CLLCN), so kept for now; verify intent.
 				fp.setf(i, (float)((v - fpMean) * s * fpLength + fpMean));
 			}
 		}
