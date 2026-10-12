@@ -42,7 +42,7 @@ import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.SpimData;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
-import net.preibisch.legacy.io.IOFunctions;
+import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.RegistrationType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
@@ -175,7 +175,7 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	{
 		final PairwiseSetup< ViewId > setup = pairwiseSetupInstance( this.registrationTP, viewIdsGlobal, groupsGlobal, this.rangeTP, this.referenceTP );
 		final OverlapDetection<ViewId> overlapDetection = getOverlapDetection( dataGlobal, viewReg );
-		identifySubsets( setup, overlapDetection );
+		Interest_Point_Registration.identifySubsets( setup, overlapDetection );
 
 		return setup;
 	}
@@ -198,17 +198,6 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			return new ReferenceTimepoint( views, groups, referenceTP );
 	}
 
-
-	// TODO: move to multiview-reconstruction (Interest_Point_Registration)
-	public static void identifySubsets( final PairwiseSetup< ViewId > setup, final OverlapDetection< ViewId > overlapDetection )
-	{
-		IOFunctions.println( "Defined pairs, removed " + setup.definePairs().size() + " redundant view pairs." );
-		IOFunctions.println( "Removed " + setup.removeNonOverlappingPairs( overlapDetection ).size() + " pairs because they do not overlap (Strategy='" + overlapDetection.getClass().getSimpleName() + "')" );
-		setup.reorderPairs();
-		setup.detectSubsets();
-		setup.sortSubsets();
-		IOFunctions.println( "Identified " + setup.getSubsets().size() + " subsets " );
-	}
 
 	// TODO: move to multiview-reconstruction (BasicRegistrationParameters)
 	public static OverlapDetection< ViewId > getOverlapDetection( final SpimData spimData, final OverlapType overlapType )
