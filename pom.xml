@@ -83,8 +83,20 @@
         <package-name>net.preibisch.bigstitcher.spark</package-name>
 
         <scijava.jvm.version>21</scijava.jvm.version>
+        <!-- Link to the Java 21 API docs (with module info) instead of the Java 8 default, which javadoc
+             otherwise reports as "packages ... are in the unnamed module". -->
+        <scijava.javadoc.url.java>https://javadoc.scijava.org/Java21/</scijava.javadoc.url.java>
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
+
+        <!-- pom-scijava defaults releases to Maven Central (sonatype-oss-release). Like multiview-reconstruction we
+             release to maven.scijava.org; the scijava CI script reads this property to pick the credentials. -->
+        <releaseProfiles>sign,deploy-to-scijava</releaseProfiles>
+
+        <!-- Fat jar knobs, driven by the fatjar / fatjar-local profiles (see <build> and <profiles>). -->
+        <spark.scope>provided</spark.scope>
+        <fatjar.skip>true</fatjar.skip>
+        <fatjar.classifier>cluster</fatjar.classifier>
 
         <imglib2-cache.version>1.0.0-beta-20</imglib2-cache.version>
         <imglib2-algorithm.version>0.18.3</imglib2-algorithm.version>
@@ -92,8 +104,8 @@
         <bigdataviewer-core.version>10.6.12</bigdataviewer-core.version>
         <bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-        <multiview-reconstruction.version>9.0.13</multiview-reconstruction.version>
-        <BigStitcher.version>3.0.6</BigStitcher.version>
+        <multiview-reconstruction.version>9.1.1</multiview-reconstruction.version>
+        <BigStitcher.version>3.1.0</BigStitcher.version>
 
         <!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
         <n5.version>4.0.1</n5.version>
@@ -274,7 +286,7 @@
                     <artifactId>stax-api</artifactId>
                 </exclusion>
             </exclusions>
-            <scope>provided</scope>
+            <scope>${spark.scope}</scope>
         </dependency>
         <dependency>
             <groupId>org.scala-lang</groupId>
@@ -403,10 +415,9 @@
         <dependency>
             <groupId>org.openmicroscopy</groupId>
             <artifactId>ome-common</artifactId>
-            <version>6.0.4</version>
             <exclusions>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -414,10 +425,9 @@
         <dependency>
             <groupId>ome</groupId>
             <artifactId>formats-bsd</artifactId>
-            <version>6.5.1</version>
             <exclusions>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -425,14 +435,13 @@
         <dependency>
             <groupId>ome</groupId>
             <artifactId>formats-gpl</artifactId>
-            <version>6.5.1</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.systems.cisd</groupId>
                     <artifactId>jhdf5</artifactId>
                 </exclusion>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
