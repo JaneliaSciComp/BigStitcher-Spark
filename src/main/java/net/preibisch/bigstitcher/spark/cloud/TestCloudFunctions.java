@@ -27,6 +27,13 @@ import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import util.URITools;
 
+/**
+ * Command-line diagnostic for cloud deployments: reads a dataset XML from the public
+ * {@code s3://janelia-bigstitcher-spark/} bucket, optionally writes a text file and an N5 container into
+ * a user-provided bucket ({@code --testBucketWriting}), and finally runs a small Spark job that processes
+ * 1000 items (2 s sleep each) and prints which executor handled which item. Useful to verify
+ * credentials, bucket access and the Spark setup, e.g. on AWS EMR.
+ */
 public class TestCloudFunctions implements Callable<Void>
 {
 	@Option(names = "--repartition", description = "specify number of Spark partitions (note to set spark.dynamicAllocation.enabled=false on AWS), if set to 0 as many partitions as jobs will be created.")

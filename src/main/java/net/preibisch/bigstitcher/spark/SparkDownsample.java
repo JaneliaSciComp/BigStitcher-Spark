@@ -37,7 +37,6 @@ import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
-import mpicbg.spim.data.SpimDataException;
 import net.imglib2.util.Util;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractInfrastructure;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -49,6 +48,13 @@ import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
+/**
+ * Spark command-line tool that adds downsampling levels to an existing N5/Zarr/HDF5 container
+ * ({@code --n5PathIn}, {@code --n5DatasetIn}): for every step in {@code --downsampling} a new dataset
+ * from {@code --n5DatasetsOut} is created with the block size, data type and compression of the input,
+ * and its blocks are computed in parallel from the previous level. 5D OME-Zarr arrays are processed
+ * per channel and timepoint. A dry run is not supported.
+ */
 public class SparkDownsample extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = 5040141824053748124L;
@@ -238,7 +244,7 @@ public class SparkDownsample extends AbstractInfrastructure implements Callable<
 		return null;
 	}
 
-	public static void main(final String... args) throws SpimDataException {
+	public static void main(final String... args) {
 
 		System.out.println(Arrays.toString(args));
 

@@ -52,9 +52,24 @@ import net.imglib2.view.IntervalView;
 import net.imglib2.view.MixedTransformView;
 import util.Grid;
 
+/**
+ * Static helpers around the views of a {@link SpimData} dataset: looking up dimensions and
+ * registrations, estimating transformed bounding boxes, interval arithmetic and
+ * {@link #findOverlappingBlocks(SpimData, ViewId, Interval, AffineTransform3D, int)}, which determines
+ * the cells of a (multi-resolution) image that have to be prefetched to render a given block in
+ * world coordinates.
+ */
 public class ViewUtil
 {
-	// code from: https://stackoverflow.com/questions/852665/command-line-progress-bar-in-java
+	/**
+	 * Prints a simple ten-segment text progress bar to {@code System.out}, overwriting the current line
+	 * (carriage return); a newline is appended once {@code remain == total}.
+	 * Code from: https://stackoverflow.com/questions/852665/command-line-progress-bar-in-java
+	 *
+	 * @param remain number of items processed so far
+	 * @param total total number of items
+	 * @throws IllegalArgumentException if {@code remain > total}
+	 */
 	public static void progressPercentage(int remain, int total) {
 		if (remain > total) {
 			throw new IllegalArgumentException();
@@ -86,6 +101,13 @@ public class ViewUtil
 		}
 	}
 
+	/**
+	 * Number of pixels in an interval, i.e. the product of its dimensions.
+	 *
+	 * @param interval the interval, may be {@code null}
+	 * @return the product of all dimensions, or {@code 0} if {@code interval} is {@code null} or has no
+	 *         dimensions
+	 */
 	public static long size( final Interval interval )
 	{
 		if ( interval == null || interval.numDimensions() == 0 )
@@ -99,11 +121,25 @@ public class ViewUtil
 		return size;
 	}
 
+	/**
+	 * Tests whether two intervals share at least one pixel.
+	 *
+	 * @param interval1 first interval
+	 * @param interval2 second interval
+	 * @return {@code true} if the intersection of both intervals is non-empty
+	 */
 	public static boolean overlaps( final Interval interval1, final Interval interval2 )
 	{
 		return !Intervals.isEmpty( Intervals.intersect( interval1, interval2 ) );
 	}
 
+	/**
+	 * Returns the image size of a view as recorded in its {@code ViewSetup} (no image data is loaded).
+	 *
+	 * @param data the dataset
+	 * @param viewId the view whose dimensions to look up
+	 * @return the dimensions stored in the view's {@code ViewSetup}
+	 */
 	public static Dimensions getDimensions(final SpimData data, final ViewId viewId ) throws IllegalArgumentException
 	{
 		return data.getSequenceDescription().getViewDescription( viewId ).getViewSetup().getSize();
@@ -118,6 +154,15 @@ public class ViewUtil
 		*/
 	}
 
+	/**
+	 * Looks up the {@link ViewRegistration} of a view and calls {@code updateModel()} on it so that its
+	 * concatenated model reflects the current list of transformations.
+	 *
+	 * @param data the dataset
+	 * @param viewId the view whose registration to look up
+	 * @return the (updated) registration
+	 * @throws IllegalArgumentException if the dataset has no registration for {@code viewId}
+	 */
 	public static ViewRegistration getViewRegistration(final SpimData data, final ViewId viewId ) throws IllegalArgumentException
 	{
 		final ViewRegistration reg = data.getViewRegistrations().getViewRegistration( viewId );
@@ -148,8 +193,13 @@ public class ViewUtil
 
 	/**
 	 * Get the estimated bounding box of the specified view in world coordinates.
-	 * This transforms the image dimension for {@code viewId} with the {@code
-	 * ViewRegistration} for {@code viewId}, and takes the bounding box.
+	 * This transforms the image dimensions for {@code viewId} with the given
+	 * transformation {@code t} and takes the smallest containing integer interval.
+	 *
+	 * @param data the dataset (used to look up the image dimensions of {@code viewId})
+	 * @param viewId the view whose bounding box to estimate
+	 * @param t the transformation from image to world coordinates applied to the view
+	 * @return the smallest integer interval containing the transformed image bounds
 	 */
 	public static Interval getTransformedBoundingBox( final SpimData data, final ViewId viewId, final AffineTransform3D t ) throws IllegalArgumentException
 	{
@@ -158,6 +208,12 @@ public class ViewUtil
 		return Intervals.smallestContainingInterval( t.estimateBounds( new FinalInterval( dim ) ) );
 	}
 
+	/**
+	 * Formats a {@link ViewId} as a small JSON-like string, e.g. {@code {"setupId": 3, "timePointId": 0}}.
+	 *
+	 * @param viewId the view id, may be {@code null}
+	 * @return the formatted string, or {@code null} if {@code viewId} is {@code null}
+	 */
 	public static String viewIdToString(final ViewId viewId) {
 		return viewId == null ?
 			   null : "{\"setupId\": " + viewId.getViewSetupId() + ", \"timePointId\": " + viewId.getTimePointId() + "}";
@@ -375,6 +431,8 @@ public class ViewUtil
 	 * prefetching. In a cached `CellImg`, this will trigger the loading of the
 	 * containing `Cell`. Holding on to the pixel (of type 'T') returned by
 	 * 'call()' prevents garbage-collection of the cached 'Cell'!
+	 *
+	 * @param <T> pixel type of the {@code RandomAccessible}
 	 */
 	public static class PrefetchPixel< T > implements Callable< Object >
 	{

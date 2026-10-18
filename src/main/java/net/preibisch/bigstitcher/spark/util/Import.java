@@ -34,8 +34,24 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBox;
 import net.preibisch.mvrecon.process.boundingbox.BoundingBoxTools;
 
+/**
+ * Static helpers for turning command-line arguments of the BigStitcher-Spark tools into dataset objects:
+ * selecting {@link ViewId}s by explicit id or by angle/channel/illumination/tile/timepoint ids, looking up
+ * bounding boxes, and parsing comma-separated numbers, id lists and downsampling specifications.
+ */
 public class Import {
 
+	/**
+	 * Resolves the bounding box to process: the one titled {@code boundingBoxName} as stored in the dataset XML,
+	 * or, if {@code boundingBoxName} is {@code null}, the maximal bounding box around {@code viewIds} (titled
+	 * {@code "All Views"}).
+	 *
+	 * @param data the dataset
+	 * @param viewIds the views whose extent defines the maximal bounding box when no name is given
+	 * @param boundingBoxName title of a bounding box stored in the XML, or {@code null} for the maximal one
+	 * @return the selected bounding box
+	 * @throws IllegalArgumentException if a name is given but no bounding box with that title exists in the XML
+	 */
 	public static BoundingBox getBoundingBox(
 			final SpimData2 data,
 			final List< ViewId > viewIds,
@@ -65,6 +81,15 @@ public class Import {
 		return bb;
 	}
 
+	/**
+	 * Checks that an intensity range was given when fusing to an integer output type.
+	 *
+	 * @param datatype the output data type
+	 * @param minIntensity the minimum input intensity to map to the output range, may be {@code null}
+	 * @param maxIntensity the maximum input intensity to map to the output range, may be {@code null}
+	 * @throws IllegalArgumentException if {@code datatype} is {@code UINT8} or {@code UINT16} and either intensity
+	 *         is {@code null}
+	 */
 	public static void validateInputParameters(
 			final DataTypeFusion datatype,
 			final Double minIntensity,
@@ -76,6 +101,17 @@ public class Import {
 		}
 	}
 
+	/**
+	 * Checks that views are selected either by explicit view ids or by attribute ids, but not both.
+	 *
+	 * @param vi explicit view ids ({@code -vi}), or {@code null}
+	 * @param angleIds selected angle ids, or {@code null}
+	 * @param channelIds selected channel ids, or {@code null}
+	 * @param illuminationIds selected illumination ids, or {@code null}
+	 * @param tileIds selected tile ids, or {@code null}
+	 * @param timepointIds selected timepoint ids, or {@code null}
+	 * @throws IllegalArgumentException if {@code vi} is given together with any of the attribute id lists
+	 */
 	public static void validateInputParameters(
 			final String[] vi,
 			final String angleIds, 
@@ -91,6 +127,21 @@ public class Import {
 		}
 	}
 
+	/**
+	 * Selects the views to process from the command-line arguments: the explicitly listed view ids if {@code vi}
+	 * is given, otherwise the views matching all given attribute id lists ({@code null} or empty lists match
+	 * everything), otherwise all views. Views missing from the dataset are always filtered out. Progress and the
+	 * number of requested view ids that are actually present are printed to {@code System.out}.
+	 *
+	 * @param data the dataset
+	 * @param vi explicit view ids as {@code "timepointId,viewSetupId"} strings, or {@code null}
+	 * @param angleIds comma-separated angle ids, or {@code null} for all
+	 * @param channelIds comma-separated channel ids, or {@code null} for all
+	 * @param illuminationIds comma-separated illumination ids, or {@code null} for all
+	 * @param tileIds comma-separated tile ids, or {@code null} for all
+	 * @param timepointIds comma-separated timepoint ids, or {@code null} for all
+	 * @return the selected, present views (the dataset's {@code ViewDescription}s)
+	 */
 	public static ArrayList< ViewId > createViewIds(
 			final SpimData data,
 			final String[] vi,
@@ -142,6 +193,12 @@ public class Import {
 		return viewIds;
 	}
 
+	/**
+	 * Returns all views of the dataset that are present (not marked as missing).
+	 *
+	 * @param data the dataset
+	 * @return all present views
+	 */
 	public static ArrayList< ViewId > getViewIds( final SpimData data )
 	{
 		// select views to process
@@ -153,6 +210,13 @@ public class Import {
 		return viewIds;
 	}
 
+	/**
+	 * Resolves the requested view ids against the dataset, keeping only those that exist and are present.
+	 *
+	 * @param data the dataset
+	 * @param vi the requested view ids
+	 * @return the dataset's views matching {@code vi}, in dataset order, with missing views removed
+	 */
 	public static ArrayList< ViewId > getViewIds( final SpimData data, final ArrayList<ViewId> vi )
 	{
 		// select views to process
@@ -171,6 +235,17 @@ public class Import {
 		return viewIds;
 	}
 
+	/**
+	 * Selects the present views whose attributes match all of the given id sets.
+	 *
+	 * @param data the dataset
+	 * @param a angle ids to accept, or {@code null} for all
+	 * @param c channel ids to accept, or {@code null} for all
+	 * @param i illumination ids to accept, or {@code null} for all
+	 * @param ti tile ids to accept, or {@code null} for all
+	 * @param tp timepoint ids to accept, or {@code null} for all
+	 * @return the matching views, in dataset order, with missing views removed
+	 */
 	public static ArrayList< ViewId > getViewIds(
 			final SpimData data,
 			final HashSet<Integer> a,
@@ -201,6 +276,13 @@ public class Import {
 		return viewIds;
 	}
 
+	/**
+	 * Parses a comma-separated list of integer ids, e.g. {@code "0,1,3"} (whitespace around entries is ignored).
+	 *
+	 * @param idList the list to parse; may be {@code null}
+	 * @return the set of ids, or {@code null} if {@code idList} is {@code null} or blank (callers treat this as
+	 *         "no restriction")
+	 */
 	public static HashSet< Integer > parseIdList( String idList )
 	{
 		if ( idList == null )
@@ -226,6 +308,10 @@ public class Import {
 	 * Tokens are comma-separated; each token is either a single integer ({@code "5"}) or a range
 	 * ({@code "0-99"}). Returns {@code null} when the input is null or empty (matches the
 	 * {@code parseIdList} convention).
+	 *
+	 * @param spec the comma-separated ids and/or ranges to parse; may be {@code null}
+	 * @return the set of all ids covered, or {@code null} if {@code spec} is {@code null} or blank
+	 * @throws IllegalArgumentException if a range's end is smaller than its start
 	 */
 	public static HashSet< Integer > parseIdRangeSet( String spec )
 	{
@@ -262,6 +348,12 @@ public class Import {
 		return result;
 	}
 
+	/**
+	 * Parses view ids given as {@code "timepointId,viewSetupId"} strings.
+	 *
+	 * @param s the strings to parse, one view per entry
+	 * @return the parsed view ids, in the same order
+	 */
 	public static ArrayList<ViewId> getViewIds( final String[] s )
 	{
 		final ArrayList<ViewId> viewIds = new ArrayList<>();
@@ -270,18 +362,31 @@ public class Import {
 		return viewIds;
 	}
 
+	/**
+	 * Parses a comma-separated list of integers, e.g. {@code "1, 2, 3"} (whitespace around entries is ignored).
+	 *
+	 * @param csvString the list to parse
+	 * @return the parsed values, in order
+	 */
 	public static int[] csvStringToIntArray(final String csvString) {
 		return Arrays.stream(csvString.split(",")).map( st -> st.trim() ).mapToInt(Integer::parseInt).toArray();
 	}
 
+	/**
+	 * Parses a comma-separated list of doubles, e.g. {@code "0.5, 1, 2.5"} (whitespace around entries is ignored).
+	 *
+	 * @param csvString the list to parse
+	 * @return the parsed values, in order
+	 */
 	public static double[] csvStringToDoubleArray(final String csvString) {
 		return Arrays.stream(csvString.split(",")).map( st -> st.trim() ).mapToDouble(Double::parseDouble).toArray();
 	}
 
 	/**
 	 * converts a String like '1,1,1; 2,2,1; 4,4,1; 8,8,2' to downsampling levels in int[][]
-	 * @param csvString
-	 * @return
+	 * @param csvString semicolon-separated downsampling levels, each a comma-separated list of per-dimension
+	 *        factors
+	 * @return one {@code int[]} of per-dimension factors per level, in order
 	 */
 	public static int[][] csvStringToDownsampling(final String csvString) {
 
@@ -296,8 +401,10 @@ public class Import {
 
 	/**
 	 * converts a List of Strings like '[1,1,1][ 2,2,1][ 4,4,1 ][ 8,8,2] to downsampling levels in int[][]
-	 * @param csvString
-	 * @return
+	 * @param csvString one comma-separated list of three per-dimension factors per downsampling level
+	 * @return one {@code int[3]} per level, in order; {@code null} (with a message on {@code System.out}) if the
+	 *         list is {@code null} or empty, an entry does not have exactly three values, or the first entry is
+	 *         not {@code 1,1,1}
 	 */
 	public static int[][] csvStringListToDownsampling(final List<String> csvString)
 	{
@@ -330,8 +437,8 @@ public class Import {
 	/**
 	 * tests that the first downsampling is [1,1,....1]
 	 *
-	 * @param downsampling
-	 * @return
+	 * @param downsampling the downsampling levels, one {@code int[]} of per-dimension factors per level
+	 * @return {@code true} if there is at least one level and all factors of the first level are {@code 1}
 	 */
 	public static boolean testFirstDownsamplingIsPresent(final int[][] downsampling)
 	{
@@ -341,6 +448,12 @@ public class Import {
 			return false;
 	}
 
+	/**
+	 * Parses a single view id given as {@code "timepointId,viewSetupId"} (whitespace is ignored).
+	 *
+	 * @param bdvString the string to parse
+	 * @return the parsed view id
+	 */
 	public static ViewId getViewId(final String bdvString )
 	{
 		final String[] entries = bdvString.trim().split( "," );

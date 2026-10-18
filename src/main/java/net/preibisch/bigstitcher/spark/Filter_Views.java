@@ -61,7 +61,7 @@ import util.URITools;
 /**
  * Filter a BigStitcher / SpimData2 XML to keep only specific views.
  *
- * Java port of {@code multiview-reconstruction/scripts/filter_bigstitcher_xml.py}: load the input
+ * Java port of {@code bigstitcher-skills/skills/bigstitcher-xml/scripts/filter_bigstitcher_xml.py}: load the input
  * XML, intersect AND-style attribute filters to determine which view setups to keep, optionally
  * apply a separate timepoint filter, then build a new {@link SpimData2} from the kept components
  * and write it out. Image data and interest-point N5 datasets are not touched (run

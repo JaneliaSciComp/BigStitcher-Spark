@@ -1,0 +1,183 @@
+#!/bin/bash
+
+# Installs BigStitcher-Spark from a GitHub release instead of building it: downloads the self-contained
+# "local" jar (Spark bundled) and creates one executable per command, preset with the given number of
+# threads and memory, exactly like ./install does for a source build. No clone and no Maven needed;
+# the only prerequisite is Java 21 (17 also works).
+#
+# Usage:  ./install-release [-t <threads>] [-m <memory in GB>] [-v <version>|latest] [-d <install dir>] [-f]
+#
+# Standalone (no clone):
+#   curl -fsSLO https://raw.githubusercontent.com/JaneliaSciComp/BigStitcher-Spark/main/install-release
+#   bash install-release -t 8 -m 64
+#
+# Afterwards, e.g.:  ./resave -x dataset.xml        or        ./bigstitcher-spark --help
+#
+# Option parsing and the thread/memory auto-detection mirror ./install (which in turn came from
+# https://github.com/saalfeldlab/n5-utils, thanks @axtimwalde & co).
+
+REPO="JaneliaSciComp/BigStitcher-Spark"
+
+USERTHREADS="-1"
+USERMEM="-1"
+VERSION="latest"
+INSTALL_DIR=$(pwd)
+FORCE=0
+
+usage () {
+  sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -t|--threads) USERTHREADS="$2"; shift; shift ;;
+    -m|--mem)     USERMEM="$2";     shift; shift ;;
+    -v|--version) VERSION="$2";     shift; shift ;;
+    -d|--dir)     INSTALL_DIR="$2"; shift; shift ;;
+    -f|--force)   FORCE=1;          shift ;;
+    -h|--help)    usage; exit 0 ;;
+    -*)           echo "Unknown option $1"; usage; exit 1 ;;
+    *)            echo "Unexpected argument $1"; usage; exit 1 ;;
+  esac
+done
+
+# ---------------------------------------------------------------- java
+
+if ! command -v java > /dev/null 2>&1; then
+  echo "ERROR: 'java' not found on the PATH. BigStitcher-Spark needs Java 21 (17 also works), e.g. from https://adoptium.net or https://www.azul.com/downloads/?package=jdk"
+  exit 1
+fi
+JAVA_VERSION_LINE=$(java -version 2>&1 | head -1)
+JAVA_MAJOR=$(echo "$JAVA_VERSION_LINE" | sed -E 's/.*"([0-9]+)(\.[0-9]+)*[^"]*".*/\1/')
+if ! [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] || [ "$JAVA_MAJOR" -lt 17 ]; then
+  echo "ERROR: Java 17 or 21 required, found: $JAVA_VERSION_LINE"
+  exit 1
+fi
+echo "Using $JAVA_VERSION_LINE"
+
+# ---------------------------------------------------------------- memory & threads (same logic as ./install)
+
+if [ "$USERTHREADS" == "-1" ]; then
+  echo "You did not define the number of threads Java/Spark can use, will be set automatically. You could do it by e.g.: './install-release -t 8' for 8 threads."
+fi
+if [ "$USERMEM" == "-1" ]; then
+  echo "You did not define the memory Java/Spark can use, will be set automatically. You could do it by e.g.: './install-release -m 64' for 64GB of RAM."
+fi
+
+if [ "$USERMEM" == "-1" ]; then
+  if [[ "$OSTYPE" == linux* ]]; then
+    MEM=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    MEMGB=$(($MEM/1024/1024))
+    MEM=$((($MEMGB/5)*4))
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    MEM=$(sysctl -n hw.memsize)
+    MEMGB=$(($MEM/1024/1024/1024))
+    MEM=$((($MEMGB/5)*4))
+  else
+    echo "ERROR: cannot determine the memory on this operating system. Please specify it, e.g.: './install-release -m 64' for 64GB of RAM."
+    exit 1
+  fi
+  echo "Available memory: $MEMGB GB, setting Java memory limit to $MEM GB"
+else
+  MEM=$USERMEM
+  echo "Setting Java memory limit to $MEM GB"
+fi
+
+if [ "$USERTHREADS" == "-1" ]; then
+  if [[ "$OSTYPE" == linux* ]]; then
+    THREADS=$(nproc --all)
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    THREADS=$(sysctl -n hw.ncpu)
+  else
+    echo "ERROR: cannot determine the number of cores on this operating system. Please specify it, e.g.: './install-release -t 8' to use 8 threads."
+    exit 1
+  fi
+  echo "Available threads: $THREADS, setting Java/Spark threads accordingly."
+else
+  THREADS=$USERTHREADS
+  echo "Setting Java/Spark number of threads to $THREADS"
+fi
+
+# ---------------------------------------------------------------- resolve the release
+
+if [ "$VERSION" == "latest" ]; then
+  # follow the redirect of /releases/latest to learn the tag (no GitHub API call, no rate limit)
+  LATEST_URL=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest") || {
+    echo "ERROR: could not resolve the latest release of $REPO (offline? use -v <version>)"; exit 1; }
+  TAG=${LATEST_URL##*/}
+  VERSION=${TAG#BigStitcher-Spark-}
+fi
+TAG="BigStitcher-Spark-$VERSION"
+JAR_NAME="BigStitcher-Spark-$VERSION-local.jar"
+URL="https://github.com/$REPO/releases/download/$TAG/$JAR_NAME"
+
+mkdir -p "$INSTALL_DIR"
+INSTALL_DIR=$(cd "$INSTALL_DIR" && pwd)
+JAR="$INSTALL_DIR/$JAR_NAME"
+
+echo ""
+echo "Installing BigStitcher-Spark $VERSION into $INSTALL_DIR"
+
+# ---------------------------------------------------------------- download
+
+if [ -f "$JAR" ] && [ "$FORCE" == "0" ]; then
+  echo "$JAR_NAME is already present, not downloading again (use -f to force)."
+else
+  echo "Downloading $URL (a few hundred MB) ..."
+  rm -f "$JAR.part"
+  if ! curl -fL --progress-bar -o "$JAR.part" "$URL"; then
+    echo "ERROR: download failed. Does release $TAG exist? See https://github.com/$REPO/releases"
+    rm -f "$JAR.part"
+    exit 1
+  fi
+  mv "$JAR.part" "$JAR"
+fi
+
+echo "Checking the jar ..."
+if ! JAR_VERSION=$(java -jar "$JAR" --version 2> /dev/null | head -1); then
+  echo "ERROR: 'java -jar $JAR --version' failed. Is the download complete? Try again with -f."
+  exit 1
+fi
+echo "  $JAR_VERSION"
+
+# ---------------------------------------------------------------- commands
+# Keep in sync with ./install and net.preibisch.bigstitcher.spark.BigStitcherSpark; every command is
+# verified against the downloaded jar below, so an older release simply gets fewer executables.
+
+WORKFLOW_COMMANDS="resave detect-interestpoints match-interestpoints stitching solver match-intensities solve-intensities create-fusion-container fusion nonrigid-fusion"
+UTIL_COMMANDS="split-images filter-views downsample clear-interestpoints clear-registrations transform-points overlay-landmarks"
+
+# $1 - executable name, $2 - subcommand ("" for the dispatcher itself)
+install_command () {
+  local f="$INSTALL_DIR/$1"
+  {
+    echo '#!/bin/bash'
+    echo "# BigStitcher-Spark $VERSION, generated by install-release. JAVA_OPTS adds JVM options, e.g. JAVA_OPTS='-Dspark.master=local[4]'"
+    echo "exec java -Xmx${MEM}g -Dspark.master=\"local[${THREADS}]\" \${JAVA_OPTS:-} -jar \"$JAR\" $2 \"\$@\""
+  } > "$f"
+  chmod a+x "$f"
+}
+
+echo ""
+echo "Installing 'bigstitcher-spark' (all commands as subcommands) ..."
+install_command bigstitcher-spark ""
+
+INSTALLED=""
+SKIPPED=""
+for group in "workflow tools:$WORKFLOW_COMMANDS" "utils:$UTIL_COMMANDS"; do
+  echo "Installing ${group%%:*} ..."
+  for cmd in ${group#*:}; do
+    if java -jar "$JAR" "$cmd" --help > /dev/null 2>&1; then
+      install_command "$cmd" "$cmd"
+      INSTALLED="$INSTALLED $cmd"
+    else
+      SKIPPED="$SKIPPED $cmd"
+    fi
+  done
+done
+
+echo ""
+echo "Installed into $INSTALL_DIR: bigstitcher-spark$INSTALLED"
+[ -n "$SKIPPED" ] && echo "Not available in release $VERSION (skipped):$SKIPPED"
+echo "Each executable runs: java -Xmx${MEM}g -Dspark.master=local[${THREADS}] -jar $JAR_NAME <command>"
+echo "Add $INSTALL_DIR to your PATH, or call the executables with their full path. Installation finished."

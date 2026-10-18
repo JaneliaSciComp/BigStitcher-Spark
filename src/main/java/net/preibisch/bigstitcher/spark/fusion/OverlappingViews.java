@@ -11,9 +11,25 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Intervals;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 
+/**
+ * Static helpers that decide which views of a dataset overlap a given world-space interval, or
+ * overlap each other, based on the views' registered (transformed) bounding boxes. The fusion
+ * tools use them to restrict loading and rendering to the views that actually contribute to a
+ * block.
+ */
 public class OverlappingViews
 {
+	/**
+	 * Default expansion (in pixels, per side) of a block interval when searching for overlapping
+	 * views in affine fusion ({@code SparkFusion} with {@code FusionMethod.AFFINE}).
+	 */
 	public static final int defaultAffineExpansion = 2;
+
+	/**
+	 * Default expansion (in pixels, per side) of a block interval when searching for overlapping
+	 * views in thin-plate-spline fusion; much larger than {@link #defaultAffineExpansion} because
+	 * the non-rigid deformation can pull content in from outside the affinely transformed bounds.
+	 */
 	public static final int defaultTPSExpansion = 50;
 
 	/**
@@ -51,6 +67,17 @@ public class OverlappingViews
 		return overlapping;
 	}
 
+	/**
+	 * Find all views among {@code viewIds} whose registered bounding box overlaps that of
+	 * {@code viewIdA}. Both bounding boxes are transformed into world coordinates using the given
+	 * {@code registrations}; {@code viewIdA} itself is skipped and no expansion is applied.
+	 *
+	 * @param viewIdA the view to find overlap partners for
+	 * @param spimData contains the image dimensions of all views
+	 * @param registrations transform into world coordinates for each view
+	 * @param viewIds candidate views to check (may contain {@code viewIdA}, which is ignored)
+	 * @return the views of {@code viewIds}, other than {@code viewIdA}, that overlap {@code viewIdA}
+	 */
 	public static ArrayList< ViewId > findAllOverlappingViewsFor(
 			final ViewId viewIdA,
 			final SpimData spimData,

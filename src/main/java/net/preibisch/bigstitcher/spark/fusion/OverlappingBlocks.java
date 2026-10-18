@@ -110,6 +110,7 @@ public class OverlappingBlocks
 	 * @param executor blocks are loaded in parallel using this executor
 	 *
 	 * @return {@code AutoCloseable} that holds strong reference to all prefetched blocks (until it is closed), preventing those blocks from being garbage-collected.
+	 * @throws InterruptedException if interrupted while waiting for the executor to load the blocks
 	 */
 	public AutoCloseable prefetch( final ExecutorService executor ) throws InterruptedException
 	{
@@ -128,6 +129,11 @@ public class OverlappingBlocks
 		this.prefetchBlocks = prefetchBlocks;
 	}
 
+	/**
+	 * Get the number of input blocks (cells) that {@link #prefetch} will load.
+	 *
+	 * @return number of blocks to prefetch
+	 */
 	public int numPrefetchBlocks() { return prefetchBlocks.size(); }
 
 	/**

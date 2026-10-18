@@ -89,6 +89,15 @@ import scala.Tuple2;
 import util.Grid;
 import util.URITools;
 
+/**
+ * Spark command-line tool ({@code nonrigid-fusion}) that fuses the selected views of a BigStitcher
+ * dataset non-rigidly into an N5, OME-ZARR or HDF5 dataset (optionally as a BigDataViewer-compatible
+ * dataset with XML project). On top of the affine registrations, each view is deformed with a
+ * model interpolated from its corresponding interest points ({@code --interestPoints}), as
+ * implemented by {@code NonRigidTools}. The bounding box is fused block-wise on Spark workers,
+ * either writing each block directly or, for sharded ZARR v3 output, rendering sub-blocks and
+ * assembling them per shard before writing; a multi-resolution pyramid can be appended.
+ */
 public class SparkNonRigidFusion extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	/**
@@ -341,7 +350,8 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			range = ( this.maxIntensity - this.minIntensity ) / 65535.0;
 		else
 			range = 0;
-		final int[][] serializedViewIds = Spark.serializeViewIds(viewIdsGlobal);
+		// plain copies: viewIdsGlobal holds ViewDescriptions, which cannot be serialized by Spark
+		final List< ViewId > viewIds = Spark.toViewIds( viewIdsGlobal );
 
 		// capture anisotropy state for Spark lambdas
 		final boolean preserveAnisotropy = this.preserveAnisotropy;
@@ -575,7 +585,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 
 						// model + view selection over the whole shard; zero-min source spanning the shard
 						final RandomAccessibleInterval< FloatType > shardSource =
-								fuseNonRigidBlock( dataLocal, serializedViewIds, min, shardStart, shardDims,
+								fuseNonRigidBlock( dataLocal, viewIds, min, shardStart, shardDims,
 										labels, preserveAnisotropy, anisotropyFactorFinal, true );
 
 						// no view overlaps this shard at all -> emit nothing (shard stays background)
@@ -731,7 +741,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 						final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 
 						final RandomAccessibleInterval< FloatType > source =
-							fuseNonRigidBlock( dataLocal, serializedViewIds, min, gridBlock[ 0 ], gridBlock[ 1 ],
+							fuseNonRigidBlock( dataLocal, viewIds, min, gridBlock[ 0 ], gridBlock[ 1 ],
 												labels, preserveAnisotropy, anisotropyFactorFinal, false );
 
 						// nothing to save...
@@ -856,7 +866,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 												new UnsignedShortType(),
 												blockSize,
 												d );
-								N5Utils.saveNonEmptyBlock(
+								N5Util.saveNonEmptyBlock(
 										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
 										executorVolumeWriterDS, datasetDS, gridBlock[2], new UnsignedShortType() );
 							}
@@ -872,7 +882,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 												new UnsignedByteType(),
 												blockSize,
 												d );
-								N5Utils.saveNonEmptyBlock(
+								N5Util.saveNonEmptyBlock(
 										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
 										executorVolumeWriterDS, datasetDS, gridBlock[2], new UnsignedByteType() );
 							}
@@ -888,7 +898,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 												new FloatType(),
 												blockSize,
 												d );
-								N5Utils.saveNonEmptyBlock(
+								N5Util.saveNonEmptyBlock(
 										Views.offsetInterval( downsampled, gridBlock[0], gridBlock[1] ),
 										executorVolumeWriterDS, datasetDS, gridBlock[2], new FloatType() );
 							}
@@ -1045,10 +1055,20 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	{
 		private static final long serialVersionUID = 1L;
 
+		/** Zero-min offset of this sub-block within its shard (in voxels). */
 		final long[] localOffset;
+		/** Dimensions of this sub-block (in voxels). */
 		final int[] size;
+		/** Rendered pixels as a flat {@code byte[]}, {@code short[]} or {@code float[]}, depending on the output data type. */
 		final Object data;
 
+		/**
+		 * Creates a carrier for one rendered sub-block.
+		 *
+		 * @param localOffset zero-min offset of the sub-block within its shard (in voxels)
+		 * @param size dimensions of the sub-block (in voxels)
+		 * @param data rendered pixels as a flat {@code byte[]}, {@code short[]} or {@code float[]}
+		 */
 		public FusedBlock( final long[] localOffset, final int[] size, final Object data )
 		{
 			this.localOffset = localOffset;
@@ -1067,12 +1087,13 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 	 * passes the block it writes; the two-stage sharded path passes the whole shard (and renders
 	 * sub-regions of the returned source) so all sub-blocks of a shard share one lattice.
 	 *
+	 * @param viewIds the (plain, serializable) views that take part in the fusion
 	 * @param virtualGrid if true, use a cached (lazy) control-point grid so only the queried region
 	 *                    is computed; if false, the full grid over the interval is materialized.
 	 */
 	private static RandomAccessibleInterval< FloatType > fuseNonRigidBlock(
 			final SpimData2 dataLocal,
-			final int[][] serializedViewIds,
+			final List< ViewId > viewIds,
 			final long[] min,
 			final long[] blockOffset,
 			final long[] blockSize,
@@ -1090,9 +1111,9 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 			zScale.set( 1,0,0,0, 0,1,0,0, 0,0,1.0/anisotropyFactorFinal,0 );
 			final ViewTransformAffine anisotropyTransform =
 					new ViewTransformAffine( "anisotropy_correction", zScale );
-			for ( int i = 0; i < serializedViewIds.length; ++i )
+			for ( final ViewId viewId : viewIds )
 				dataLocal.getViewRegistrations()
-						.getViewRegistration( Spark.deserializeViewIds( serializedViewIds, i ) )
+						.getViewRegistration( viewId )
 						.getTransformList().add( anisotropyTransform );
 			// updateModel() is called per-view in the overlap-detection loops below;
 			// the z-scale is in the list so every recomposition includes it
@@ -1110,10 +1131,8 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final List< ViewId > viewsToFuse = new ArrayList<>(); // fuse
 		final List< ViewId > allViews = new ArrayList<>();
 
-		for ( int i = 0; i < serializedViewIds.length; ++i )
+		for ( final ViewId viewId : viewIds )
 		{
-			final ViewId viewId = Spark.deserializeViewIds(serializedViewIds, i);
-
 			// expand by 50 to be conservative for non-rigid overlaps
 			dataLocal.getViewRegistrations().getViewRegistration( viewId ).updateModel();
 			final Interval boundingBox = ViewUtil.getTransformedBoundingBox( dataLocal, viewId, dataLocal.getViewRegistrations().getViewRegistration( viewId ).getModel() );

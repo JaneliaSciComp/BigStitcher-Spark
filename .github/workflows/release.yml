@@ -1,0 +1,74 @@
+name: release
+
+# Builds the two shaded jars and attaches them to a GitHub Release when a release tag is pushed
+# (tags are created by scijava's release-version.sh: BigStitcher-Spark-<version>). The regular
+# 'build' workflow deploys the thin artifacts to maven.scijava.org for the same tag, independently.
+#
+# 'workflow_dispatch' is a dry run: it builds the jars and uploads them as a workflow artifact
+# without creating a release.
+
+on:
+  push:
+    tags:
+      - "BigStitcher-Spark-[0-9]+.*"
+  workflow_dispatch:
+
+jobs:
+  jars:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      MAVEN_OPTS: -Xmx3g
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'zulu'
+          cache: 'maven'
+
+      - name: Build cluster jar (Spark not bundled, for spark-submit)
+        run: mvn -B -ntp -DskipTests -Denforcer.skip=true clean package -Pfatjar
+
+      - name: Build local jar (Spark bundled, for java -jar)
+        run: mvn -B -ntp -DskipTests -Denforcer.skip=true package -Pfatjar-local
+
+      - name: Stage and smoke-test
+        run: |
+          set -eux
+          mkdir dist
+          cp target/BigStitcher-Spark-*-cluster.jar target/BigStitcher-Spark-*-local.jar dist/
+          # constant names, so https://github.com/<owner>/<repo>/releases/latest/download/BigStitcher-Spark-local.jar is stable
+          cp target/BigStitcher-Spark-*-cluster.jar dist/BigStitcher-Spark-cluster.jar
+          cp target/BigStitcher-Spark-*-local.jar   dist/BigStitcher-Spark-local.jar
+          unzip -p dist/BigStitcher-Spark-local.jar META-INF/MANIFEST.MF
+          java -jar dist/BigStitcher-Spark-local.jar --version
+          java -jar dist/BigStitcher-Spark-local.jar --help
+          java -jar dist/BigStitcher-Spark-local.jar filter-views --help > /dev/null
+          ls -la dist
+
+      - name: Upload jars as workflow artifact (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars
+          path: dist/*.jar
+          retention-days: 3
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#BigStitcher-Spark-}"
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "BigStitcher-Spark $version" \
+            --generate-notes \
+            dist/*.jar

@@ -26,7 +26,6 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -43,12 +42,12 @@ import org.apache.spark.api.java.JavaSparkContext;
 import mpicbg.models.AbstractModel;
 import mpicbg.models.Affine3D;
 import mpicbg.models.Model;
+import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
-import mpicbg.spim.data.SpimDataException;
+import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.registration.ViewRegistration;
-import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
@@ -78,12 +77,24 @@ import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatch
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.strong.InterestPointMatchCreator;
 import net.preibisch.mvrecon.process.interestpointregistration.global.pointmatchcreating.weak.MetaDataWeakLinkFactory;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.PairwiseResult;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.PairwiseSetup;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.Subset;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.overlap.SimpleBoundingBoxOverlap;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * Command-line tool that runs the global optimization ("solve") of a BigStitcher dataset, turning pairwise
+ * links between views into one transformation per view. The links come either from corresponding interest
+ * points ({@code -s IP}, one or more labels with weights) or from the pairwise stitching results stored in
+ * the XML ({@code -s STITCHING}). Views can be grouped (illuminations, channels, tiles) or split per
+ * timepoint; the independent registration subsets and the default fixed views are determined exactly like
+ * in the GUI, and one of the {@link GlobalOpt}, {@link GlobalOptIterative} or {@link GlobalOptTwoRound}
+ * variants is run. Optionally the result of every subset is mapped back onto a reference view
+ * ({@code --enableMapbackViews}, requires {@code --disableFixedViews}). The solved transformations are
+ * appended to the views' {@link ViewRegistration}s and, unless {@code --dryRun} is set, the XML is saved.
+ */
 public class Solver extends AbstractRegistration
 {
 	/*
@@ -97,14 +108,26 @@ public class Solver extends AbstractRegistration
 	*/
 	private static final long serialVersionUID = 5220898723968914742L;
 
-	public enum SolverSource { IP, STITCHING };
+	/** Where the pairwise links for the solve come from. */
+	public enum SolverSource
+	{
+		/** Corresponding interest points of the given {@code --label}(s). */
+		IP,
+		/** Pairwise stitching results (image-correlation shifts) stored in the XML. */
+		STITCHING
+	};
+
+	/** Whether the views are pre-aligned before the global optimization starts. */
 	public enum PreAlign { PREALIGN, NO_PREALIGN };
 
 	public ArrayList< ViewId > fixedViewIds;
 
-	//public enum MapbackModel { TRANSLATION, RIGID };
-	//public ArrayList< ViewId > mapBackViewIds;
-	//public Model<?> mapBackModel;
+	/** Type of transformation model used to map the solved result back onto a reference view. */
+	public enum MapbackModel { TRANSLATION, RIGID };
+
+	public ArrayList< ViewId > mapBackViewIds;
+
+	public Model<?> mapBackModel;
 
 	@Option(names = { "-s", "--sourcePoints" }, required = true, description = "which source to use for the solve, IP (interest points) or STITCHING")
 	protected SolverSource sourcePoints = null;
@@ -130,8 +153,8 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "--method" }, description = "global optimization method; ONE_ROUND_SIMPLE, ONE_ROUND_ITERATIVE, TWO_ROUND_SIMPLE or TWO_ROUND_ITERATIVE. Two round handles unconnected tiles, iterative handles wrong links (default: ONE_ROUND_SIMPLE)")
 	protected GlobalOptType globalOptType = GlobalOptType.ONE_ROUND_SIMPLE;
 
-	@Option(names = { "-pa", "--preAlign" }, description = "whether to pre-align before solving (PREALIGN) or to initialize with the current transformations (NO_PREALIGN), (default: PREALIGN)")
-	protected PreAlign preAlign = PreAlign.PREALIGN;
+	@Option(names = { "-pa", "--preAlign" }, description = "whether to pre-align before solving (PREALIGN) or to initialize with the current transformations (NO_PREALIGN), (default: NO_PREALIGN)")
+	protected PreAlign preAlign = PreAlign.NO_PREALIGN;
 
 	@Option(names = { "--relativeThreshold" }, description = "relative error threshold for iterative solvers, how many times worse than the average error a link needs to be (default: 3.5)")
 	protected double relativeThreshold = 3.5;
@@ -154,14 +177,14 @@ public class Solver extends AbstractRegistration
 	@Option(names = { "-fv", "--fixedViews" }, description = "define a list of (or a single) fixed view ids (time point, view setup), e.g. -fv '0,0' -fv '0,1' (default: first view id)")
 	protected String[] fixedViews = null;
 
-	//@Option(names = { "--enableMapbackViews" }, description = "enable mapping back of views (see --mapbackViews and --mapbackModel), requires --disableFixedViews.")
-	//protected boolean enableMapbackViews = false;
+	@Option(names = { "--enableMapbackViews" }, description = "enable mapping back of views (see --mapbackViews and --mapbackModel), requires --disableFixedViews.")
+	protected boolean enableMapbackViews = false;
 
-	//@Option(names = { "--mapbackViews" }, description = "define a view id (time point, view setup) onto which the registration result is mapped back onto, it needs to be one per independent registration subset (e.g. timepoint) (only works if no views are fixed), e.g. --mapbackView '0,0' (default: first view id)")
-	//protected String[] mapbackViews = null;
+	@Option(names = { "--mapbackViews" }, description = "define a view id (time point, view setup) onto which the registration result is mapped back onto, it needs to be one per independent registration subset (e.g. timepoint) (only works if no views are fixed), e.g. --mapbackViews '0,0' (default: first view id)")
+	protected String[] mapbackViews = null;
 
-	//@Option(names = { "--mapbackModel" }, description = "which transformation model to use for mapback if it is activated; TRANSLATION or RIGID (default: RIGID)")
-	//protected MapbackModel mapbackModelEntry = MapbackModel.RIGID;
+	@Option(names = { "--mapbackModel" }, description = "which transformation model to use for mapback if it is activated; TRANSLATION or RIGID (default: RIGID)")
+	protected MapbackModel mapbackModelEntry = MapbackModel.RIGID;
 
 	@Override
 	public Void call() throws Exception
@@ -169,7 +192,7 @@ public class Solver extends AbstractRegistration
 		this.setRegion();
 		initRegistrationParameters();
 
-		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
+		if ( !this.setupParameters( dataGlobal ) )
 			return null;
 
 		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal;
@@ -242,6 +265,8 @@ public class Solver extends AbstractRegistration
 		System.out.println("splitTimepoints: " + splitTimepoints);
 
 		System.out.println("Other parameters: ");
+		System.out.println("transformationModel: " + transformationModel );
+		System.out.println("regularizationModel: " + regularizationModel + ( regularizationModel == RegularizationModel.NONE ? "" : " (lambda=" + regularizationLambda + ")" ) );
 		System.out.println("method: " + globalOptType );
 		System.out.println("preAlign: " + preAlign );
 		System.out.println("sourcePoints: " + sourcePoints );
@@ -255,36 +280,24 @@ public class Solver extends AbstractRegistration
 		System.out.println("labels: " + ( labels == null ? "null" : Arrays.toString( labels.toArray() ) ));
 		System.out.println("labelweights: " + ( labelweights == null ? "null" : Arrays.toString( labelweights.toArray() ) ));
 
-		// assemble fixed views
-		final Set< ViewId > fixedViewIds;
+		// identify subsets exactly like the GUI (strategy + bounding-box overlap + connected components)
+		final PairwiseSetup< ViewId > setup = setupGroups( viewReg, AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints ) );
+		final ArrayList< Subset< ViewId > > subsets = setup.getSubsets();
 
-		if ( this.disableFixedViews )
+		// assemble fixed views (GUI: strategy defaults + first view per subset / user list / nothing)
+		final HashSet< ViewId > fixedViewIds = new HashSet<>( setup.getDefaultFixedViews() );
+
+		if ( !this.disableFixedViews )
 		{
-			fixedViewIds = new HashSet<>();
-		}
-		else
-		{
-			if ( this.fixedViewIds == null || this.fixedViewIds.isEmpty() )
-				fixedViewIds = assembleFixedAuto( viewIdsGlobal, dataGlobal.getSequenceDescription(), registrationTP, referenceTP ); // only TIMEPOINTS_INDIVIDUALLY and TO_REFERENCE_TIMEPOINT matter
+			if ( this.fixedViewIds == null || this.fixedViewIds.size() == 0 )
+				fixedViewIds.addAll( assembleFixed( subsets ) );
 			else
-				fixedViewIds = new HashSet<>( this.fixedViewIds );
+				fixedViewIds.addAll( this.fixedViewIds );
 		}
 
 		System.out.println("The following ViewIds are used as fixed views: ");
 		fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
 		System.out.println();
-
-		//Set< ViewId > fixedViewIds = assembleFixed( setup.getSubsets(), this.fixedViewIds, dataGlobal.getSequenceDescription());
-		/*
-		// setup mapback and fixed views
-		final FixMapBackParameters fmbp = new FixMapBackParameters();
-		fmbp.fixedViews = this.disableFixedViews ? new HashSet<>()
-				: assembleFixed(setup.getSubsets(), this.fixedViewIds, dataGlobal.getSequenceDescription());
-		fmbp.model = this.mapBackModel;
-		fmbp.mapBackViews = this.enableMapbackViews
-				? assembleMapBack(setup.getSubsets(), this.mapBackViewIds, dataGlobal.getSequenceDescription())
-				: new HashMap<>();
-		*/
 
 		// run global optimization
 		final Collection< Group< ViewId > > groups;
@@ -292,14 +305,13 @@ public class Solver extends AbstractRegistration
 		if ( !groupTiles && !groupIllums && !groupChannels && !splitTimepoints )
 			groups = new ArrayList<>();
 		else // for grouping all we need here is the set of groups
-			groups = AdvancedRegistrationParameters.getGroups( dataGlobal, viewIdsGlobal, groupTiles, groupIllums, groupChannels, splitTimepoints );
+			groups = setup.getGroups();
 
 		// parse view setup ID comparison pairs from file (null = all-to-all)
 		final HashSet< Pair< Integer, Integer > > vsComparisonPairs = parseVsComparisonsFile( vsComparisonsFile );
 
 		final PointMatchCreator pmc;
 
-		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
 		{
 			final SparkConf conf = new SparkConf().setAppName("SparkSolver");
@@ -324,7 +336,7 @@ public class Solver extends AbstractRegistration
 			}
 		}
 		else
-			pmc = setupPointMatchesStitching(dataGlobal, vsComparisonPairs);
+			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal, vsComparisonPairs);
 
 		if ( pmc == null )
 		{
@@ -341,17 +353,18 @@ public class Solver extends AbstractRegistration
 		{
 			final ConvergenceStrategy cs = new ConvergenceStrategy( maxError, maxIterations, maxPlateauwidth );
 
-			models = (HashMap)GlobalOpt.computeTiles(
+			models = (HashMap<ViewId, Tile>) GlobalOpt.computeTiles(
 							(Model)model,
 							globalOptParameters.preAlign,
 							pmc,
 							cs,
 							fixedViewIds,
-							groups );
+							groups,
+							false );
 		}
 		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 		{
-			models = (HashMap)GlobalOptIterative.computeTiles(
+			models = (HashMap<ViewId, Tile>) GlobalOptIterative.computeTiles(
 							(Model)model,
 							globalOptParameters.preAlign,
 							pmc,
@@ -359,14 +372,15 @@ public class Solver extends AbstractRegistration
 							new MaxErrorLinkRemoval(),
 							removedInconsistentPairs,
 							fixedViewIds,
-							groups );
+							groups,
+							false );
 		}
 		else //if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE || globalOptParameters.method == GlobalOptType.TWO_ROUND_ITERATIVE )
 		{
 			if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE )
 				globalOptParameters.relativeThreshold = globalOptParameters.absoluteThreshold  = Double.MAX_VALUE;
 
-			models = (HashMap)GlobalOptTwoRound.computeTiles(
+			models = (HashMap<ViewId, Tile>)GlobalOptTwoRound.computeTiles(
 					(Model & Affine3D)model,
 					globalOptParameters.preAlign,
 					pmc,
@@ -380,28 +394,88 @@ public class Solver extends AbstractRegistration
 									dataGlobal.getViewRegistrations().getViewRegistrations() ) ),
 					new ConvergenceStrategy( Double.MAX_VALUE, maxIterations, maxPlateauwidth ),
 					fixedViewIds,
-					groups );
+					groups,
+					true );
 		}
 
 		// update models in ViewRegistration
-		if ( models == null || models.keySet().size() == 0 )
+		if ( models == null || models.isEmpty() )
 		{
 			System.out.println( "No transformations could be found, stopping." );
 			return null;
 		}
 
+		SimpleMultiThreading.threadWait( 100 );
+
 		System.out.println( "\nFinal models: " + models.size() );
+
+		// mapback (same as GUI: one model per registration subset, computed from the reference view's
+		// registration BEFORE the new transform is stored and its solved model), then pre-concatenated to all views
+		final HashMap< ViewId, AffineTransform3D > mapBackPerView = new HashMap<>();
+
+		if ( enableMapbackViews )
+		{
+			final HashMap< ViewId, ViewId > mapBackViewFor = assembleMapBack( subsets, this.mapBackViewIds );
+			final HashMap< ViewId, AffineTransform3D > mapBackPerRef = new HashMap<>();
+
+			for ( final ViewId ref : new HashSet<>( mapBackViewFor.values() ) )
+			{
+				final Tile< ? > refTile = models.get( ref );
+
+				if ( refTile == null )
+				{
+					System.out.println( "WARNING: mapback view " + Group.pvid( ref ) + " has no model (not connected), views of this subset are NOT mapped back." );
+					continue;
+				}
+
+				final AffineTransform3D mapBack = TransformationTools.computeMapBackModel(
+						dataGlobal.getSequenceDescription().getViewDescription( ref ).getViewSetup().getSize(),
+						dataGlobal.getViewRegistrations().getViewRegistration( ref ).getModel(),
+						(AbstractModel< ? >)refTile.getModel(),
+						mapBackModel.copy() );
+
+				System.out.println( "Mapback model (" + mapBackModel.getClass().getSimpleName() + ", pre-concatenated to all views of this subset) for " + Group.pvid( ref ) + ": " + mapBack );
+
+				if ( mapBack != null )
+					mapBackPerRef.put( ref, mapBack );
+			}
+
+			mapBackViewFor.forEach( ( viewId, ref ) -> mapBackPerView.put( viewId, mapBackPerRef.get( ref ) ) );
+		}
 
 		for ( final ViewId viewId : viewIdsGlobal )
 		{
 			final Tile< ? extends AbstractModel< ? > > tile = models.get( viewId );
 			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
-			TransformationTools.storeTransformation( vr, viewId, tile, null /*mapback*/, model.getClass().getSimpleName() );
+			TransformationTools.storeTransformation( vr, viewId, tile, mapBackPerView.get( viewId ), model.getClass().getSimpleName() );
 		}
 
 		// print per-view transformations + identity-vs-non-identity summary,
 		// gated by TransformationTools.maxPerViewTransformLog
-		TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, models );
+		if ( mapBackPerView.isEmpty() )
+		{
+			TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, models );
+		}
+		else
+		{
+			// print what is actually stored: mapback composed with the solved model
+			System.out.println( "Final transformation models (mapback model pre-concatenated):" );
+			final HashMap< ViewId, Tile< ? > > stored = new HashMap<>();
+
+			for ( final ViewId viewId : viewIdsGlobal )
+			{
+				final Tile< ? > tile = models.get( viewId );
+				final AffineTransform3D t = tile == null ? new AffineTransform3D() : TransformationTools.getAffineTransform( (Affine3D< ? >)tile.getModel() );
+				final AffineTransform3D mapBack = mapBackPerView.get( viewId );
+
+				if ( mapBack != null )
+					t.preConcatenate( mapBack );
+
+				stored.put( viewId, new Tile<>( TransformationTools.getModel( t ) ) );
+			}
+
+			TransformationTools.printAndSummarizeTransformations( viewIdsGlobal, stored );
+		}
 
 		if (!dryRun)
 		{
@@ -413,11 +487,38 @@ public class Solver extends AbstractRegistration
 		return null;
 	}
 
-	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
+	/**
+	 * Builds the point-match creator for a solve from the pairwise stitching results stored in the dataset.
+	 * Only results between selected views are used, i.e. all views of both groups of a result must be in
+	 * {@code viewIdsGlobal}. If {@code vsComparisonPairs} is given, only results whose two view setup IDs
+	 * form an allowed pair are kept. Results whose stored hash does not match the current
+	 * {@link ViewRegistration}s of the two views (i.e. the views were transformed after stitching) are
+	 * dropped with an explanatory message. Selected views without any remaining result are reported and
+	 * still take part in the solve (without links), so that the two-round methods can place them using
+	 * the metadata weak links, like {@link #setupPointMatchesFromInterestPoints} does for interest points.
+	 *
+	 * @param dataGlobal the dataset holding the stitching results and view registrations
+	 * @param viewIdsGlobal the views being solved; results involving any other view are ignored
+	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
+	 *             allow all pairs
+	 * @return a creator over the remaining stitching results (plus the unconnected selected views), or
+	 *         {@code null} if no link remains
+	 */
+	public static PointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
+			final List<ViewId> viewIdsGlobal,
 			final Set< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
+
+		// only process links between selected views (as the GUI does), i.e. drop every result in which
+		// one of the two groups contains a view that is not part of this solve
+		final HashSet< ViewId > selectedViews = new HashSet<>( viewIdsGlobal );
+		final int numAll = results.size();
+		results = results.stream().filter( psr ->
+				selectedViews.containsAll( psr.pair().getA().getViews() ) && selectedViews.containsAll( psr.pair().getB().getViews() ) )
+			.collect( Collectors.toList() );
+		System.out.println( "Selected views filter: kept " + results.size() + " of " + numAll + " stitching pairs." );
 
 		if ( vsComparisonPairs != null )
 		{
@@ -458,9 +559,78 @@ public class Solver extends AbstractRegistration
 			return null;
 		}
 
-		return new ImageCorrelationPointMatchCreator(results);
+		final ImageCorrelationPointMatchCreator pmc = new ImageCorrelationPointMatchCreator( results );
+
+		// ImageCorrelationPointMatchCreator only knows the views of its results, so a selected view without
+		// any (remaining) stitching result would get no tile in the global optimization: one-round methods
+		// store identity for it anyway, but the two-round methods could not place it using the metadata weak
+		// links either. Add such views to the set of views (without links), as the interest point path does.
+		final HashSet< ViewId > connectedViews = pmc.getAllViews();
+		final List< ViewId > unconnectedViews =
+				viewIdsGlobal.stream().filter( v -> !connectedViews.contains( v ) ).sorted().collect( Collectors.toList() );
+
+		System.out.println( "Total number of pairs of views that are connected: " + results.size() );
+		System.out.println( "Total number of views: " + viewIdsGlobal.size() );
+		System.out.println( "Total number of connected views: " + connectedViews.size() + " (" + unconnectedViews.size() + " missing that are not connected)");
+
+		if ( unconnectedViews.isEmpty() )
+			return pmc;
+
+		System.out.println( "The following views have no stitching result and are added to the global optimization without links:" );
+		unconnectedViews.forEach( v -> System.out.println( "\t" + Group.pvid( v ) ) );
+
+		final HashSet< ViewId > allViews = new HashSet<>( connectedViews );
+		allViews.addAll( unconnectedViews );
+
+		return new PointMatchCreator()
+		{
+			@Override
+			public HashSet< ViewId > getAllViews()
+			{
+				return new HashSet<>( allViews ); // GlobalOpt modifies the returned set
+			}
+
+			@Override
+			public < M extends Model< M > > void assignWeights(
+					final HashMap< ViewId, Tile< M > > tileMap,
+					final ArrayList< Group< ViewId > > groups,
+					final Collection< ViewId > fixedViews )
+			{
+				pmc.assignWeights( tileMap, groups, fixedViews );
+			}
+
+			@Override
+			public < M extends Model< M > > void assignPointMatches(
+					final HashMap< ViewId, Tile< M > > tileMap,
+					final ArrayList< Group< ViewId > > groups,
+					final Collection< ViewId > fixedViews )
+			{
+				pmc.assignPointMatches( tileMap, groups, fixedViews );
+			}
+		};
 	}
 
+	/**
+	 * Builds the point-match creator for a solve from the stored corresponding interest points, using Spark.
+	 * Every pair of views (optionally restricted by {@code vsComparisonPairs}) is one Spark task; pairs in which
+	 * both views are fixed, or both belong to the same group, are skipped. A task loads the dataset XML itself
+	 * and, for every combination of the two views' labels, turns the correspondences of view A that point to
+	 * view B into point matches whose coordinates are transformed into global space with the views' current
+	 * registration models. They are returned as inliers of a {@link PairwiseResult} that carries both labels
+	 * (used to assign the label weights). Views without any connection are added as a self-pair without inliers
+	 * so that they still take part in the solve.
+	 *
+	 * @param xmlURI the dataset XML, loaded by every Spark task
+	 * @param sc the Spark context the tasks run on
+	 * @param viewIdsGlobal the views to connect
+	 * @param labelMap for every view, the interest point labels to use mapped to their weights
+	 * @param groups groups of views that are treated as one view; pairs within a group are not connected
+	 * @param fixedViewIds views held fixed during the solve; pairs of two fixed views are not connected
+	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
+	 *             allow all pairs
+	 * @return a creator over all connected pairs (plus the unconnected views), or {@code null} if there is no
+	 *         pair of views to process or no connection was found
+	 */
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
 			final URI xmlURI,
 			final JavaSparkContext sc,
@@ -472,18 +642,14 @@ public class Solver extends AbstractRegistration
 	{
 		System.out.println( "Setting up corresponding interest points with Spark ... " );
 
+		// plain serializable data for the Spark tasks (ViewId subclasses such as ViewDescription are not)
 		final Map< String, ArrayList< String > > labelsByView = new HashMap<>();
 		final Set< String > fixedViewKeys = new HashSet<>();
 		final Set< String > sameGroupPairs = new HashSet<>();
 		final List< PairTask > tasks = new ArrayList<>();
 
-		for ( ViewId viewId : viewIdsGlobal )
-		{
-			final String viewKey = viewIdKey( viewId );
-
-			final ArrayList< String > viewLabels = new ArrayList<>( labelMap.get( viewId ).keySet() );
-			labelsByView.put( viewKey, viewLabels );
-		}
+		for ( final ViewId viewId : viewIdsGlobal )
+			labelsByView.put( viewIdKey( viewId ), new ArrayList<>( labelMap.get( viewId ).keySet() ) );
 
 		for ( final ViewId fixedViewId : fixedViewIds )
 			fixedViewKeys.add( viewIdKey( fixedViewId ) );
@@ -507,8 +673,6 @@ public class Solver extends AbstractRegistration
 			{
 				final ViewId vA = viewIdsGlobal.get( i );
 				final ViewId vB = viewIdsGlobal.get( j );
-				final String vAKey = viewIdKey( vA );
-				final String vBKey = viewIdKey( vB );
 
 				if ( vsComparisonPairs != null )
 				{
@@ -517,23 +681,21 @@ public class Solver extends AbstractRegistration
 						continue;
 				}
 
-				if ( fixedViewKeys.contains( vAKey ) && fixedViewKeys.contains( vBKey ) )
+				// both are fixed, no need to connect them
+				if ( fixedViewKeys.contains( viewIdKey( vA ) ) && fixedViewKeys.contains( viewIdKey( vB ) ) )
 				{
 					System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are both fixed." );
 					continue;
 				}
 
-				if ( sameGroupPairs.contains( pairKey( vAKey, vBKey ) ) )
+				// both are part of the same group, no need to connect them
+				if ( sameGroupPairs.contains( pairKey( viewIdKey( vA ), viewIdKey( vB ) ) ) )
 				{
 					System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are part of the same group." );
 					continue;
 				}
 
-				tasks.add( new PairTask(
-						vA.getTimePointId(),
-						vA.getViewSetupId(),
-						vB.getTimePointId(),
-						vB.getViewSetupId() ) );
+				tasks.add( new PairTask( vA.getTimePointId(), vA.getViewSetupId(), vB.getTimePointId(), vB.getViewSetupId() ) ); // order doesn't matter, saved symmetrically
 			}
 
 		if ( tasks.isEmpty() )
@@ -544,23 +706,24 @@ public class Solver extends AbstractRegistration
 
 		System.out.println( "Spark correspondence setup tasks: " + tasks.size() );
 
-		final JavaRDD< PairTask > rdd =
-				sc.parallelize( tasks, Math.min( Spark.maxPartitions, tasks.size() ) );
+		final JavaRDD< PairTask > rdd = sc.parallelize( tasks, Math.min( Spark.maxPartitions, tasks.size() ) );
 
 		final List< ArrayList< SerializedIPPairwiseResult > > sparkResults = rdd.map( pairTask ->
 		{
+			// every task loads its own SpimData2, so updateModel()/getModel() are never shared between threads
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-			System.out.println("Start collecting correspondences for " + pairTask);
+
+			System.out.println( "Start collecting correspondences for " + pairTask );
+
 			final ViewId vA = pairTask.viewId();
 			final ViewId vB = pairTask.correspondingViewId();
-			final String vAKey = viewIdKey( pairTask.timePointA, pairTask.viewSetupA );
-			final String vBKey = viewIdKey( pairTask.timePointB, pairTask.viewSetupB );
-			final ArrayList< String > labelsA = labelsByView.get( vAKey );
-			final ArrayList< String > labelsB = labelsByView.get( vBKey );
+			final ArrayList< String > labelsA = labelsByView.get( viewIdKey( vA ) );
+			final ArrayList< String > labelsB = labelsByView.get( viewIdKey( vB ) );
 			final ArrayList< SerializedIPPairwiseResult > results = new ArrayList<>();
 
-			if ( labelsA == null || labelsB == null ) {
-				System.out.println("Either " + vAKey + " or " + vBKey + " has no labels." );
+			if ( labelsA == null || labelsB == null )
+			{
+				System.out.println( "Either " + Group.pvid( vA ) + " or " + Group.pvid( vB ) + " has no labels." );
 				return results;
 			}
 
@@ -569,65 +732,67 @@ public class Solver extends AbstractRegistration
 
 			vRegA.updateModel();
 			vRegB.updateModel();
+
 			final AffineTransform3D mA = vRegA.getModel();
 			final AffineTransform3D mB = vRegB.getModel();
 
-			for ( final String labelA : labelsA ) {
-				final InterestPoints interestPointsA = data.getViewInterestPoints().getViewInterestPointLists(vA).getInterestPointList(labelA);
+			// iterate over all pairs of labels
+			for ( final String labelA : labelsA )
+			{
+				final InterestPoints interestPointsA = data.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA );
+
 				if ( interestPointsA == null )
 					continue;
 
-				final Map<Integer, InterestPoint> ipListA = interestPointsA.getInterestPointsCopy();
+				final Map< Integer, InterestPoint > ipListA = interestPointsA.getInterestPointsCopy();
+				final Collection< CorrespondingInterestPoints > cpA = interestPointsA.getCorrespondingInterestPointsCopy();
 
-				for ( final String labelB : labelsB ) {
-					final InterestPoints interestPointsB = data.getViewInterestPoints().getViewInterestPointLists(vB).getInterestPointList(labelB);
+				for ( final String labelB : labelsB )
+				{
+					final InterestPoints interestPointsB = data.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB );
 
 					if ( interestPointsB == null )
 						continue;
 
-					final Collection<CorrespondingInterestPoints> cpA = interestPointsA.getCorrespondingInterestPointsCopy();
-					final Map<Integer, InterestPoint> ipListB = interestPointsB.getInterestPointsCopy();
-					final SerializedIPPairwiseResult result = new SerializedIPPairwiseResult(
-							pairTask.timePointA,
-							pairTask.viewSetupA,
-							pairTask.timePointB,
-							pairTask.viewSetupB,
-							labelA,
-							labelB );
+					final Map< Integer, InterestPoint > ipListB = interestPointsB.getInterestPointsCopy();
 
-					for ( final CorrespondingInterestPoints p : cpA ) {
+					final SerializedIPPairwiseResult result = new SerializedIPPairwiseResult(
+							pairTask.timePointA, pairTask.viewSetupA, pairTask.timePointB, pairTask.viewSetupB, labelA, labelB );
+
+					for ( final CorrespondingInterestPoints p : cpA )
+					{
 						if ( !p.getCorrespodingLabel().equals( labelB ) || !p.getCorrespondingViewId().equals( vB ) )
 							continue;
 
-						final InterestPoint originalA = ipListA.get( p.getDetectionId() );
-						final InterestPoint originalB = ipListB.get( p.getCorrespondingDetectionId() );
+						final InterestPoint ipA = ipListA.get( p.getDetectionId() ); // now that it is a hashmap and not a list, it is no bug anymore
+						final InterestPoint ipB = ipListB.get( p.getCorrespondingDetectionId() );
 
-						if ( originalA == null || originalB == null )
+						if ( ipA == null || ipB == null )
 							continue;
 
-						final InterestPoint ipA = new InterestPoint( originalA.getId(), originalA.getL().clone() );
-						final InterestPoint ipB = new InterestPoint( originalB.getId(), originalB.getL().clone() );
+						// transform into fresh arrays (never in place: AffineTransform3D.apply(src, tgt) is not
+						// alias-safe for non-diagonal matrices), and create new points because the lists are
+						// not bijective (one point may correspond to several in the other view)
+						final double[] lA = new double[ 3 ], lB = new double[ 3 ];
+						mA.apply( ipA.getL(), lA );
+						mB.apply( ipB.getL(), lB );
 
-						mA.apply( ipA.getL(), ipA.getL() );
-						mA.apply( ipA.getW(), ipA.getW() );
-						mB.apply( ipB.getL(), ipB.getL() );
-						mB.apply( ipB.getW(), ipB.getW() );
-
-						result.inliers.add(new PointMatchGeneric<>(ipA, ipB));
+						result.inliers.add( new PointMatchGeneric<>( new InterestPoint( ipA.getId(), lA ), new InterestPoint( ipB.getId(), lB ) ) );
 					}
 
 					if ( !result.inliers.isEmpty() )
-						results.add(result);
+						results.add( result );
 				}
-
 			}
 
-			System.out.println("Done collecting correspondences for " + pairTask);
+			System.out.println( "Done collecting correspondences for " + pairTask );
+
 			return results;
 		}).collect();
 
 		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
 		final Set< ViewId > connectedViews = new HashSet<>();
+
 		for ( final ArrayList< SerializedIPPairwiseResult > taskResults : sparkResults )
 			for ( final SerializedIPPairwiseResult serializedResult : taskResults )
 			{
@@ -665,7 +830,7 @@ public class Solver extends AbstractRegistration
 					pairs.add( new ValuePair<>( new ValuePair<>( viewId, viewId ), pairResult)) ; // we are connecting it to itself with no inliers so it is in the list
 				}
 
-		if (!pairs.isEmpty())
+		if ( !pairs.isEmpty() )
 			return new InterestPointMatchCreator( pairs, labelMap );
 		else
 			return null;
@@ -673,12 +838,7 @@ public class Solver extends AbstractRegistration
 
 	private static String viewIdKey( final ViewId viewId )
 	{
-		return viewIdKey( viewId.getTimePointId(), viewId.getViewSetupId() );
-	}
-
-	private static String viewIdKey( final int timePointId, final int viewSetupId )
-	{
-		return timePointId + "," + viewSetupId;
+		return viewId.getTimePointId() + "," + viewId.getViewSetupId();
 	}
 
 	private static String pairKey( final String viewA, final String viewB )
@@ -686,6 +846,7 @@ public class Solver extends AbstractRegistration
 		return viewA + ">" + viewB;
 	}
 
+	/** one pair of views (plain ints, so it can be sent to the Spark tasks) */
 	private static class PairTask implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
@@ -695,11 +856,7 @@ public class Solver extends AbstractRegistration
 		final int timePointB;
 		final int viewSetupB;
 
-		PairTask(
-				final int timePointA,
-				final int viewSetupA,
-				final int timePointB,
-				final int viewSetupB )
+		PairTask( final int timePointA, final int viewSetupA, final int timePointB, final int viewSetupB )
 		{
 			this.timePointA = timePointA;
 			this.viewSetupA = viewSetupA;
@@ -718,16 +875,18 @@ public class Solver extends AbstractRegistration
 		}
 
 		@Override
-		public String toString() {
-			return new ToStringBuilder(this)
-					.append("timePointA", timePointA)
-					.append("viewSetupA", viewSetupA)
-					.append("timePointB", timePointB)
-					.append("viewSetupB", viewSetupB)
+		public String toString()
+		{
+			return new ToStringBuilder( this )
+					.append( "timePointA", timePointA )
+					.append( "viewSetupA", viewSetupA )
+					.append( "timePointB", timePointB )
+					.append( "viewSetupB", viewSetupB )
 					.toString();
 		}
 	}
 
+	/** the inliers (already in global coordinates) of one pair of views and labels, returned by a Spark task */
 	private static class SerializedIPPairwiseResult implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
@@ -738,15 +897,9 @@ public class Solver extends AbstractRegistration
 		final int viewSetupB;
 		final String labelA;
 		final String labelB;
-		final List< PointMatchGeneric< InterestPoint > > inliers;
+		final List< PointMatchGeneric< InterestPoint > > inliers = new ArrayList<>();
 
-		SerializedIPPairwiseResult(
-				final int timePointA,
-				final int viewSetupA,
-				final int timePointB,
-				final int viewSetupB,
-				final String labelA,
-				final String labelB )
+		SerializedIPPairwiseResult( final int timePointA, final int viewSetupA, final int timePointB, final int viewSetupB, final String labelA, final String labelB )
 		{
 			this.timePointA = timePointA;
 			this.viewSetupA = viewSetupA;
@@ -754,116 +907,109 @@ public class Solver extends AbstractRegistration
 			this.viewSetupB = viewSetupB;
 			this.labelA = labelA;
 			this.labelB = labelB;
-			this.inliers = new ArrayList<>();
 		}
 
 		Pair< Pair< ViewId, ViewId >, PairwiseResult< InterestPoint > > deserialize()
 		{
-			final ViewId vA = new ViewId( timePointA, viewSetupA );
-			final ViewId vB = new ViewId( timePointB, viewSetupB );
 			final PairwiseResult< InterestPoint > pairResult = new PairwiseResult<>( false );
 
+			// set labels (required by InterestPointMatchCreator to assign weights)
 			pairResult.setLabelA( labelA );
 			pairResult.setLabelB( labelB );
 			pairResult.setInliers( inliers, 0.0 );
 
-			return new ValuePair<>( new ValuePair<>( vA, vB ), pairResult );
+			return new ValuePair<>( new ValuePair<>( new ViewId( timePointA, viewSetupA ), new ViewId( timePointB, viewSetupB ) ), pairResult );
 		}
 	}
 
-	public static Set< ViewId > assembleFixedAuto(
-			final ArrayList< ViewId > allViewIds,
-			final SequenceDescription sd,
-			final RegistrationType registrationTP,
-			final int referenceTP )
-	{
-		final Set< ViewId > fixed = new HashSet<>();
-
-		Collections.sort( allViewIds );
-
-		if ( registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
+	/**
+	 * GUI "Fix first view": the first (sorted) view of every subset.
+	 *
+	 * @param subsets the independent registration subsets; empty subsets are skipped
+	 * @return the first view of every non-empty subset
+	 */
+	public static HashSet< ViewId > assembleFixed( final List< Subset< ViewId > > subsets )
 		{
-			for ( final ViewId viewId : allViewIds )
-			{
-				if ( viewId.getTimePointId() == referenceTP )
-				{
-					fixed.add( viewId );
-					break;
-				}
-			}
-		}
-		else if ( registrationTP == RegistrationType.TIMEPOINTS_INDIVIDUALLY )
-		{
-			// it is sorted by timpoint
-			fixed.add( allViewIds.get( 0 ) );
-			int currentTp = allViewIds.get( 0 ).getTimePointId();
+		final HashSet< ViewId > fixed = new HashSet<>();
 
-			for ( final ViewId viewId : allViewIds )
-			{
-				// next tp
-				if ( viewId.getTimePointId() != currentTp )
-				{
-					fixed.add( viewId );
-					currentTp = viewId.getTimePointId();
-				}
-			}
-		}
-		else
-		{
-			fixed.add( allViewIds.get( 0 ) ); // always the first view is fixed
-		}
+		for ( final Subset< ViewId > subset : subsets )
+			if ( !subset.getViews().isEmpty() )
+				fixed.add( Subset.getViewsSorted( subset.getViews() ).get( 0 ) );
 
 		return fixed;
 	}
 
-	public static HashMap< Subset< ViewId >, Pair< ViewId, Dimensions > > assembleMapBack(
-			final ArrayList< Subset< ViewId > > subsets,
-			final ArrayList< ViewId > mapBackViewIds,
-			final SequenceDescription sd )
+	/**
+	 * GUI "Map back to first/user defined view": one reference view per subset. For each subset the first
+	 * view of {@code mapBackViewIds} that it contains is used; if there is none, the first (sorted) view of
+	 * the subset. The chosen reference views are printed.
+	 *
+	 * @param subsets the independent registration subsets; empty subsets are skipped
+	 * @param mapBackViewIds user-defined reference views, or {@code null} to use the first view of every
+	 *             subset
+	 * @return for every view the mapback (reference) view of its subset
+	 */
+	public static HashMap< ViewId, ViewId > assembleMapBack(
+			final List< Subset< ViewId > > subsets,
+			final ArrayList< ViewId > mapBackViewIds )
 	{
-		final HashMap< Subset< ViewId >, Pair< ViewId, Dimensions > > map = new HashMap<>();
+		final HashMap< ViewId, ViewId > map = new HashMap<>();
 
 		for ( final Subset< ViewId > subset : subsets )
 		{
-			ViewId mapBackView = null;
+			if ( subset.getViews().size() == 0 )
+				continue;
 
-			// see if we have view specified for 
-			if ( mapBackViewIds != null && mapBackViewIds.size() > 0 )
+			// user-specified view in this subset, otherwise the first one
+			ViewId mapBackView = Subset.getViewsSorted( subset.getViews() ).get( 0 );
+
+			if ( mapBackViewIds != null && !mapBackViewIds.isEmpty())
 			{
-				for ( final ViewId mbv : mapBackViewIds )
-					if ( subset.contains( mbv ) )
+				for (final ViewId mbv : mapBackViewIds)
+					if ( subset.contains(mbv) )
 					{
 						mapBackView = mbv;
 						break;
 					}
 			}
 
-			// if none was found, use the first one
-			if ( mapBackView == null )
-			{
-				mapBackView = Subset.getViewsSorted( subset.getViews() ).get( 0 );
-			}
-
-			final Dimensions mapBackViewDims = sd.getViewDescription( mapBackView ).getViewSetup().getSize();
-			map.put( subset, new ValuePair< ViewId, Dimensions >( mapBackView, mapBackViewDims ) );
+			for ( final ViewId viewId : subset.getViews() )
+				map.put( viewId, mapBackView );
 		}
 
 		System.out.println("The following ViewIds are used for mapback: ");
-		map.values().forEach( vid -> System.out.print( Group.pvid( vid.getA() ) + ", ") );
+		new HashSet<>( map.values() ).forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
 		System.out.println();
 
 		return map;
 	}
 
-	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
+	/**
+	 * Validates the fixed-view and mapback options and resolves them against the dataset. With
+	 * {@code --disableFixedViews}, {@link #fixedViewIds} is set to {@code null}; if
+	 * {@code --enableMapbackViews} is also set, {@code --mapbackViews} is parsed into {@link #mapBackViewIds}
+	 * ({@code null} if not given, meaning the first view of every subset) and {@link #mapBackModel} is
+	 * instantiated according to {@code --mapbackModel}. Otherwise {@code --fixedViews} is parsed into
+	 * {@link #fixedViewIds} ({@code null} if not given). View IDs that do not exist in the dataset are
+	 * dropped with a warning.
+	 *
+	 * @param dataGlobal the dataset against which the given view IDs are validated
+	 * @return always {@code true}
+	 * @throws IllegalArgumentException if {@code --enableMapbackViews} is used without
+	 *             {@code --disableFixedViews} or together with {@code -rtp TO_REFERENCE_TIMEPOINT}, or if
+	 *             none of the given fixed or mapback views exists in the dataset
+	 */
+	public boolean setupParameters( final SpimData2 dataGlobal )
 	{
-		//if ( !disableFixedViews && enableMapbackViews )
-		//	throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
+		if ( !disableFixedViews && enableMapbackViews )
+			throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
+
+		if ( enableMapbackViews && registrationTP == RegistrationType.TO_REFERENCE_TIMEPOINT )
+			throw new IllegalArgumentException("'--enableMapbackViews' is not supported with '-rtp TO_REFERENCE_TIMEPOINT' (the GUI does not map back in this mode either).");
 
 		// fixed views and mapping back to original view
 		if ( disableFixedViews )
 		{
-			/*
 			if ( enableMapbackViews )
 			{
 				if ( mapbackViews == null || mapbackViews.length == 0 )
@@ -879,14 +1025,12 @@ public class Solver extends AbstractRegistration
 	
 					final ArrayList<ViewId> parsedViews = Import.getViewIds( mapbackViews ); // all views
 					this.mapBackViewIds = Import.getViewIds( dataGlobal, parsedViews );
-					System.out.println( "Warning: only " + mapBackViewIds.size() + " of " + parsedViews.size() + " that you specified for mapback views exist and are present.");
-	
+
+					if ( parsedViews.size() != mapBackViewIds.size() )
+						System.out.println( "Warning: only " + mapBackViewIds.size() + " of " + parsedViews.size() + " that you specified for mapback views exist and are present.");
+
 					if ( this.mapBackViewIds == null || this.mapBackViewIds.size() == 0 )
-						throw new IllegalArgumentException( "Mapback views couldn't be parsed. Please provide valid mapsback views." );
-	
-					System.out.println("The following ViewIds are used for mapback: ");
-					fixedViewIds.forEach( vid -> System.out.print( Group.pvid( vid ) + ", ") );
-					System.out.println();
+						throw new IllegalArgumentException( "Mapback views couldn't be parsed. Please provide valid mapback views." );
 				}
 
 				// load mapback model
@@ -900,7 +1044,7 @@ public class Solver extends AbstractRegistration
 
 				this.mapBackViewIds = null;
 			}
-			*/
+
 			this.fixedViewIds = null;
 		}
 		else
@@ -930,13 +1074,12 @@ public class Solver extends AbstractRegistration
 				System.out.println();
 			}
 
-			//sthis.mapBackViewIds = null;
 		}
 
 		return true;
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new Solver()).execute(args));

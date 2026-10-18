@@ -23,8 +23,10 @@ package net.preibisch.bigstitcher.spark;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewTransform;
@@ -36,6 +38,13 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * Command-line tool that removes view transformations from the registrations of the selected views of a
+ * BigStitcher project: either the last {@code --remove N} transformations, or everything beyond the first
+ * {@code --keep N}, counted in the order the transforms are applied (e.g. calibration first). Exactly one of
+ * the two options has to be given. The removed transforms are printed and the XML is saved unless
+ * {@code --dryRun} is set. Not a Spark job.
+ */
 public class ClearRegistrations extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = -526317635920954010L;
@@ -69,10 +78,16 @@ public class ClearRegistrations extends AbstractSelectableViews
 
 		final Map<ViewId, ViewRegistration> regs = dataGlobal.getViewRegistrations().getViewRegistrations();
 
-		System.out.println( "The following transformations will be removed:");
+		// Only touch the views the user selected (all present views when no selection flags are given).
+		final Set< ViewId > selected = new HashSet<>( viewIdsGlobal );
+
+		System.out.println( "The following transformations will be removed (" + selected.size() + " selected view(s)):");
 
 		for ( final Entry<ViewId, ViewRegistration> reg : regs.entrySet() )
 		{
+			if ( !selected.contains( reg.getKey() ) )
+				continue;
+
 			System.out.println( Group.pvid( reg.getKey() ) + ":" );
 
 			final ViewRegistration r = reg.getValue();

@@ -42,7 +42,7 @@ src/main/java/net/preibisch/bigstitcher/spark/
 │   └── AbstractSelectableViews.java      # View-selection args
 ├── cloud/                                # Cloud test/loader
 ├── detection/
-│   └── LazyBackgroundSubtract.java
+│   └── LazyBackgroundNormalize.java
 ├── fusion/
 │   ├── GenerateComputeBlockMasks.java
 │   ├── OverlappingBlocks.java
@@ -194,7 +194,14 @@ Tightly coupled to mvr's `process.splitting.*` — recent mvr-side work (single-
 New CLI tool to filter a SpimData2 XML by attributes. Defaults to overwriting the input XML.
 
 ### `ClearInterestPoints` (expanded)
-Added modes: `FIX_INTERESTPOINTS`, `ADD_LABEL`, `REMOVE_LABEL`. Cloud-aware.
+Added modes: `FIX_INTERESTPOINTS`, `ADD_LABEL`, `REMOVE_LABEL`. Cloud-aware. Now extends
+`AbstractSelectableViews`: every mode except `FIX_INTERESTPOINTS` honours the view-selection flags, and
+correspondences in *unselected* views that point into the selection are pruned too (dataset stays consistent
+in one pass). A selection covering all present views (incl. "no flags") takes the legacy dataset-wide paths,
+so `CLEAR_EVERYTHING` still wipes the whole `interestpoints.n5`. The set+label correspondence filter
+(`removeCorrespondencesToViewsWithLabel`) lives here because BSS pins a released mvr; upstream it to
+`CorrespondenceTools` when mvr moves past 9.0.13. `ClearRegistrations` now actually applies its selection
+(its loop used to iterate every registration).
 
 ### Shared CLI plumbing
 `--max*Log` knobs and the post-registration transformation summary moved into `AbstractInfrastructure` so all commands share them. Registration-specific args migrated to `AbstractRegistration`.
@@ -262,7 +269,7 @@ mvn test -Dtest=TestSparkFusion -Denforcer.skip=true       # one class
 mvn test -Dtest=TestSparkFusion#testFusionWithMultiResPyramid -Denforcer.skip=true
 ```
 
-Test classes (`TestSparkInterestPointDetection`, `TestSparkFusion`) reuse mvr's `SimulateUtil` / `TestInterestPointDetection` / `TestRegistration` / `TestBoundingBox` — so mvr changes flow through here automatically.
+Test classes (`TestSparkInterestPointDetection`, `TestSparkFusion`, `TestClearInterestPoints`) reuse mvr's `SimulateUtil` / `TestInterestPointDetection` / `TestRegistration` / `TestBoundingBox` — so mvr changes flow through here automatically.
 
 Known issue: mvr-side `TestN5Zarr` multi-resolution sharding tests hit NPE at `PaddedRawBlockCodec.encode()`. Production GUI export and Spark fusion both work; suspected to be test-setup parameter init.
 
@@ -271,19 +278,38 @@ Known issue: mvr-side `TestN5Zarr` multi-resolution sharding tests hit NPE at `P
 ```bash
 mvn clean compile                # compile only
 ./install -t 8 -m 64             # build + generate command shims
-mvn clean package -P fatjar      # cluster/cloud fatjar
+./install-release -t 8 -m 64     # no build: download the latest release's local jar + generate shims (java -jar based)
+mvn -DskipTests clean package -Pfatjar        # target/BigStitcher-Spark-<v>-cluster.jar (Spark not bundled; spark-submit)
+mvn -DskipTests package -Pfatjar-local        # target/BigStitcher-Spark-<v>-local.jar   (Spark bundled; java -jar)
 ```
 
 Generated local scripts wrap `java -Xmx${MEM}g -Dspark.master=local[${THREADS}] -cp $JAR:$(deps) net.preibisch.bigstitcher.spark.<Class>`.
 
-Cluster/cloud: submit the fatjar via `spark-submit --class net.preibisch.bigstitcher.spark.<Class> ...`.
+Cluster/cloud: submit the cluster jar via `spark-submit --class net.preibisch.bigstitcher.spark.<Class> ...` (or without
+`--class`: the manifest's `Main-Class` is the `BigStitcherSpark` dispatcher, `spark-submit ... jar <command> ...`).
+
+### Fat jars & releases
+- One shade execution in `<build>`, gated by properties: `fatjar.skip` (default true), `fatjar.classifier`,
+  `spark.scope` (`provided` by default; the `fatjar-local` profile sets `compile`). The thin main artifact is
+  never replaced, so `release:perform` deploys are unaffected. Two `mvn` runs are needed for two jars.
+- Manifest (`ManifestResourceTransformer`): `Main-Class` = `BigStitcherSpark` (picocli dispatcher, 17 subcommands
+  = shim names), `Add-Opens` = the module flags from `install` (honoured only by `java -jar`), `Implementation-Version`.
+  `BigStitcherSpark.main` defaults `spark.master=local[*]` and sets the two `-D` props the shims pass.
+- Bundling Spark needs `Log4j2PluginCacheFileTransformer` (three jars ship `Log4j2Plugins.dat`) and excluding
+  `ch.qos.logback:*` (Bio-Formats pulls logback next to Spark's log4j binding). `log4j.version` pinned to Spark's 2.24.3.
+- Releases: scijava `release-version.sh` (clone at `~/workspace/scijava-scripts`) creates the tag
+  `BigStitcher-Spark-<v>`; needs `--skip-version-check` (we stay on pom-scijava 44 with mvr) and
+  `--skip-license-update` (pom says bsd, headers are GPL) and a tree without untracked files. On the tag,
+  `build.yml` deploys to maven.scijava.org and `release.yml` publishes the GitHub Release with
+  `BigStitcher-Spark-<v>-{cluster,local}.jar` plus constant-name copies (`releases/latest/download/...`).
+  `workflow_dispatch` on `release.yml` is a dry run (artifact only).
 
 ## Branches
 
 - **`zarrv3`** — current dev, matches mvr's `zarrv3`. Pinned to mvr 9.0.0-SNAPSHOT.
 - `main` — stable.
 - Many feature branches still alive (`TPS`, `intensity`, `blocksupplier`, `OpenDAL`, `keller`, `omezarr`, …) — most look merged-or-stale.
-- Remotes: `origin` = PreibischLab, `allen` = AllenNeuralDynamics fork.
+- Remotes: `origin` should point at **JaneliaSciComp/BigStitcher-Spark** (the canonical repo; `PreibischLab/BigStitcher-Spark` is a GitHub redirect), `allen` = AllenNeuralDynamics fork.
 
 ## House Rules
 
@@ -294,8 +320,14 @@ Cluster/cloud: submit the fatjar via `spark-submit --class net.preibisch.bigstit
 
 ## References
 
-- mvr: https://github.com/PreibischLab/multiview-reconstruction
-- Repo: https://github.com/PreibischLab/BigStitcher-Spark
+All PreibischLab repositories moved to the JaneliaSciComp organization; `PreibischLab/...` URLs are GitHub redirects.
+
+- Repo: https://github.com/JaneliaSciComp/BigStitcher-Spark
+- Releases (local + cluster jars, `install-release`): https://github.com/JaneliaSciComp/BigStitcher-Spark/releases
+- Maven artifacts: https://maven.scijava.org/content/repositories/releases/net/preibisch/BigStitcher-Spark/
+- mvr: https://github.com/JaneliaSciComp/multiview-reconstruction
+- BigStitcher (GUI): https://github.com/JaneliaSciComp/BigStitcher
+- scijava-scripts (`release-version.sh`, `ci-build.sh`): https://github.com/scijava/scijava-scripts
 - N5 Zarr v3 blog: https://imglib.github.io/imglib2-blog/posts/2025-12-22-n5-shard-dev/
 - Zarr spec: https://zarr-specs.readthedocs.io/
 - Apache Spark 4.1.2: https://spark.apache.org/docs/4.1.2/

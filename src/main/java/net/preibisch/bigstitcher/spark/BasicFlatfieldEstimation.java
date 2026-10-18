@@ -244,20 +244,20 @@ public class BasicFlatfieldEstimation extends AbstractSelectableViews
 			// loads all frames of one view into a FramesStack; the driver then reduces
 			// the per-view stacks into a single aggregated stack via FramesStack.combine.
 			final long groupSeed = seed;
-			final List< int[] > serializedViews = Spark.serializeViewIdsForRDD( selectedViews );
+			// plain ViewIds (not ViewDescriptions, which reference the whole sequence description) so they can be sent to the workers
+			final List< ViewId > viewsToLoad = Spark.toViewIds( selectedViews );
 
-			final JavaRDD< int[] > viewsRDD =
-					sc.parallelize( serializedViews, Math.min( Spark.maxPartitions, serializedViews.size() ) );
+			final JavaRDD< ViewId > viewsRDD =
+					sc.parallelize( viewsToLoad, Math.min( Spark.maxPartitions, viewsToLoad.size() ) );
 
 			final BasicFlatfield.FramesStack frames = viewsRDD
-					.map( svId ->
+					.map( viewId ->
 					{
 						final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-						final ViewId viewId = Spark.deserializeViewId( svId );
 						// per-view deterministic seed so parallel loading stays reproducible
 						final long viewSeed = groupSeed
-								^ ( ( ( long ) svId[ 0 ] ) * 0x9E3779B97F4A7C15L )
-								^ ( ( ( long ) svId[ 1 ] ) * 0xC2B2AE3D27D4EB4FL );
+								^ ( ( ( long ) viewId.getTimePointId() ) * 0x9E3779B97F4A7C15L )
+								^ ( ( ( long ) viewId.getViewSetupId() ) * 0xC2B2AE3D27D4EB4FL );
 						return loadFramesForView( dataLocal, viewId, viewSeed, numFramesFinal, workingSizeFinal );
 					} )
 					.reduce( BasicFlatfield::concat);

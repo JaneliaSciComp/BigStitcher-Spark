@@ -57,7 +57,6 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewDescription;
@@ -117,9 +116,23 @@ import picocli.CommandLine.Option;
 import util.Grid;
 import util.URITools;
 
+/**
+ * Spark command-line tool ({@code fusion}) that fuses the registered views of a BigStitcher
+ * dataset into an output container (N5, OME-ZARR or HDF5) previously created with
+ * {@link CreateFusionContainer}, from whose {@code Bigstitcher-Spark/*} attributes the data type,
+ * bounding box, block/shard layout, multi-resolution levels and BDV/OME-ZARR format are read.
+ * The bounding box is split into grid blocks that are fused independently on Spark workers,
+ * transforming each contributing view either affinely ({@link FusionMethod#AFFINE}) or with a
+ * thin-plate-spline ({@link FusionMethod#THIN_PLATE_SPLINE}, using cached displacement fields).
+ * Optionally applies intensity-correction coefficients, prefetches the required input blocks per
+ * job, or writes coverage masks instead of fused intensities ({@code --masks}).
+ */
 public class SparkFusion extends AbstractInfrastructure implements Callable<Void>, Serializable
 {
+	/** Pixel type of the fused output volume. */
 	public enum DataTypeFusion { UINT8, UINT16, FLOAT32 }
+
+	/** How each input view is transformed into the fused output space. */
 	public enum FusionMethod { AFFINE, THIN_PLATE_SPLINE }
 
 	private static final long serialVersionUID = -6103761116219617153L;
@@ -179,6 +192,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 	// === Thin-Plate-Spline displacement-field cache (only used with -fm THIN_PLATE_SPLINE) ===
 
+	/** Component type of the cached thin-plate-spline displacement fields ({@code --dfieldType}). */
 	public enum DfieldType { FLOAT32, FLOAT64 }
 
 	@Option(names = { "--dfieldSpacing" }, description = "TPS only: dfield grid spacing per dim (default: 8,8,8). Larger = less memory but more interpolation error.")
@@ -1128,7 +1142,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private static final class PerUTaskSpec implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
-		final int[] uvidSerialized;
+		final ViewId uvid;
 		final URI xmlURI;
 		final URI outPathURI;
 		final StorageFormat storageType;
@@ -1146,7 +1160,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > donatedNails;
 
 		PerUTaskSpec(
-				final int[] uvidSerialized,
+				final ViewId uvid,
 				final URI xmlURI, final URI outPathURI, final StorageFormat storageType,
 				final double anisotropyFactor,
 				final String correspondenceLabel, final int minNumCorrespondences,
@@ -1156,7 +1170,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 				final double[] dfieldSpacing, final int[] dfieldBlockSize, final DfieldType dfieldType,
 				final List< SplitImgLoaderThinPlateSplineFusion.DonatedNail > donatedNails )
 		{
-			this.uvidSerialized = uvidSerialized;
+			this.uvid = uvid;
 			this.xmlURI = xmlURI;
 			this.outPathURI = outPathURI;
 			this.storageType = storageType;
@@ -1184,7 +1198,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 	private static final class PerUTaskResult implements Serializable
 	{
 		private static final long serialVersionUID = 1L;
-		final int[] uvidSerialized;
+		final ViewId uvid;
 		final String dsPath;
 		final long[] bboxMin;
 		final long[] bboxMax;
@@ -1193,12 +1207,12 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records;
 
 		PerUTaskResult(
-				final int[] uvidSerialized, final String dsPath,
+				final ViewId uvid, final String dsPath,
 				final long[] bboxMin, final long[] bboxMax, final long[] numBlocks,
 				final List< DfieldBlockSpec > blockSpecs,
 				final List< SplitImgLoaderThinPlateSplineFusion.LandmarkRecord > records )
 		{
-			this.uvidSerialized = uvidSerialized;
+			this.uvid = uvid;
 			this.dsPath = dsPath;
 			this.bboxMin = bboxMin;
 			this.bboxMax = bboxMax;
@@ -1339,7 +1353,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		for ( final ViewId uvid : underlyingToCompute )
 		{
 			perUSpecs.add( new PerUTaskSpec(
-					Spark.serializeViewId( uvid ),
+					uvid,
 					xmlURIFinal, outPathURIFinal, storageTypeFinal,
 					anisotropyFactor,
 					correspondenceLabel, minNumCorrespondences,
@@ -1362,7 +1376,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 			final List< PerUTaskResult > perUResults = sc.parallelize(
 					perUSpecs, Math.min( Spark.maxPartitions, perUSpecs.size() ) ).map( spec ->
 			{
-				final ViewId uvid = Spark.deserializeViewId( spec.uvidSerialized );
+				final ViewId uvid = spec.uvid;
 				final SpimData2 data = Spark.getSparkJobSpimData2( spec.xmlURI );
 				final SplitViewerImgLoader sil = ( SplitViewerImgLoader ) data.getSequenceDescription().getImgLoader();
 				final SequenceDescription uSD = sil.underlyingSequenceDescription();
@@ -1422,7 +1436,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 							blockSpecs.add( new DfieldBlockSpec( new long[] { bx, by, bz }, bbox, lm, dsPath ) );
 
 				return new PerUTaskResult(
-						spec.uvidSerialized, dsPath,
+						spec.uvid, dsPath,
 						bbox.minAsLongArray(), bbox.maxAsLongArray(), numBlocks,
 						blockSpecs, records );
 			} ).collect();
@@ -1434,7 +1448,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 					for ( final SplitImgLoaderThinPlateSplineFusion.LandmarkRecord rec : res.records )
 						landmarkVisitor.accept( rec );
 
-				final ViewId uvid = Spark.deserializeViewId( res.uvidSerialized );
+				final ViewId uvid = res.uvid;
 				final Interval bbox = new FinalInterval( res.bboxMin, res.bboxMax );
 				System.out.println( "Phase 1.5: " + Group.pvid( uvid )
 						+ " bbox=" + Util.printInterval( bbox )
@@ -1757,7 +1771,7 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 		}
 	}
 
-	public static void main(final String... args) throws SpimDataException {
+	public static void main(final String... args) {
 
 		//final XmlIoSpimData io = new XmlIoSpimData();
 		//final SpimData spimData = io.load( "/Users/preibischs/Documents/Microscopy/Stitching/Truman/standard/output/dataset.xml" );

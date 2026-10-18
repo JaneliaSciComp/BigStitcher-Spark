@@ -1,4 +1,4 @@
-[![Build Status](https://github.com/PreibischLab/BigStitcher-Spark/actions/workflows/build.yml/badge.svg)](https://github.com/PreibischLab/BigStitcher-Spark/actions/workflows/build.yml)
+[![Build Status](https://github.com/JaneliaSciComp/BigStitcher-Spark/actions/workflows/build.yml/badge.svg)](https://github.com/JaneliaSciComp/BigStitcher-Spark/actions/workflows/build.yml)
 
 # BigStitcher-Spark
 
@@ -19,8 +19,8 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 
 Additonally there are some utility methods:
 * `SparkDownsample`/**`downsample`** (perform downsampling of existing volumes)
-* `ClearInterestPoints`/**`clear-interestpoints`** (clears interest points)
-* `ClearRegistrations`/**`clear-registrations`** (clears registrations)
+* `ClearInterestPoints`/**`clear-interestpoints`** (clears or repairs interest points and correspondences, for all or selected views)
+* `ClearRegistrations`/**`clear-registrations`** (clears registrations, for all or selected views)
 
 ***Note: BigStitcher-Spark is designed to work hand-in-hand with BigStitcher.** You can always verify the results of each step BigStitcher-Spark step interactively using BigStitcher by simply opening the XML. You can of course also run certain steps in BigStitcher, and others in BigStitcher-Spark. Not all functionality is 100% identical between BigStitcher and BigStitcher-Spark; important differences in terms of capabilities is described in the respective module documentation below (typically BigStitcher-Spark supports a specific feature that was hard to implement in BigStitcher and vice-versa).*
 
@@ -51,18 +51,35 @@ Additonally there are some utility methods:
 
 ### To run it on your local computer<a name="installlocal">
 
-* Prerequisites:  **Java** (_[Zulu JDK 8 + FX](https://www.azul.com/downloads/?version=java-8-lts&package=jdk-fx#zulu) is tested, and Java >=21 currently does not work with the Spark version used_) and **[Apache Maven](https://maven.apache.org)** must be installed. Try `java -version` and `mvn -v` to confirm their functionality and versions. You have to set the `JAVA_HOME` environment variable for Maven to find the right Java.
-* Clone the repo and `cd` into `BigStitcher-Spark`
-* Run the included bash script `./install -t <num-cores> -m <mem-in-GB> ` specifying the number of cores and available memory in GB for running locally. This should build the project and create the executable `resave`, `detect-interestpoints`, `register-interestpoints`, `stitching`, `solver`, `affine-fusion`, `nonrigid-fusion`, `downsample`, `clear-interestpoints` and `clear-registrations` in the working directory.
+* Prerequisite: **Java 21** (17 also works; Spark 4 dropped Java 8 and 11), e.g. [Zulu](https://www.azul.com/downloads/?version=java-21-lts&package=jdk) or [Temurin](https://adoptium.net). Check with `java -version`.
 
-If you run the code directly from your IDE, you will need to add JVM paramters for the local Spark execution (e.g. 8 cores, 50GB RAM):
+**Install Script** Download and run the `install-release` script. It fetches the latest release and creates one executable per module (`resave`, `detect-interestpoints`, ..., plus `bigstitcher-spark` for everything), preset with the given number of cores and memory in GB, without cloning or building anything:
+
+```
+curl -fsSLO https://raw.githubusercontent.com/JaneliaSciComp/BigStitcher-Spark/main/install-release
+./install-release    # options: -t threads, -m GB, -v <version>, -d <dir>, -f
+```
+then run for example `./resave -x ~/dataset.xml`.
+
+**Manually** instead: download `BigStitcher-Spark-<version>-local.jar` from the [latest release](https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest) (Spark is bundled, nothing else to install; a stable link to the current version is `https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest/download/BigStitcher-Spark-local.jar`) and run any module as a subcommand:
+
+```
+java -Xmx64g -jar BigStitcher-Spark-local.jar resave -x ~/dataset.xml
+java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all commands
+```
+
+`-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
+
+**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+
+If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
 -Dspark.master=local[8] -Xmx50G
 ```
 
 ### To run it on a compute cluster<a name="installcluster">
 
-`mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
+Use `BigStitcher-Spark-<version>-cluster.jar` from the [latest release](https://github.com/JaneliaSciComp/BigStitcher-Spark/releases/latest) (Spark is *not* bundled, the cluster's Spark 4.1 / Java 21 provides it), or build it yourself with `mvn clean package -Pfatjar` (`target/BigStitcher-Spark-<version>-cluster.jar`). Submit either with `spark-submit --class net.preibisch.bigstitcher.spark.<JavaClassName> ... BigStitcher-Spark-<version>-cluster.jar <arguments>` or, using the jar's entry point, `spark-submit ... BigStitcher-Spark-<version>-cluster.jar <cmd-line-tool-name> <arguments>`.
 
 ***Important:*** if you use HDF5 as input data in a distributed scenario, you need to set a common path for extracting the HDF5 binaries (see solved issue [here](https://github.com/PreibischLab/BigStitcher-Spark/issues/8)), e.g.
 ```
@@ -78,7 +95,7 @@ Please ask your sysadmin for help how to run it on your **cluster**, below are h
 
 ### To run it on the cloud<a name="installcloud">
 
-`mvn clean package -P fatjar` builds `target/BigStitcher-Spark-0.0.1-SNAPSHOT.jar` for distribution.
+Use the same `BigStitcher-Spark-<version>-cluster.jar` as for clusters (see above).
 
 BigStitcher-Spark is now fully "cloud-native". For running the fatjar on the **cloud** check out services such as [Amazon EMR](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-spark.html) and [Google Serverless Batches](https://cloud.google.com/dataproc-serverless/docs/quickstarts/spark-batch). Note that some modules support prefetching `--prefetch`, which is important for cloud execution due to its delays as it pre-loads all image blocks in parallel before processing. We will soon add detailled information on how to run the examples on both cloud platforms (it works - if you need help now, please contact @StephanPreibisch).
 
@@ -101,7 +118,7 @@ We provide two example datasets (one for *interest-point based registration*, on
   *  [As N5/XML](https://drive.google.com/file/d/1Ew9NZaOjz7unkQYCOM5f9D6sdKtFz8Fc/view?usp=sharing) containing matched interest points (unaligned)
   *  [As N5/XML](https://drive.google.com/file/d/13b0UzWuvpT_qL7JFFuGY9WWm-VEiVNj7/view?usp=sharing) (aligned)
 
-For this tutorial I extracted the Stitching dataset into `~/SparkTest/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`.
+For this tutorial I extracted the Stitching dataset into `~/SparkTest/Stitching` and the dataset for experimenting with interest points into `~/SparkTest/IP`. There are two cloud-based copies (_read only_) of the Stitching dataset available on **AWS S3** (s3://janelia-bigstitcher-spark/Stitching/dataset.xml) and **Google Storage** (gs://janelia-spark-test/I2K-test/dataset.xml).
 
 # Usage<a name="usage">
 
@@ -168,14 +185,12 @@ A typical, simple command line call to register each timepoint alignment individ
 
 Please run `match-interestpoints` without parameters to get help for all command line arguments. `-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
 
-`-m` defines the matching method; `FAST_ROTATION`, `FAST_TRANSLATION`, `PRECISE_TRANSLATION` or `ICP`.
+`-m` defines the matching method; `FAST_ROTATION`, `PRECISE_TRANSLATION` or `ICP`.
 * `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other.
   * `-s` defines the significance during descriptor matching, to establish a correspondence the best matching descriptor has to be `s` times better than the second best matching descriptor.
   * `-r` is the level of redundancy during descriptor matching, it adds extra neighbors to each descriptor and tests all combinations of neighboring points. 
-* `FAST_TRANSLATION` is a translation invariant method that uses geometric hashing and can find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
-  * supports the same parameters `-r`, `-s` as FAST_ROTATION above
 * `PRECISE_TRANSLATION` is a translation invariant method that uses exhaustive search to find corresponding constellation of points irrespective of their location in the image. It tolerates small rotatation of up to a few degrees.
-  * supports the same parameters `-r`, `-s` as FAST_ROTATION above, and additionally support `-n` to specify the number of neighboring points that are used to build geometric descriptors
+  * supports the same parameters `-r`, `-s` as FAST_ROTATION above, and additionally support `-n` to specify the number of neighboring points that are used to build geometric descriptors, `-sr` to limit the search to a radius around each point, and `--descriptorSearch` to pick the descriptor comparison (`AUTO` chooses per view pair between a flat KD-tree and a blocked brute force sweep; `LEGACY` is the original exhaustive loop)
 * `ICP` is a method that iteratively assignes closest pairs of points between two images until convergence and can be used for fine alignment.
   * `-ime` is the ICP maximum allowed error, `-iit` defines the number of ICP iterations and `--icpUseRANSAC` enables RANSAC at every ICP iteration
 
@@ -204,7 +219,7 @@ and when using matched **interestpoints** individually per timepoint it is (e.g.
 
 <code>./solver -x ~/SparkTest/IP/dataset.xml -s IP -l beads</code>
 
-Please run `solver` without parameters to get help for all command line arguments. `-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case. By default the first view of each timepoint will be fixed, `-fv` allows to specify certain views to be fixed and `--disableFixedViews` will not fix any views (in this case make sure to not use plain affine models). `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
+Please run `solver` without parameters to get help for all command line arguments. `-s` switches between `STITCHING` and `IP` (interest points) mode, `-l` defines the interest point label in the latter case. By default the first view of each timepoint will be fixed, `-fv` allows to specify certain views to be fixed and `--disableFixedViews` will not fix any views (in this case make sure to not use plain affine models). Without fixed views, `--enableMapbackViews` maps the result back onto one reference view per timepoint (`--mapbackViews '0,0'`, default: first view) using a `RIGID` or `TRANSLATION` `--mapbackModel`, exactly like the GUI's "Map back views" option. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default.
 
 `--maxError` sets the maximum allowed error for the solve (it will iterate at least until it is under that value), `--maxIterations` defines the maximum number of iterations, and `--maxPlateauwidth` defines the number of iterations that are used to estimate if the solve converged (and is thus also the minimal number of iterations). 
 
@@ -252,6 +267,20 @@ Run `correct-flatfield` without parameters for all arguments. `--fields` is the 
 `--baselineGranularity` chooses `SLICE` (default; one background per z-plane, so depth-dependent background is removed) or `VIEW` (one background per view/tile). `--baselineScale` sets the coarse XY size used for the estimate (default 128; z always full). The "mean" in `MEAN` is taken per `(channel,illumination)` group over all corrected images. Since fields are typically estimated and applied per acquisition round (via `--timepointId`), the drift being leveled is the tile-to-tile (and slice-to-slice) background variation within each round. Per-view baselines and the per-group reference mean are written to the output container as attributes for QC.
 
 <code>./correct-flatfield -x ~/SparkTest/dataset.xml --fields ~/SparkTest/flatfields.zarr -o ~/SparkTest/corrected.ome.zarr --baselineDrift MEAN --localSparkBindAddress</code>
+
+## Clear Interest Points / Registrations<a name="clear">
+
+Two utilities for editing the interest-point data and the registrations stored in a project without opening BigStitcher. Both accept the same view-selection flags as the other commands (`--tileId`, `--channelId`, `--illuminationId`, `--angleId`, `--timepointId`, or `-vi '0,0' -vi '0,1'` for individual ViewIds); without them every view is processed. `--dryRun` prints what would happen without writing anything.
+
+<code>./clear-interestpoints -x ~/SparkTest/IP/dataset.xml --clearMode REMOVE_LABEL --label beads --tileId 3,4</code>
+
+<code>./clear-registrations -x ~/SparkTest/IP/dataset.xml --remove 1 -vi '0,0'</code>
+
+`clear-interestpoints` modes (`--clearMode`): `CLEAR_EVERYTHING` (default) removes all interest points and correspondences of the selected views; without a view selection it deletes the whole `interestpoints.n5` directory. `CLEAR_ALL_CORRESPONDENCES` keeps the detections and drops the correspondence links. `ADD_LABEL` / `REMOVE_LABEL` add an empty interest-point list with the given `--label`, or remove that label, from the selected views. `FIX_INTERESTPOINTS` repairs a project whose views were removed from the XML (drops orphaned entries, N5 groups and correspondences); it always covers the whole dataset and ignores the view selection.
+
+***Note:*** whenever data is removed from selected views, correspondences in *unselected* views that point into the selection are removed as well, so the project stays consistent. `--silent` skips the per-view listing, which otherwise loads all selected interest points just to print counts (recommended for large or cloud-hosted datasets).
+
+`clear-registrations` strips transformations from the selected views: `--keep N` keeps only the first N transformations (in order of application, e.g. calibration first), `--remove N` removes the last N.
 
 ## Affine Fusion<a name="affine-fusion">
 
