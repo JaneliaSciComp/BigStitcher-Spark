@@ -65,6 +65,7 @@ public class BigStitcherSpark implements Runnable
 		// workflow tools
 		COMMANDS.put( "resave", SparkResaveN5.class );
 		COMMANDS.put( "detect-interestpoints", SparkInterestPointDetection.class );
+		COMMANDS.put( "filter-interestpoints", FilterInterestPoints.class );
 		COMMANDS.put( "match-interestpoints", SparkGeometricDescriptorMatching.class );
 		COMMANDS.put( "stitching", SparkPairwiseStitching.class );
 		COMMANDS.put( "solver", Solver.class );

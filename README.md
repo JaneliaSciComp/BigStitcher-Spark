@@ -9,7 +9,8 @@
 This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark listed as `JavaClassName`/**`cmd-line-tool-name`** (you can find documentation below, but a good start is also to just check out the cmd-line arguments, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
 * `SparkResaveN5`/**`resave`** (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
-* `SparkInterestPointDetection`/**`detect-interestpoints`** (detect interest points for alignment)
+* `SparkInterestPointDetection`/**`detect-interestpoints`** (detect interest points for alignment, Difference-of-Gaussian or scale space)
+* `FilterInterestPoints`/**`filter-interestpoints`** (filtered labels of detected interest points: by response, intensity, sigma or a fixed number per view, without detecting again)
 * `SparkGeometricDescriptorMatching`/**`match-interestpoints`** (perform pair-wise interest point matching)
 * `SparkPairwiseStitching`/**`stitching`** (run pairwise stitching between overlapping tiles)
 * `Solver`/**`solver`** (perform the global solve, works with interest points and stitching)
@@ -35,6 +36,7 @@ Additonally there are some utility methods:
   * [Resave Dataset](#resave)
   * [Pairwise Stitching](#stitching)
   * [Detect Interest Points](#ip-detect)
+  * [Filter Interest Points](#ip-filter)
   * [Match Interest Points](#ip-match)
   * [Solver](#solver)
   * [Affine Fusion](#affine-fusion)
@@ -67,7 +69,7 @@ java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all comman
 
 `-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
 
-**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `filter-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
 
 If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
@@ -163,7 +165,17 @@ The results will be written in the `XML` and the `interestpoints.n5` directory, 
 
 Please run `detect-interestpoints` without parameters to get help for all command line arguments. `-s` and `-t` define the sigma and threshold of the Difference-of-Gaussian, respectively and `-l` specifies the label for the interest points. `--minIntensity` and `--maxIntensity` set the intensity range in which all processed blocks are normalized to `[0...1]`; these values are mandatory since each individual Spark job is unable to figure out correct min/max values of the images. You could find good guesses for all these values by starting the interactive interest point detection in BigStitcher. `-dsxy` and `-dsz` define the downsampling at which interest point detection is performed. Using `--localization` you can specify the type of subpixel localization, either `NONE` or `QUADRATIC`. `--type` allows to set which type of intensity peaks should be identified; `MIN`, `MAX` or `BOTH`. Finally, `--blockSize` sets the blocksize that will be processed in each Spark job.
 
-`--overlappingOnly` is a feature that will only identify interest points in areas of each image that is currently overlapping with another image. `--storeIntensities` will extract intensities of each interest point and store it in the `interestpoints.n5` directory as extra datasets. `--prefetch` will use parallel threads to pre-load all image data blocks ahead of the computation, which is desirable for cloud execution.
+`--overlappingOnly` is a feature that will only identify interest points in areas of each image that is currently overlapping with another image. `--prefetch` will use parallel threads to pre-load all image data blocks ahead of the computation, which is desirable for cloud execution.
+
+Every detection stores three attributes next to its position, exactly as the BigStitcher GUI does: the **DoG response**, the **sigma** (in pixels at full resolution) and the **image intensity** at the detection (linearly interpolated, in the raw units of the image at the resolution of the detection). They are written as the `response`, `sigma` and `intensity` datasets of the label in `interestpoints.n5` and are what [`filter-interestpoints`](#ip-filter) and the interactive filter of the BigStitcher GUI work with (the former `--storeIntensities` is gone, intensities are always stored). `--maxSpots` keeps the brightest points per view by that intensity; prefer a filtered label (`filter-interestpoints --keepPoints`), which keeps the full detection.
+
+`--method SCALE_SPACE` runs the **scale-space Difference-of-Gaussian** of BigStitcher instead of the single-scale one: starting at `-s` (the initial blur, e.g. 1.6) it finds structures of all sizes and stores the sigma of each, so beads and nuclei of different sizes come out of one run and can be separated by `filter-interestpoints --sigma`. `--steps` (per octave, default 4), `--octaves` (default -1 = all the image allows) and `--no-finestLevel` (keep scale extrema only; by default all spatial extrema of the finest level are kept, since sub-resolution structures like beads are no scale extrema) are its parameters, `-dsxy`/`-dsz` is the resolution it starts at.
+
+`--anisotropy` gives the ratio z voxel / x voxel of the raw data; the Gaussians are then isotropic in physical units (the BigStitcher GUI suggests 0.8 x the calibration ratio, since the PSF blurs z more than the calibration says). Without it the Difference-of-Gaussian blurs isotropically in pixels as it always did, the scale space uses the calibration ratio.
+
+`--noiseFactor` replaces `-t`: the threshold becomes the factor times the **noise floor** of the data, the robust standard deviation of the finest Difference-of-Gaussian level, estimated in 16 random blocks of every view (one Spark job per view) and pooled as the highest of the views, as "Estimate from noise floor" in the BigStitcher GUI does (2.5 is its default). The resolved threshold is printed and stored with the label, nothing is estimated at detection time:
+
+<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 --noiseFactor 2.5 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
 
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
 
@@ -171,6 +183,16 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/BigStitcher-interestpoints.jpg" alt="Visualizing interest points in BigStitcher">
 &nbsp;
+
+## Filter Interest Points<a name="ip-filter">
+
+A **filtered label** keeps no points of its own: it filters an existing label (its base) on the fly by ranges of the |DoG response|, the image intensity and the sigma of the detections and/or keeps a fixed number of points per view, has its own correspondences, and follows a re-detection of its base. It is the way to try several thresholds without detecting again, to split the structures a scale-space detection found by their size, or to keep the strongest n points per view (this is what "Filter/Manage Interest Points" of the BigStitcher GUI creates, and the Interest Point Explorer shows filtered labels in italics). A typical call:
+
+<code>./filter-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads --response 0.016</code>
+
+creates `beads_r0.016`, the detections of `beads` with |response| >= 0.016. `-l` is the label to filter, `--response`, `--intensity` and `--sigma` take a range each (`a` keeps >= a, `a-b` keeps a..b; the intensity in the raw units of the image at the resolution of the detection, the sigma in pixels at full resolution); several entries separated by `,` create one label per entry, e.g. `--response 0.008,0.016,0.032` is a threshold ramp. `--keepPoints 3000` keeps a fixed number of points per view (after the ranges), ranked by `--keepBy` (`response`, `intensity` or `sigma`, default `response`) and `--keepMode` (`highest`, `median` or `lowest`, default `highest`). The label is named base label plus suffix (e.g. `beads_r0.016`, `beads_rh3000`, `beads_s1.5-3`) unless `--newLabel` says otherwise; `--copy` stores the points that pass as a plain label instead of a filtered one. The view-selection flags apply, `--dryRun` only prints what would be created. It runs on the driver only, no Spark job is needed.
+
+Removing a label with `clear-interestpoints --clearMode REMOVE_LABEL` also removes the labels filtered from it, and `FIX_INTERESTPOINTS` drops filtered labels whose base is gone.
 
 ## Match Interest Points<a name="ip-match">
 
@@ -242,7 +264,7 @@ Two utilities for editing the interest-point data and the registrations stored i
 
 <code>./clear-registrations -x ~/SparkTest/IP/dataset.xml --remove 1 -vi '0,0'</code>
 
-`clear-interestpoints` modes (`--clearMode`): `CLEAR_EVERYTHING` (default) removes all interest points and correspondences of the selected views; without a view selection it deletes the whole `interestpoints.n5` directory. `CLEAR_ALL_CORRESPONDENCES` keeps the detections and drops the correspondence links. `ADD_LABEL` / `REMOVE_LABEL` add an empty interest-point list with the given `--label`, or remove that label, from the selected views. `FIX_INTERESTPOINTS` repairs a project whose views were removed from the XML (drops orphaned entries, N5 groups and correspondences); it always covers the whole dataset and ignores the view selection.
+`clear-interestpoints` modes (`--clearMode`): `CLEAR_EVERYTHING` (default) removes all interest points and correspondences of the selected views; without a view selection it deletes the whole `interestpoints.n5` directory. `CLEAR_ALL_CORRESPONDENCES` keeps the detections and drops the correspondence links. `ADD_LABEL` / `REMOVE_LABEL` add an empty interest-point list with the given `--label`, or remove that label (with the [filtered labels](#ip-filter) of it), from the selected views. `FIX_INTERESTPOINTS` repairs a project whose views were removed from the XML (drops orphaned entries, N5 groups and correspondences, and filtered labels whose base label is gone); it always covers the whole dataset and ignores the view selection.
 
 ***Note:*** whenever data is removed from selected views, correspondences in *unselected* views that point into the selection are removed as well, so the project stays consistent. `--silent` skips the per-view listing, which otherwise loads all selected interest points just to print counts (recommended for large or cloud-hosted datasets).
 

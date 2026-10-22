@@ -8,7 +8,7 @@ See `README.md` for usage. This file contains technical / co-dev notes.
 
 ## Co-development with mvr
 
-This project pins to `multiview-reconstruction 9.0.0-SNAPSHOT` and imports ~30+ mvr packages directly. SNAPSHOT is **not** in Maven Central — every mvr change must be installed locally before BigStitcher-Spark sees it:
+This project pins to `multiview-reconstruction 10.0.0-SNAPSHOT` (branch `scalespace`) and imports ~30+ mvr packages directly. SNAPSHOT is **not** in Maven Central — every mvr change must be installed locally before BigStitcher-Spark sees it:
 
 ```bash
 cd /path/to/multiview-reconstruction
@@ -23,7 +23,8 @@ mvn clean install -DskipTests
 - `process.n5api.N5ApiTools` (+ `MultiResolutionLevelInfo`, `setupBdvDatasetsN5/HDF5/OMEZARR_ResaveRaw`, `setupMultiResolutionPyramid`, `assembleJobs`, `resaveS0Block`, `writeDownsampledBlock`, `writeDownsampledBlock5dOMEZARR`)
 - `process.splitting.*` — `SplitOctTree`, `SplitView`, `SplitResult`, `ConsensusSetCriterion`, `CrossViewCorrespondenceCriterion`, `OctTreeSplitCriterion`, `SplitDistributeEvenly`, `SplittingTools`
 - `process.interestpointregistration.{global.*, pairwise.constellation.*, TransformationTools}`
-- `process.interestpointdetection.methods.dog.{DoGImgLib2, DoGParameters}`
+- `process.interestpointdetection.{NoiseFloor, InterestPointTools, methods.dog.DoGImgLib2, methods.scalespace.{DoGScaleSpace, ScaleSpaceParameters}}` — detection per block, the noise-floor threshold, the cross-block duplicate merge of the scale space
+- `fiji.plugin.Filter_Detections` + `fiji.spimdata.interestpoints.{InterestPointFilter, VirtualFilteredInterestPointsN5}` — filtered labels (`filter-interestpoints`, `clear-interestpoints`, `split-images`)
 - `fiji.spimdata.{SpimData2, XmlIoSpimData2, imgloaders.AllenOMEZarrLoader, imgloaders.splitting.*, interestpoints.*}`
 - `util.URITools` — used everywhere for URI parsing and `instantiateN5Writer`
 
@@ -61,6 +62,7 @@ src/main/java/net/preibisch/bigstitcher/spark/
 ├── ClearInterestPoints.java
 ├── ClearRegistrations.java
 ├── CreateFusionContainer.java            # Phase 1: container metadata setup
+├── FilterInterestPoints.java             # filtered labels of interest points (driver-only)
 ├── Filter_Views.java                     # New: filter SpimData2 XML by attributes
 ├── IntensitySolver.java
 ├── Solver.java                           # Global optimization
@@ -83,7 +85,7 @@ The `install` script runs `mvn install`, then generates per-command shell wrappe
 Parent: `pom-scijava` `44.0.0` (matches mvr; provides Java 21 defaults and the managed `imglib2` / `spim_data` base versions, so those are **no longer pinned here** — inherited from the parent to stay in lock-step with mvr).
 
 Currently pinned (top of `pom.xml`):
-- `multiview-reconstruction.version` = `9.0.1` (released; the zarrv3 line's release — BigStitcher 3.0.0 mirrors its dependency overrides)
+- `multiview-reconstruction.version` = `10.0.0-SNAPSHOT` (branch `scalespace`: one `InterestPoint` class with response/sigma/intensity, filtered labels, the scale space; install it locally before building)
 - `imglib2-cache.version` = `1.0.0-beta-20`
 - `imglib2-algorithm.version` = `0.18.3` (provides `algorithm.blocks.dfield.PositionFieldFunction`, required by mvr's `SplitImgLoaderThinPlateSplineFusion`)
 - `imglib2-realtransform.version` = `4.0.5`
@@ -177,6 +179,13 @@ s0, s1, s2, … all use the **same** `computeBlockSize`. Don't scale shardSize w
   → `AbstractSelectableViews` (view-selection knobs)
 
 When adding a new CLI flag, decide which level it belongs at — flags shared across multiple commands belong in `AbstractInfrastructure`, registration-only flags in `AbstractRegistration`.
+
+## Recent Themes (October 2026): interest points of multiview-reconstruction 10
+
+- `detect-interestpoints` stores response, sigma and intensity with every detection (`InterestPointsN5` writes them; `--storeIntensities` is gone), has `--method SCALE_SPACE` (+ `--steps`, `--octaves`, `--no-finestLevel`), `--anisotropy` and `--noiseFactor` (threshold = factor x the pooled noise floor, one Spark job per view, resolved on the driver before the detection jobs). The temporary per-block and per-view results are written with `InterestPointsN5.saveInterestPointsStatic( writer, path, points )` and read with `loadInterestPointsStatic`, so the attributes travel with the points. The scale space merges duplicates across blocks per view with `DoGScaleSpace.mergeDuplicates( points, scale, sigmaMin, combineDistance )`. `--maxSpots` is `InterestPointFilter.limit( .., INTENSITY, HIGHEST, n )`. The legacy DoG path is unchanged otherwise (no block expansion, `--overlappingOnly` dedupe at 0.5 px full resolution).
+- `filter-interestpoints` (`FilterInterestPoints`, driver-only) creates filtered labels through `Filter_Detections.create` exactly as the GUI's "Filter/Manage Interest Points"; the option grammar accepts the dialog's `a`/`a-b` and the canonical `a..b` of the action history, so `ActionToSparkCli` renders the GUI's `filter-interestpoints` records as these commands.
+- `clear-interestpoints REMOVE_LABEL` removes the filtered labels of the label as well (`InterestPointTools.dependentLabels`), `FIX_INTERESTPOINTS` drops filtered labels whose base is gone; `split-images` re-instantiates split filtered labels as filtered (`SplitDatasets.splitLabelLike`), a plain object over a filtered marker would not load.
+- Tests use the constants of mvr's `TestInterestPointDetection` (sigma 1.1, threshold 0.01, intensity 0..1137 of the simulated beads); the previous Spark test constants found zero points without noticing.
 
 ## Recent Themes (April 2026)
 

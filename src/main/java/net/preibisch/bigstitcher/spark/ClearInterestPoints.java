@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -50,6 +51,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -300,7 +303,7 @@ public class ClearInterestPoints extends AbstractSelectableViews
 				System.out.println( "Adding label '" + label + "' to every selected view that does not already have it (container '" + containerUri + "')" + scope + ".");
 				break;
 			case REMOVE_LABEL:
-				System.out.println( "Removing label '" + label + "' from every selected view, plus correspondences that reference it (container '" + containerUri + "')" + scope + ".");
+				System.out.println( "Removing label '" + label + "' from every selected view, with the filtered labels of it and the correspondences that reference them (container '" + containerUri + "')" + scope + ".");
 				break;
 			case CLEAR_EVERYTHING:
 			default:
@@ -319,7 +322,21 @@ public class ClearInterestPoints extends AbstractSelectableViews
 				System.out.println( Group.pvid( ip.getKey() ) + ":" );
 
 				for ( final Entry<String, InterestPoints> points : ip.getValue().getHashMap().entrySet() )
-					System.out.println( "\t'" + points.getKey() + "' " + points.getValue().getInterestPointsCopy().size() + " interest points, " + points.getValue().getCorrespondingInterestPointsCopy().size() + " correspondences." );
+				{
+					String counts;
+
+					try
+					{
+						counts = points.getValue().getInterestPointsCopy().size() + " interest points, " + points.getValue().getCorrespondingInterestPointsCopy().size() + " correspondences.";
+					}
+					catch ( final RuntimeException e )
+					{
+						// e.g. a filtered label whose base label is gone, which FIX_INTERESTPOINTS removes
+						counts = "cannot be read (" + e.getMessage() + ")";
+					}
+
+					System.out.println( "\t'" + points.getKey() + "' " + ( points.getValue() instanceof VirtualFilteredInterestPointsN5 ? "(filtered from '" + ( (VirtualFilteredInterestPointsN5)points.getValue() ).getBaseLabel() + "') " : "" ) + counts );
+				}
 			}
 
 			// Unselected views are deliberately not loaded here just to preview counts.
@@ -437,7 +454,11 @@ public class ClearInterestPoints extends AbstractSelectableViews
 					for ( final ViewId viewId : orphanViewIds )
 						ips.remove( viewId );
 
-					if ( !orphanViewIds.isEmpty() || correspondencesDropped > 0 || n5GroupsRemoved > 0 )
+					// (d) Filtered labels whose base label is gone from their view cannot be read; drop them (and the
+					// labels filtered from those), plus the correspondences that point at them.
+					final int orphanFilteredRemoved = removeOrphanFilteredLabels( vip, containerUri, numThreads, silent );
+
+					if ( !orphanViewIds.isEmpty() || correspondencesDropped > 0 || n5GroupsRemoved > 0 || orphanFilteredRemoved > 0 )
 					{
 						// Save XML — also persists the in-memory correspondence edits via
 						// XmlIoSpimData2.saveInterestPointsInParallel.
@@ -499,30 +520,43 @@ public class ClearInterestPoints extends AbstractSelectableViews
 							viewsWithLabel.add( entry.getKey() );
 					Collections.sort( viewsWithLabel );
 
+					// the filtered labels of the label (and of those) go with it, as in the BigStitcher GUI: without their base they cannot be read
+					final TreeSet< String > dependants = new TreeSet<>();
+					int dependantsRemoved = 0;
+
 					try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
 					{
 						for ( final ViewId viewId : viewsWithLabel )
 						{
+							for ( final String dependant : InterestPointTools.dependentLabels( ips.get( viewId ), label ) )
+							{
+								if ( !silent )
+									System.out.println( "  removing '" + dependant + "' (filtered from '" + label + "') from " + Group.pvid( viewId ) );
+
+								removeLabel( n5Writer, ips.get( viewId ), viewId, dependant );
+								dependants.add( dependant );
+								++dependantsRemoved;
+							}
+
 							if ( !silent )
 								System.out.println( "  removing '" + label + "' from " + Group.pvid( viewId ) );
 
-							// Remove the per-label group (drops both /interestpoints and /correspondences).
-							final String groupPath = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
-							if ( n5Writer.exists( groupPath ) )
-								n5Writer.remove( groupPath );
-
-							ips.get( viewId ).getHashMap().remove( label );
+							removeLabel( n5Writer, ips.get( viewId ), viewId, label );
 						}
 					}
-					System.out.println( "Removed label '" + label + "' from " + viewsWithLabel.size() + " view(s)." );
+					System.out.println( "Removed label '" + label + "' from " + viewsWithLabel.size() + " view(s)" + ( dependants.isEmpty() ? "." : ", with the filtered label(s) " + dependants + " of it (" + dependantsRemoved + " list(s))." ) );
 
 					// (b) Drop correspondences pointing AT the just-removed (view, label) lists from every
 					// remaining list. Label-wide when unrestricted (legacy path); otherwise only links into
 					// the selected views — other views keeping the label must stay linked to each other.
-					final int correspondencesDropped = ( restriction == null )
+					int correspondencesDropped = ( restriction == null )
 							? CorrespondenceTools.removeCorrespondencesToLabel( vip, label, numThreads )
 							: removeCorrespondencesToViewsWithLabel( vip, restriction, label, numThreads );
-					System.out.println( "Filtered " + correspondencesDropped + " correspondence(s) referencing label '" + label + "'" + ( restriction == null ? "" : " in the selected views" ) + "." );
+					for ( final String dependant : dependants )
+						correspondencesDropped += ( restriction == null )
+								? CorrespondenceTools.removeCorrespondencesToLabel( vip, dependant, numThreads )
+								: removeCorrespondencesToViewsWithLabel( vip, restriction, dependant, numThreads );
+					System.out.println( "Filtered " + correspondencesDropped + " correspondence(s) referencing label '" + label + "'" + ( dependants.isEmpty() ? "" : " or " + dependants ) + ( restriction == null ? "" : " in the selected views" ) + "." );
 
 					// (c) Save XML if anything changed.
 					if ( !viewsWithLabel.isEmpty() || correspondencesDropped > 0 )
@@ -618,4 +652,56 @@ public class ClearInterestPoints extends AbstractSelectableViews
 		System.exit(new CommandLine(new ClearInterestPoints()).execute(args));
 	}
 
+	/** Removes one (view, label): its N5 group (points and correspondences) and the entry of the XML map */
+	private static void removeLabel( final N5Writer n5Writer, final ViewInterestPointLists vipl, final ViewId viewId, final String label )
+	{
+		final String groupPath = InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), label );
+
+		if ( n5Writer.exists( groupPath ) )
+			n5Writer.remove( groupPath );
+
+		vipl.getHashMap().remove( label );
+	}
+
+	/**
+	 * Drops every filtered label (VirtualFilteredInterestPointsN5) whose base label is missing in its view, with the labels
+	 * filtered from it, and the correspondences of other lists that point at the removed (view, label)s
+	 *
+	 * @return the number of (view, label) lists removed
+	 */
+	private static int removeOrphanFilteredLabels( final ViewInterestPoints vip, final URI containerUri, final int numThreads, final boolean silent )
+	{
+		int removed = 0;
+		int correspondencesDropped = 0;
+
+		try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
+		{
+			for ( final Entry< ViewId, ViewInterestPointLists > entry : vip.getViewInterestPoints().entrySet() )
+			{
+				final ViewInterestPointLists vipl = entry.getValue();
+				final TreeSet< String > orphans = new TreeSet<>();
+
+				for ( final Entry< String, InterestPoints > list : vipl.getHashMap().entrySet() )
+					if ( list.getValue() instanceof VirtualFilteredInterestPointsN5 && !vipl.contains( ( (VirtualFilteredInterestPointsN5)list.getValue() ).getBaseLabel() ) )
+					{
+						orphans.add( list.getKey() );
+						orphans.addAll( InterestPointTools.dependentLabels( vipl, list.getKey() ) );
+					}
+
+				for ( final String orphan : orphans )
+				{
+					if ( !silent )
+						System.out.println( "  removing '" + orphan + "' from " + Group.pvid( entry.getKey() ) + " (filtered from '" + ( (VirtualFilteredInterestPointsN5)vipl.getInterestPointList( orphan ) ).getBaseLabel() + "', which is gone)" );
+
+					removeLabel( n5Writer, vipl, entry.getKey(), orphan );
+					correspondencesDropped += CorrespondenceTools.removeCorrespondencesForViewLabel( vip, entry.getKey(), orphan, numThreads );
+					++removed;
+				}
+			}
+		}
+
+		System.out.println( "Removed " + removed + " filtered label list(s) whose base label is gone, and " + correspondencesDropped + " correspondence(s) referencing them." );
+
+		return removed;
+	}
 }

@@ -55,6 +55,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.process.splitting.ConsensusSetCriterion;
@@ -564,10 +565,12 @@ public class SplitDatasets extends AbstractBasic
 							final ViewId viewId = new ViewId( tp.getId(), nSetupId );
 							final ViewInterestPointLists vipl = new ViewInterestPointLists( tp.getId(), nSetupId );
 
+							final ViewInterestPointLists oldVipl = data.getViewInterestPoints().getViewInterestPointLists( new ViewId( tp.getId(), entry.getKey() ) );
+
 							for ( final String label : oldLabelNamesArray )
 							{
 								final String newLabel = label + "_split";
-								vipl.addInterestPointList( newLabel, InterestPoints.newInstance( baseDir, viewId, newLabel ) );
+								vipl.addInterestPointList( newLabel, splitLabelLike( oldVipl == null ? null : oldVipl.getInterestPointList( label ), baseDir, viewId, newLabel ) );
 							}
 
 							if ( finalIpAdding3 != InterestPointAdding.NONE )
@@ -668,10 +671,7 @@ public class SplitDatasets extends AbstractBasic
 								continue;
 
 							final String newLabel = label + "_split";
-							final InterestPoints newIps = InterestPoints.newInstance( baseDir, viewId, newLabel );
-							final String oldParams = oldVipl.getInterestPointList( label ).getParameters();
-							newIps.setParameters( oldParams != null ? oldParams : "" );
-							vipl.addInterestPointList( newLabel, newIps );
+							vipl.addInterestPointList( newLabel, splitLabelLike( oldVipl.getInterestPointList( label ), baseDir, viewId, newLabel ) );
 						}
 
 						if ( fakeInterestPoints != InterestPointAdding.NONE )
@@ -968,5 +968,35 @@ public class SplitDatasets extends AbstractBasic
 	{
 		System.out.println( Arrays.toString( args ) );
 		System.exit( new CommandLine( new SplitDatasets() ).execute( args ) );
+	}
+
+	/**
+	 * The lazy object of a split label, as the XML instantiates it: a plain label as a plain InterestPointsN5 (its points were
+	 * written by the splitting), a filtered label (VirtualFilteredInterestPointsN5) as a filter of the split base label, which is
+	 * what SplittingTools.processSetupStatic created through InterestPoints.copyTo. Nothing is marked modified, so a save on the
+	 * driver does not overwrite what the workers wrote. The parameters are the old label's (adapted to the split base for a
+	 * filtered label): the XML writer needs them.
+	 *
+	 * @param oldIps - the label of the old view, null if the old view did not have it (a plain, empty-pointing object then, as before)
+	 */
+	static InterestPoints splitLabelLike( final InterestPoints oldIps, final URI baseDir, final ViewId viewId, final String newLabel )
+	{
+		final InterestPoints newIps;
+
+		if ( oldIps instanceof VirtualFilteredInterestPointsN5 )
+		{
+			final VirtualFilteredInterestPointsN5 virtual = (VirtualFilteredInterestPointsN5)oldIps;
+			final String newBaseLabel = virtual.getBaseLabel() + "_split";
+			newIps = new VirtualFilteredInterestPointsN5( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), newLabel ), newBaseLabel, virtual.getFilter() );
+			newIps.setParameters( virtual.getFilter().describe( newBaseLabel ) );
+		}
+		else
+		{
+			newIps = InterestPoints.newInstance( baseDir, viewId, newLabel );
+			final String oldParams = oldIps == null ? null : oldIps.getParameters();
+			newIps.setParameters( oldParams != null ? oldParams : "" );
+		}
+
+		return newIps;
 	}
 }

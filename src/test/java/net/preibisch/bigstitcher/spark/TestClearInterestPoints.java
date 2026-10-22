@@ -28,9 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
+import org.janelia.saalfeldlab.n5.N5Writer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -39,6 +42,9 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.plugin.Filter_Detections;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
@@ -291,5 +297,73 @@ public class TestClearInterestPoints
 		assertEquals( n0 - 1, after.getViewRegistrations().getViewRegistration( V0 ).getTransformList().size(), "(0,0) lost one transform" );
 		assertEquals( n1, after.getViewRegistrations().getViewRegistration( V1 ).getTransformList().size(), "(0,1) untouched" );
 		assertEquals( n2, after.getViewRegistrations().getViewRegistration( V2 ).getTransformList().size(), "(0,2) untouched" );
+	}
+
+	/** a filtered label of LABEL in every view, saved; its name */
+	String addFilteredLabel( final String suffixLabel ) throws Exception
+	{
+		final SpimData2 data = load();
+		final InterestPointFilter filter = InterestPointFilter.fromString( "response=0.0..;limit=intensity:highest:10" );
+		Filter_Detections.create( data, Arrays.asList( ALL ), LABEL, suffixLabel, filter, false );
+		new XmlIoSpimData2().save( data, tempDir.resolve( "dataset.xml" ).toUri() );
+
+		final SpimData2 check = load();
+		for ( final ViewId v : ALL )
+			assertTrue( check.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( suffixLabel ) instanceof VirtualFilteredInterestPointsN5 );
+		return suffixLabel;
+	}
+
+	/** REMOVE_LABEL of a base label removes the labels filtered from it (and from those) in the selected views, XML and N5 */
+	@Test
+	void removeLabelRemovesDependants() throws Exception
+	{
+		final String filtered = addFilteredLabel( "beads_top10" );
+		// a filter of the filter
+		final SpimData2 data = load();
+		Filter_Detections.create( data, Arrays.asList( ALL ), filtered, "beads_top10_r", InterestPointFilter.fromString( "response=0.0.." ), false );
+		new XmlIoSpimData2().save( data, tempDir.resolve( "dataset.xml" ).toUri() );
+
+		assertEquals( 0, runClear( "--clearMode", "REMOVE_LABEL", "--label", LABEL, "-vi", "0,0", "--silent" ) );
+
+		final SpimData2 after = load();
+		assertFalse( hasLabel( after, V0, LABEL ) );
+		assertFalse( hasLabel( after, V0, filtered ), "the filtered label went with its base" );
+		assertFalse( hasLabel( after, V0, "beads_top10_r" ), "the filter of the filter went too" );
+		assertTrue( hasLabel( after, V1, LABEL ) && hasLabel( after, V1, filtered ) && hasLabel( after, V1, "beads_top10_r" ), "other views keep everything" );
+		assertEquals( 10, after.getViewInterestPoints().getViewInterestPointLists( V1 ).getInterestPointList( filtered ).getInterestPointsCopy().size() );
+
+		try ( final N5Reader n5 = new N5FSReader( tempDir.resolve( "interestpoints.n5" ).toString() ) )
+		{
+			assertFalse( n5.exists( group( V0 ) + "/" + filtered ), "N5 group of the filtered label of (0,0) removed" );
+			assertTrue( n5.exists( group( V1 ) + "/" + filtered ), "N5 group of the filtered label of (0,1) kept" );
+		}
+	}
+
+	/** FIX_INTERESTPOINTS drops a filtered label whose base label is gone from its view */
+	@Test
+	void fixRemovesOrphanFilteredLabels() throws Exception
+	{
+		final String filtered = addFilteredLabel( "beads_top10" );
+
+		// the base disappears from (0,0) behind the filtered label's back (XML entry and N5 group)
+		final SpimData2 broken = load();
+		broken.getViewInterestPoints().getViewInterestPointLists( V0 ).getHashMap().remove( LABEL );
+		new XmlIoSpimData2().save( broken, tempDir.resolve( "dataset.xml" ).toUri() );
+		try ( final N5Writer n5 = new N5FSWriter( tempDir.resolve( "interestpoints.n5" ).toString() ) )
+		{
+			n5.remove( group( V0 ) + "/" + LABEL );
+		}
+
+		assertEquals( 0, runClear( "--clearMode", "FIX_INTERESTPOINTS" ) );
+
+		final SpimData2 after = load();
+		assertFalse( hasLabel( after, V0, filtered ), "the orphan filtered label is gone" );
+		assertTrue( hasLabel( after, V1, filtered ) && hasLabel( after, V1, LABEL ), "the intact views keep it" );
+		assertEquals( 10, after.getViewInterestPoints().getViewInterestPointLists( V2 ).getInterestPointList( filtered ).getInterestPointsCopy().size() );
+
+		try ( final N5Reader n5 = new N5FSReader( tempDir.resolve( "interestpoints.n5" ).toString() ) )
+		{
+			assertFalse( n5.exists( group( V0 ) + "/" + filtered ) );
+		}
 	}
 }

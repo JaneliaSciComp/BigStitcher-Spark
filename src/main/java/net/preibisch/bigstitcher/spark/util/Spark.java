@@ -36,19 +36,14 @@ import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Cursor;
 import net.imglib2.FinalInterval;
 import net.imglib2.FinalRealInterval;
 import net.imglib2.Interval;
-import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
-import net.imglib2.view.Views;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 
@@ -63,32 +58,6 @@ public class Spark {
 
 	/** Maximum number of Spark partitions a job is split into; set from {@code --maxPartitions} (default 10000). */
 	public static int maxPartitions = 10_000;
-
-	/**
-	 * Reads interest points back from a 2D image of coordinates (e.g. the temporary N5 {@code points} dataset
-	 * written by interest point detection): dimension 0 holds the coordinates of one point, dimension 1 indexes
-	 * the points.
-	 *
-	 * @param points the {@code numDimensions x numPoints} image of point coordinates
-	 * @return the interest points, using the running index along dimension 1 as point id
-	 */
-	public static ArrayList< InterestPoint > deserializeInterestPoints( final RandomAccessibleInterval<DoubleType> points )
-	{
-		final ArrayList< InterestPoint > list = new ArrayList<>();
-		final Cursor< DoubleType > cursor = Views.flatIterable( points ).localizingCursor();
-
-		for ( int i = 0; i < points.dimension( 1 ); ++i )
-		{
-			final double[] l = new double[ (int)points.dimension( 0 ) ];
-
-			for ( int d = 0; d < points.dimension( 0 ); ++d )
-				l[ d ] = cursor.next().get();
-
-			list.add( new InterestPoint(i, l ));
-		}
-
-		return list;
-	}
 
 	/**
 	 * Converts a serialized interval back into an {@link Interval}.

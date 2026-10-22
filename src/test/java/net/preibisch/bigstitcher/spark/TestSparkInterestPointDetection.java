@@ -21,6 +21,8 @@
  */
 package net.preibisch.bigstitcher.spark;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
@@ -29,9 +31,12 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
 import picocli.CommandLine;
 
@@ -44,13 +49,15 @@ import picocli.CommandLine;
  */
 public class TestSparkInterestPointDetection
 {
-	public static final String STANDARD_LABEL = "beads";
-	public static final double STANDARD_SIGMA = 1.8;
-	public static final double STANDARD_THRESHOLD = 0.008;
-	public static final double GLOBAL_MIN_INTENSITY = 0.0;
-	public static final double GLOBAL_MAX_INTENSITY = 65535.0;
-	public static final int STANDARD_DOWNSAMPLE_XY = 2;
-	public static final int STANDARD_DOWNSAMPLE_Z = 2;
+	// the parameters of the shared detection test of multiview-reconstruction (TestInterestPointDetection.testDoG), which the
+	// simulated beads were tuned for: the intensity range is the one of the data (0..1137), a wrong one finds nothing
+	public static final String STANDARD_LABEL = TestInterestPointDetection.STANDARD_LABEL;
+	public static final double STANDARD_SIGMA = TestInterestPointDetection.STANDARD_SIGMA;
+	public static final double STANDARD_THRESHOLD = TestInterestPointDetection.STANDARD_THRESHOLD;
+	public static final double GLOBAL_MIN_INTENSITY = TestInterestPointDetection.GLOBAL_MIN_INTENSITY;
+	public static final double GLOBAL_MAX_INTENSITY = TestInterestPointDetection.GLOBAL_MAX_INTENSITY;
+	public static final int STANDARD_DOWNSAMPLE_XY = TestInterestPointDetection.STANDARD_DOWNSAMPLE_XY;
+	public static final int STANDARD_DOWNSAMPLE_Z = TestInterestPointDetection.STANDARD_DOWNSAMPLE_Z;
 
 	@TempDir
 	Path tempDir;
@@ -103,7 +110,121 @@ public class TestSparkInterestPointDetection
 		// Downsample.simple2x. Point counts are identical, positions may differ very slightly.
 		// TestInterestPointDetection.assertDoGResults( result, STANDARD_LABEL );
 
+		// every detection carries its response (above the threshold), the sigma of the detection at full resolution and a finite image intensity
+		final int numPoints = assertAttributes( result, STANDARD_LABEL, STANDARD_THRESHOLD, STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY, STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY );
+		assertTrue( numPoints > 100, "points: " + numPoints );
+
+		// the counts of the shared test (virtual downsampling may move a point across the threshold)
+		final int[] expected = new int[] { TestInterestPointDetection.EXPECTED_COUNT_VIEW_0, TestInterestPointDetection.EXPECTED_COUNT_VIEW_1, TestInterestPointDetection.EXPECTED_COUNT_VIEW_2 };
+		for ( int setup = 0; setup < expected.length; ++setup )
+		{
+			final int count = result.getViewInterestPoints().getViewInterestPointLists( new ViewId( 0, setup ) ).getInterestPointList( STANDARD_LABEL ).getInterestPointsCopy().size();
+			assertTrue( Math.abs( count - expected[ setup ] ) <= 2, "setup " + setup + ": " + count + " points, expected " + expected[ setup ] );
+		}
+		assertTrue( parameters( result, STANDARD_LABEL ).startsWith( "DOG (Spark) s=" + STANDARD_SIGMA + " t=" + STANDARD_THRESHOLD ), parameters( result, STANDARD_LABEL ) );
+		assertTrue( parameters( result, STANDARD_LABEL ).contains( " anisotropy=NaN " ), parameters( result, STANDARD_LABEL ) );
+
 		System.out.println( "All assertions passed!" );
+	}
+
+	/**
+	 * The scale space in Spark (with an anisotropy): points of several sigmas, all with their attributes, the parameters
+	 * as the GUI writes them; and a second label whose threshold comes from the noise floor
+	 */
+	@Test
+	public void testSparkScaleSpaceAndNoiseFloor() throws Exception
+	{
+		System.setProperty( "spark.master", "local[*]" );
+
+		final SpimData2 spimData = SimulateUtil.setUp();
+		final File xmlFile = tempDir.resolve( "dataset-ss.xml" ).toFile();
+		new XmlIoSpimData2().save( spimData, xmlFile.toURI() );
+
+		final double sigma = 1.6;
+		final String[] args = new String[] {
+			"-x", xmlFile.getAbsolutePath(),
+			"-l", "beads-ss",
+			"--method", "SCALE_SPACE",
+			"-s", String.valueOf( sigma ),
+			"-t", String.valueOf( STANDARD_THRESHOLD ),
+			"--octaves", "2",
+			"--anisotropy", "1.5",
+			"-i0", String.valueOf( GLOBAL_MIN_INTENSITY ),
+			"-i1", String.valueOf( GLOBAL_MAX_INTENSITY ),
+			"-dsxy", String.valueOf( STANDARD_DOWNSAMPLE_XY ),
+			"-dsz", String.valueOf( STANDARD_DOWNSAMPLE_Z ),
+			"--localSparkBindAddress" };
+
+		assertEquals( 0, new CommandLine( new SparkInterestPointDetection() ).execute( args ), "scale space" );
+
+		final SpimData2 result = new XmlIoSpimData2().load( xmlFile.toURI() );
+
+		// the sigmas vary (beads at the finest level, larger structures in the octaves), none above the coarsest level
+		final int numPoints = assertAttributes( result, "beads-ss", STANDARD_THRESHOLD, 0.0, sigma * 4 * STANDARD_DOWNSAMPLE_XY );
+		assertTrue( numPoints > 100, "points: " + numPoints );
+		final String params = parameters( result, "beads-ss" );
+		assertTrue( params.startsWith( "DOG-SS (Spark) s=" + sigma + " steps=4 octaves=2 finestLevel=true t=" + STANDARD_THRESHOLD ), params );
+		assertTrue( params.contains( " anisotropy=1.5 " ), params );
+
+		// the threshold from the noise floor: resolved once on the driver, stored as a fixed number
+		final String[] argsNoise = new String[] {
+			"-x", xmlFile.getAbsolutePath(),
+			"-l", "beads-noise",
+			"-s", String.valueOf( STANDARD_SIGMA ),
+			"--noiseFactor", "2.5",
+			"-i0", String.valueOf( GLOBAL_MIN_INTENSITY ),
+			"-i1", String.valueOf( GLOBAL_MAX_INTENSITY ),
+			"-dsxy", String.valueOf( STANDARD_DOWNSAMPLE_XY ),
+			"-dsz", String.valueOf( STANDARD_DOWNSAMPLE_Z ),
+			"--localSparkBindAddress" };
+
+		assertEquals( 0, new CommandLine( new SparkInterestPointDetection() ).execute( argsNoise ), "noise factor" );
+
+		final SpimData2 resultNoise = new XmlIoSpimData2().load( xmlFile.toURI() );
+		final String paramsNoise = parameters( resultNoise, "beads-noise" );
+		final double threshold = net.preibisch.mvrecon.fiji.plugin.Filter_Detections.parseThreshold( paramsNoise );
+		assertTrue( threshold > 0 && Double.isFinite( threshold ), paramsNoise );
+		assertTrue( assertAttributes( resultNoise, "beads-noise", threshold, STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY, STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY ) > 0 );
+	}
+
+	/** the parameter string of a label (the first view that has it) */
+	static String parameters( final SpimData2 data, final String label )
+	{
+		for ( final ViewInterestPointLists vipl : data.getViewInterestPoints().getViewInterestPoints().values() )
+			if ( vipl.contains( label ) )
+				return vipl.getInterestPointList( label ).getParameters();
+
+		throw new IllegalArgumentException( "no view has '" + label + "'" );
+	}
+
+	/**
+	 * Every point of the label has |response| >= threshold, a sigma in [minSigma, maxSigma] and a finite intensity
+	 *
+	 * @return the number of points over all views
+	 */
+	static int assertAttributes( final SpimData2 data, final String label, final double threshold, final double minSigma, final double maxSigma )
+	{
+		int numPoints = 0;
+		final java.util.TreeSet< Float > sigmas = new java.util.TreeSet<>();
+
+		for ( final ViewInterestPointLists vipl : data.getViewInterestPoints().getViewInterestPoints().values() )
+		{
+			if ( !vipl.contains( label ) )
+				continue;
+
+			for ( final InterestPoint ip : vipl.getInterestPointList( label ).getInterestPointsCopy().values() )
+			{
+				assertTrue( Float.isFinite( ip.getResponse() ) && Math.abs( ip.getResponse() ) >= threshold, "response " + ip.getResponse() + " of point " + ip.getId() );
+				assertTrue( ip.getSigma() >= minSigma - 1e-4 && ip.getSigma() <= maxSigma + 1e-4, "sigma " + ip.getSigma() + " not in [" + minSigma + ", " + maxSigma + "]" );
+				assertTrue( Float.isFinite( ip.getIntensity() ) && ip.getIntensity() >= GLOBAL_MIN_INTENSITY && ip.getIntensity() <= GLOBAL_MAX_INTENSITY, "intensity " + ip.getIntensity() );
+				sigmas.add( ip.getSigma() );
+				++numPoints;
+			}
+		}
+
+		System.out.println( label + ": " + numPoints + " points, sigmas " + sigmas );
+
+		return numPoints;
 	}
 
 	/**

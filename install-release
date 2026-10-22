@@ -144,7 +144,7 @@ echo "  $JAR_VERSION"
 # Keep in sync with ./install and net.preibisch.bigstitcher.spark.BigStitcherSpark; every command is
 # verified against the downloaded jar below, so an older release simply gets fewer executables.
 
-WORKFLOW_COMMANDS="resave detect-interestpoints match-interestpoints stitching solver match-intensities solve-intensities create-fusion-container fusion nonrigid-fusion"
+WORKFLOW_COMMANDS="resave detect-interestpoints filter-interestpoints match-interestpoints stitching solver match-intensities solve-intensities create-fusion-container fusion nonrigid-fusion"
 UTIL_COMMANDS="split-images filter-views downsample clear-interestpoints clear-registrations transform-points overlay-landmarks"
 
 # $1 - executable name, $2 - subcommand ("" for the dispatcher itself)
