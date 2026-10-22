@@ -84,7 +84,6 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
 import net.preibisch.mvrecon.Threads;
-import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
@@ -511,9 +510,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			dog.localization = localization == Localization.NONE ? 0 : 1;
 			dog.downsampleZ = downsampleZ;
 			dog.downsampleXY = downsampleXY;
-			dog.imageSigmaX = DifferenceOfGUI.defaultImageSigmaX;
-			dog.imageSigmaY = DifferenceOfGUI.defaultImageSigmaY;
-			dog.imageSigmaZ = DifferenceOfGUI.defaultImageSigmaZ;
 
 			dog.minIntensity = minIntensity;
 			dog.maxIntensity = maxIntensity;
@@ -527,10 +523,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			dog.deviceCUDA = null;
 			dog.accurateCUDA = false;
 			dog.percentGPUMem = 0;
-
-			dog.limitDetections = false;
-			dog.maxDetections = 0;
-			dog.maxDetectionsTypeIndex = 0;
 
 			dog.showProgressMin = Double.NaN;
 			dog.showProgressMax = Double.NaN;
