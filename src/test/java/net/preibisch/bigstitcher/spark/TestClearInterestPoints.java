@@ -30,10 +30,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 
-import org.janelia.saalfeldlab.n5.N5FSReader;
-import org.janelia.saalfeldlab.n5.N5FSWriter;
-import org.janelia.saalfeldlab.n5.N5Reader;
-import org.janelia.saalfeldlab.n5.N5Writer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,11 +38,13 @@ import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.plugin.Filter_Detections;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
 import net.preibisch.mvrecon.tests.TestRegistration;
@@ -56,7 +54,7 @@ import picocli.CommandLine;
  * View-selection behaviour of {@code clear-interestpoints} and {@code clear-registrations}.
  *
  * Fixture: the simulated 3-view dataset (views (0,0), (0,1), (0,2)) with DoG detections and the
- * correspondences produced by a registration, saved to a temp dir as dataset.xml + interestpoints.n5.
+ * correspondences produced by a registration, saved to a temp dir as dataset.xml + interestpoints.zarr (the store).
  */
 public class TestClearInterestPoints
 {
@@ -95,7 +93,7 @@ public class TestClearInterestPoints
 		assertTrue( corrsTo( before, V1, V0 ) > 0, "fixture: (0,1) -> (0,0) correspondences" );
 		assertTrue( corrsTo( before, V2, V0 ) > 0, "fixture: (0,2) -> (0,0) correspondences" );
 		assertTrue( corrsTo( before, V1, V2 ) > 0, "fixture: (0,1) -> (0,2) correspondences" );
-		assertTrue( Files.isDirectory( tempDir.resolve( "interestpoints.n5" ) ), "fixture: container exists" );
+		assertTrue( Files.isDirectory( tempDir.resolve( InterestPointsZarrStore.ZARR_CONTAINER ) ), "fixture: store exists" );
 	}
 
 	// ------------------------------------------------------------------ helpers
@@ -149,14 +147,10 @@ public class TestClearInterestPoints
 		return n;
 	}
 
-	static String group( final ViewId v )
+	/** whether the store holds an entry (points, or the marker of a filtered label) for (view, label) */
+	boolean stored( final ViewId v, final String label )
 	{
-		return "tpId_" + v.getTimePointId() + "_viewSetupId_" + v.getViewSetupId();
-	}
-
-	N5Reader n5()
-	{
-		return new N5FSReader( tempDir.resolve( "interestpoints.n5" ).toString() );
+		return InterestPointsZarrStore.get( tempDir.toUri() ).hasEntry( Key.of( v, label ) );
 	}
 
 	// ------------------------------------------------------------------ tests
@@ -173,11 +167,8 @@ public class TestClearInterestPoints
 		assertEquals( ipCount( before, V1 ), ipCount( after, V1 ), "(0,1) detections untouched" );
 		assertEquals( ipCount( before, V2 ), ipCount( after, V2 ), "(0,2) detections untouched" );
 
-		try ( final N5Reader n5 = n5() )
-		{
-			assertFalse( n5.exists( group( V0 ) + "/" + LABEL ), "N5 label group of (0,0) removed" );
-			assertTrue( n5.exists( group( V1 ) + "/" + LABEL + "/interestpoints" ), "N5 data of (0,1) kept" );
-		}
+		assertFalse( stored( V0, LABEL ), "stored data of (0,0) removed" );
+		assertTrue( stored( V1, LABEL ), "stored data of (0,1) kept" );
 
 		assertEquals( 0, corrsTo( after, V1, V0 ), "no dangling links (0,1) -> (0,0)" );
 		assertEquals( 0, corrsTo( after, V2, V0 ), "no dangling links (0,2) -> (0,0)" );
@@ -208,14 +199,10 @@ public class TestClearInterestPoints
 		assertFalse( hasEntry( after, V0 ), "(0,0) entry removed from XML map" );
 		assertTrue( hasEntry( after, V1 ) );
 		assertTrue( hasEntry( after, V2 ) );
-		assertTrue( Files.isDirectory( tempDir.resolve( "interestpoints.n5" ) ), "container itself kept" );
-
-		try ( final N5Reader n5 = n5() )
-		{
-			assertFalse( n5.exists( group( V0 ) ), "N5 view group of (0,0) removed" );
-			assertTrue( n5.exists( group( V1 ) ) );
-			assertTrue( n5.exists( group( V2 ) ) );
-		}
+		assertTrue( Files.isDirectory( tempDir.resolve( InterestPointsZarrStore.ZARR_CONTAINER ) ), "store itself kept" );
+		assertFalse( stored( V0, LABEL ), "stored data of (0,0) removed" );
+		assertTrue( stored( V1, LABEL ) );
+		assertTrue( stored( V2, LABEL ) );
 
 		assertEquals( ipCount( before, V1 ), ipCount( after, V1 ) );
 		assertEquals( 0, corrsTo( after, V1, V0 ) );
@@ -248,7 +235,7 @@ public class TestClearInterestPoints
 		final SpimData2 after = load();
 
 		assertTrue( after.getViewInterestPoints().getViewInterestPoints().isEmpty(), "IP map empty" );
-		assertFalse( Files.exists( tempDir.resolve( "interestpoints.n5" ) ), "whole container removed" );
+		assertFalse( Files.exists( tempDir.resolve( InterestPointsZarrStore.ZARR_CONTAINER ) ), "whole store removed" );
 	}
 
 	@Test
@@ -262,11 +249,8 @@ public class TestClearInterestPoints
 		assertFalse( hasLabel( after, V2, "empty" ) );
 		assertEquals( 0, after.getViewInterestPoints().getViewInterestPoints().get( V1 ).getInterestPointList( "empty" ).getInterestPointsCopy().size() );
 
-		try ( final N5Reader n5 = n5() )
-		{
-			assertTrue( n5.exists( group( V1 ) + "/empty/interestpoints" ) );
-			assertFalse( n5.exists( group( V0 ) + "/empty" ) );
-		}
+		assertTrue( stored( V1, "empty" ), "the empty list of (0,1) is an entry of the store" );
+		assertFalse( stored( V0, "empty" ) );
 	}
 
 	@Test
@@ -309,7 +293,7 @@ public class TestClearInterestPoints
 
 		final SpimData2 check = load();
 		for ( final ViewId v : ALL )
-			assertTrue( check.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( suffixLabel ) instanceof VirtualFilteredInterestPointsN5 );
+			assertTrue( check.getViewInterestPoints().getViewInterestPointLists( v ).getInterestPointList( suffixLabel ) instanceof VirtualFilteredInterestPoints );
 		return suffixLabel;
 	}
 
@@ -332,11 +316,8 @@ public class TestClearInterestPoints
 		assertTrue( hasLabel( after, V1, LABEL ) && hasLabel( after, V1, filtered ) && hasLabel( after, V1, "beads_top10_r" ), "other views keep everything" );
 		assertEquals( 10, after.getViewInterestPoints().getViewInterestPointLists( V1 ).getInterestPointList( filtered ).getInterestPointsCopy().size() );
 
-		try ( final N5Reader n5 = new N5FSReader( tempDir.resolve( "interestpoints.n5" ).toString() ) )
-		{
-			assertFalse( n5.exists( group( V0 ) + "/" + filtered ), "N5 group of the filtered label of (0,0) removed" );
-			assertTrue( n5.exists( group( V1 ) + "/" + filtered ), "N5 group of the filtered label of (0,1) kept" );
-		}
+		assertFalse( stored( V0, filtered ), "the entry of the filtered label of (0,0) removed" );
+		assertTrue( stored( V1, filtered ), "the entry of the filtered label of (0,1) kept" );
 	}
 
 	/** FIX_INTERESTPOINTS drops a filtered label whose base label is gone from its view */
@@ -345,14 +326,14 @@ public class TestClearInterestPoints
 	{
 		final String filtered = addFilteredLabel( "beads_top10" );
 
-		// the base disappears from (0,0) behind the filtered label's back (XML entry and N5 group)
+		// the base disappears from (0,0) behind the filtered label's back (XML entry and store entry)
 		final SpimData2 broken = load();
+		final InterestPoints baseOf0 = broken.getViewInterestPoints().getViewInterestPointLists( V0 ).getInterestPointList( LABEL );
+		baseOf0.deleteInterestPoints();
+		baseOf0.deleteCorrespondingInterestPoints();
 		broken.getViewInterestPoints().getViewInterestPointLists( V0 ).getHashMap().remove( LABEL );
 		new XmlIoSpimData2().save( broken, tempDir.resolve( "dataset.xml" ).toUri() );
-		try ( final N5Writer n5 = new N5FSWriter( tempDir.resolve( "interestpoints.n5" ).toString() ) )
-		{
-			n5.remove( group( V0 ) + "/" + LABEL );
-		}
+		assertFalse( stored( V0, LABEL ) );
 
 		assertEquals( 0, runClear( "--clearMode", "FIX_INTERESTPOINTS" ) );
 
@@ -361,9 +342,6 @@ public class TestClearInterestPoints
 		assertTrue( hasLabel( after, V1, filtered ) && hasLabel( after, V1, LABEL ), "the intact views keep it" );
 		assertEquals( 10, after.getViewInterestPoints().getViewInterestPointLists( V2 ).getInterestPointList( filtered ).getInterestPointsCopy().size() );
 
-		try ( final N5Reader n5 = new N5FSReader( tempDir.resolve( "interestpoints.n5" ).toString() ) )
-		{
-			assertFalse( n5.exists( group( V0 ) + "/" + filtered ) );
-		}
+		assertFalse( stored( V0, filtered ) );
 	}
 }

@@ -50,6 +50,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ad
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
@@ -638,15 +639,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		{
 			System.out.println( "Saving corresponding interest points (in parallel) ...");
 
-			final ArrayList< Pair< ViewId, String > > allIps = new ArrayList<>();
-
-			for ( final ViewId v : viewIdsGlobal )
-				for ( final String l : labels )
-					allIps.add( new ValuePair<>( v, l) );
-
-			final Map<ViewId, ViewInterestPointLists> ip = dataGlobal.getViewInterestPoints().getViewInterestPoints();
-
-			allIps.parallelStream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( true ) );
+			// stages every list whose correspondences were modified above and commits them (the XML itself does not change)
+			XmlIoSpimData2.saveInterestPointsInParallel( dataGlobal );
 		}
 
 		sc.close();

@@ -41,7 +41,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
 import picocli.CommandLine;
 
@@ -114,9 +114,9 @@ public class TestFilterInterestPoints
 			final ViewInterestPointLists vipl = after.getViewInterestPoints().getViewInterestPointLists( viewId );
 			assertTrue( vipl.contains( name ), name + " in " + viewId );
 			final InterestPoints ips = vipl.getInterestPointList( name );
-			assertTrue( ips instanceof VirtualFilteredInterestPointsN5 );
-			assertEquals( LABEL, ( (VirtualFilteredInterestPointsN5)ips ).getBaseLabel() );
-			assertEquals( filter, ( (VirtualFilteredInterestPointsN5)ips ).getFilter() );
+			assertTrue( ips instanceof VirtualFilteredInterestPoints );
+			assertEquals( LABEL, ( (VirtualFilteredInterestPoints)ips ).getBaseLabel() );
+			assertEquals( filter, ( (VirtualFilteredInterestPoints)ips ).getFilter() );
 
 			// what the filter keeps of the base, at most 20
 			final List< InterestPoint > base = new java.util.ArrayList<>( vipl.getInterestPointList( LABEL ).getInterestPointsCopy().values() );
@@ -144,7 +144,7 @@ public class TestFilterInterestPoints
 		assertEquals( 0, run( "-l", LABEL, "--response", cutString + "..", "--newLabel", "strong", "--copy", "-vi", views.get( 0 ).getTimePointId() + "," + views.get( 0 ).getViewSetupId() ) );
 		after = load();
 		final InterestPoints copy = after.getViewInterestPoints().getViewInterestPointLists( views.get( 0 ) ).getInterestPointList( "strong" );
-		assertFalse( copy instanceof VirtualFilteredInterestPointsN5 );
+		assertFalse( copy instanceof VirtualFilteredInterestPoints );
 		assertEquals( count( after, views.get( 0 ), nameA ), copy.getInterestPointsCopy().size() );
 		assertFalse( after.getViewInterestPoints().getViewInterestPointLists( views.get( 1 ) ).contains( "strong" ) );
 

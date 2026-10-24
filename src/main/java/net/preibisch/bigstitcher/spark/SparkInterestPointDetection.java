@@ -27,12 +27,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -81,6 +81,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Limit;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
@@ -696,12 +697,13 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final ArrayList< ViewId > viewIds = new ArrayList<>( blocksPerViewId.keySet() );
 		Collections.sort( viewIds );
 
-		// now combine all jobs and fix potential overlap (overlappingOnly), one Spark task per view
-		final Map< ViewId, List< InterestPoint > > interestPoints = new ConcurrentHashMap<>();
+		// now combine all jobs and fix potential overlap (overlappingOnly), one Spark task per view; each task writes its view's
+		// points to a staging file of the dataset's interest point store, the XML save on the driver commits them
+		final URI baseDirURI = dataGlobal.getBasePathURI();
 
 		System.out.println( "Combining interest points per view (" + results.size() + " blocks) ... " + new java.util.Date() );
 
-		// returns ViewId and the number of combined points, which are written to tempDataset/combined/<viewId> in the temporary N5
+		// returns ViewId and the number of combined points
 		final List< Tuple2< ViewId, Integer > > combined = sc.parallelize( viewIds, Math.max( 1, viewIds.size() ) ).map( viewId ->
 		{
 			final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
@@ -824,7 +826,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
 				}
 
-				InterestPointsN5.saveInterestPointsStatic( n5WriterLocal, combinedDataset( tempDataset, viewId ), myIpsNewId );
+				if ( !dryRun )
+					InterestPointsZarr.stagePoints( baseDirURI, viewId, label, myIpsNewId );
+
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, myIpsNewId.size() );
@@ -833,28 +837,14 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			{
 				System.out.println( Group.pvid( viewId ) + ": no points found." );
 
+				if ( !dryRun )
+					InterestPointsZarr.stagePoints( baseDirURI, viewId, label, new ArrayList<>() );
+
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, 0 );
 			}
 		} ).collect();
-
-		System.out.println( "Loading combined interest points from temporary N5 ... " + new java.util.Date() );
-
-		combined.parallelStream().forEach( t ->
-		{
-			final ViewId viewId = t._1();
-
-			if ( t._2() == 0 )
-			{
-				interestPoints.put( viewId, new ArrayList<>() );
-				return;
-			}
-
-			final String dataset = combinedDataset( tempDataset, viewId );
-
-			interestPoints.put( viewId, InterestPointsN5.loadInterestPointsStatic( n5Writer, dataset ) );
-		} );
 
 		System.out.println( "Combined interest points ... " + new java.util.Date() );
 
@@ -888,16 +878,17 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Computed all interest points, statistics:" );
 
-		for ( final ViewId viewId : viewIds )
-			System.out.println( Group.pvid( viewId ) + ": " + interestPoints.get( viewId ).size() );
+		for ( final Tuple2< ViewId, Integer > viewAndCount : combined )
+			System.out.println( Group.pvid( viewAndCount._1() ) + ": " + viewAndCount._2() );
 
 		if ( !dryRun )
 		{
-			// save interest points for ALL views that were processed, not only those where we found points
-			// otherwise they are not saved into the XML and into the N5
+			// save interest points for ALL views that were processed, not only those with blocks (and points),
+			// otherwise they are not saved into the XML and into the store
+			final HashSet< ViewId > staged = new HashSet<>( viewIds );
 			for ( final ViewId viewId : viewIdsGlobal )
-				if ( interestPoints.get( viewId ) == null )
-					interestPoints.put( viewId, new ArrayList<>() );
+				if ( !staged.contains( viewId ) )
+					InterestPointsZarr.stagePoints( baseDirURI, viewId, label, new ArrayList<>() );
 
 			// save XML
 			System.out.println( "Saving XML and interest points ..." );
@@ -909,7 +900,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					"DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
 							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
 
-			InterestPointTools.addInterestPoints( dataGlobal, label, new HashMap<>( interestPoints ), params );
+			// the entries of the label for all processed views; the XML save commits their staged points
+			InterestPointTools.addInterestPointEntries( dataGlobal, label, viewIdsGlobal, params );
 
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 
@@ -920,11 +912,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "Done ..." );
 
 		return null;
-	}
-
-	static String combinedDataset( final String tempDataset, final ViewId viewId )
-	{
-		return tempDataset + "/combined/tp" + viewId.getTimePointId() + "_setup" + viewId.getViewSetupId();
 	}
 
 	/**

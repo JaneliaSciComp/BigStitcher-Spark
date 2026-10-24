@@ -43,7 +43,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
 import picocli.CommandLine;
 
@@ -90,15 +90,15 @@ public class TestSplitDatasetsFilteredLabels
 				continue;
 
 			final InterestPoints base = vipl.getInterestPointList( "beads_split" );
-			assertFalse( base instanceof VirtualFilteredInterestPointsN5 );
+			assertFalse( base instanceof VirtualFilteredInterestPoints );
 			final List< InterestPoint > basePoints = new ArrayList<>( base.getInterestPointsCopy().values() );
 			points += basePoints.size();
 			++plain;
 
 			assertTrue( vipl.contains( "beads_top20_split" ), "the filtered label was split too" );
 			final InterestPoints ips = vipl.getInterestPointList( "beads_top20_split" );
-			assertTrue( ips instanceof VirtualFilteredInterestPointsN5, "still a filtered label" );
-			final VirtualFilteredInterestPointsN5 virtual = (VirtualFilteredInterestPointsN5)ips;
+			assertTrue( ips instanceof VirtualFilteredInterestPoints, "still a filtered label" );
+			final VirtualFilteredInterestPoints virtual = (VirtualFilteredInterestPoints)ips;
 			assertEquals( "beads_split", virtual.getBaseLabel() );
 			assertEquals( filter, virtual.getFilter() );
 			assertEquals( filter.filter( basePoints ).size(), virtual.getInterestPointsCopy().size() );

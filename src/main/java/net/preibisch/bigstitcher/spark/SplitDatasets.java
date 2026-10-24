@@ -53,9 +53,10 @@ import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
-import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.process.splitting.ConsensusSetCriterion;
@@ -351,21 +352,15 @@ public class SplitDatasets extends AbstractBasic
 				for ( final long[][] si : serIntervals )
 					intervals.add( Spark.deserializeInterval( si ) );
 
-				// Create saver that writes interest points on-the-fly.
-				// Open one N5Writer on ${baseDir}/interestpoints.n5 per task and reuse it for every save,
-				// so we don't pay an open/close cycle per InterestPoints object.
-				final URI containerUri = URITools.toURI(
-						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
+				// Create saver that writes interest points on-the-fly. Executors must not commit to the shared store:
+				// each task writes one durable staging file, which the driver's XML save commits.
 				final SplittingTools.InterestPointSaver saver = vipl -> {
-					try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
+					try
 					{
+						final ArrayList< InterestPoints > allLists = new ArrayList<>();
 						for ( final ViewInterestPointLists v : vipl.values() )
-							for ( final InterestPoints ips : v.getHashMap().values() )
-							{
-								final InterestPointsN5 n5ips = ( InterestPointsN5 ) ips;
-								n5ips.saveInterestPoints( false, n5Writer );
-								n5ips.saveCorrespondingInterestPoints( false, n5Writer );
-							}
+							allLists.addAll( v.getHashMap().values() );
+						InterestPointsZarr.saveStaged( allLists );
 					}
 					catch ( final Exception e )
 					{
@@ -581,19 +576,12 @@ public class SplitDatasets extends AbstractBasic
 					}
 				}
 
-				// Open one N5Writer on ${baseDir}/interestpoints.n5 per task and reuse it for every
-				// saveCorrespondingInterestPoints call across all newSetups in this (oldSetup, tp).
-				final URI corrContainerUri = URITools.toURI(
-						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
-				try ( final N5Writer corrN5Writer = URITools.instantiateN5Writer( StorageFormat.N5, corrContainerUri ) )
+				try
 				{
-					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> {
-						for ( final InterestPoints ips : vipl.getHashMap().values() )
-						{
-							final InterestPointsN5 n5ips = ( InterestPointsN5 ) ips;
-							n5ips.saveCorrespondingInterestPoints( false, corrN5Writer );
-						}
-					};
+					// collect the corrected lists of all new setups of this task and write them as one staging file
+					// (executors never commit; the driver's XML save does)
+					final ArrayList< InterestPoints > pending = new ArrayList<>();
+					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> pending.addAll( vipl.getHashMap().values() );
 
 					// Share one IP-map cache across all newSetup iterations in this task so we don't
 					// reload the same target-view IP copies repeatedly. Single-threaded scope → plain HashMap is fine.
@@ -609,6 +597,8 @@ public class SplitDatasets extends AbstractBasic
 								corrSaver,
 								ipMapCache );
 					}
+
+					InterestPointsZarr.saveStaged( pending );
 				}
 				catch ( final Exception e )
 				{
@@ -971,8 +961,8 @@ public class SplitDatasets extends AbstractBasic
 	}
 
 	/**
-	 * The lazy object of a split label, as the XML instantiates it: a plain label as a plain InterestPointsN5 (its points were
-	 * written by the splitting), a filtered label (VirtualFilteredInterestPointsN5) as a filter of the split base label, which is
+	 * The lazy object of a split label, as the XML instantiates it: a plain label as a plain InterestPointsZarr (its points were
+	 * staged by the splitting), a filtered label (VirtualFilteredInterestPoints) as a filter of the split base label, which is
 	 * what SplittingTools.processSetupStatic created through InterestPoints.copyTo. Nothing is marked modified, so a save on the
 	 * driver does not overwrite what the workers wrote. The parameters are the old label's (adapted to the split base for a
 	 * filtered label): the XML writer needs them.
@@ -983,11 +973,11 @@ public class SplitDatasets extends AbstractBasic
 	{
 		final InterestPoints newIps;
 
-		if ( oldIps instanceof VirtualFilteredInterestPointsN5 )
+		if ( oldIps instanceof VirtualFilteredInterestPoints )
 		{
-			final VirtualFilteredInterestPointsN5 virtual = (VirtualFilteredInterestPointsN5)oldIps;
+			final VirtualFilteredInterestPoints virtual = (VirtualFilteredInterestPoints)oldIps;
 			final String newBaseLabel = virtual.getBaseLabel() + "_split";
-			newIps = new VirtualFilteredInterestPointsN5( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), newLabel ), newBaseLabel, virtual.getFilter() );
+			newIps = new VirtualFilteredInterestPoints( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), newLabel ), newBaseLabel, virtual.getFilter() );
 			newIps.setParameters( virtual.getFilter().describe( newBaseLabel ) );
 		}
 		else
