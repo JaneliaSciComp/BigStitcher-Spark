@@ -43,7 +43,8 @@ import picocli.CommandLine.Option;
  * intensity and sigma and/or keeps a fixed number of points per view, has its own correspondences and follows a
  * re-detection of its base; {@code --copy} stores the points that pass as a plain label instead. Several entries per
  * range (separated by ',') give one label per entry, like the dialog, named base label plus suffix (e.g. beads_r0.008).
- * Driver-only, no Spark job: the XML is edited and the markers of the filtered labels are written to interestpoints.n5.
+ * Driver-only, no Spark job: the XML is edited and the markers of the filtered labels go into the interest point store
+ * (interestpoints.zarr) with the XML save.
  *
  * @author Stephan Preibisch
  */

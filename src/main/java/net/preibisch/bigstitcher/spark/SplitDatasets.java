@@ -479,7 +479,7 @@ public class SplitDatasets extends AbstractBasic
 			// ==================== 6. Phase 3: Correspondences via Spark ====================
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 3 - Processing correspondences via Spark..." );
 
-			// Collect old label names for reconstructing InterestPointsN5 objects
+			// Collect old label names for reconstructing the lazy interest point lists (InterestPointsZarr / VirtualFilteredInterestPoints)
 			final Set< String > oldLabelNames = new HashSet<>();
 			for ( final ViewSetup oldSetup : oldSetups )
 			{
@@ -547,7 +547,7 @@ public class SplitDatasets extends AbstractBasic
 					localOld2New.put( entry.getKey(), ids );
 				}
 
-				// Reconstruct newInterestpoints from disk (lazy-loading InterestPointsN5 objects)
+				// Reconstruct newInterestpoints from the store (lazy-loading lists over what phase 2 staged)
 				final URI baseDir = data.getBasePathURI();
 				final Map< ViewId, ViewInterestPointLists > newInterestpoints = new HashMap<>();
 

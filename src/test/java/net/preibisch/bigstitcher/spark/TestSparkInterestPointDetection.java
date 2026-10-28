@@ -22,6 +22,7 @@
 package net.preibisch.bigstitcher.spark;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.net.URI;
@@ -36,8 +37,12 @@ import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
+import net.preibisch.mvrecon.tests.TestRegistration;
 import picocli.CommandLine;
 
 /**
@@ -123,6 +128,8 @@ public class TestSparkInterestPointDetection
 		}
 		assertTrue( parameters( result, STANDARD_LABEL ).startsWith( "DOG (Spark) s=" + STANDARD_SIGMA + " t=" + STANDARD_THRESHOLD ), parameters( result, STANDARD_LABEL ) );
 		assertTrue( parameters( result, STANDARD_LABEL ).contains( " anisotropy=NaN " ), parameters( result, STANDARD_LABEL ) );
+		// the tail the GUI writes too (read back by StoredDetectionParameters for a re-detection in the GUI)
+		assertTrue( parameters( result, STANDARD_LABEL ).endsWith( " localization=QUADRATIC groupTiles=false groupIllums=false thresholdType=fixed" ), parameters( result, STANDARD_LABEL ) );
 
 		System.out.println( "All assertions passed!" );
 	}
@@ -165,6 +172,7 @@ public class TestSparkInterestPointDetection
 		final String params = parameters( result, "beads-ss" );
 		assertTrue( params.startsWith( "DOG-SS (Spark) s=" + sigma + " steps=4 octaves=2 finestLevel=true t=" + STANDARD_THRESHOLD ), params );
 		assertTrue( params.contains( " anisotropy=1.5 " ), params );
+		assertTrue( params.contains( " localization=QUADRATIC " ) && params.endsWith( " thresholdType=fixed" ), params );
 
 		// the threshold from the noise floor: resolved once on the driver, stored as a fixed number
 		final String[] argsNoise = new String[] {
@@ -184,7 +192,100 @@ public class TestSparkInterestPointDetection
 		final String paramsNoise = parameters( resultNoise, "beads-noise" );
 		final double threshold = net.preibisch.mvrecon.fiji.plugin.Filter_Detections.parseThreshold( paramsNoise );
 		assertTrue( threshold > 0 && Double.isFinite( threshold ), paramsNoise );
+		assertTrue( paramsNoise.endsWith( " thresholdType=noisefloor noiseFactor=2.5" ), paramsNoise );
 		assertTrue( assertAttributes( resultNoise, "beads-noise", threshold, STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY, STANDARD_SIGMA * STANDARD_DOWNSAMPLE_XY ) > 0 );
+	}
+
+	/**
+	 * A detection onto a label that exists (here in one of three views) replaces that view's entry, drops the correspondences of
+	 * the other views that pointed at the old points (as the GUI's re-detection does) and leaves the other views alone; the
+	 * scratch N5 of the blocks is gone after every run
+	 */
+	@Test
+	public void testRedetectionReplacesLabel() throws Exception
+	{
+		System.setProperty( "spark.master", "local[*]" );
+
+		final SpimData2 spimData = SimulateUtil.setUp();
+		final File xmlFile = tempDir.resolve( "dataset-redetect.xml" ).toFile();
+		new XmlIoSpimData2().save( spimData, xmlFile.toURI() );
+
+		final ViewId v0 = new ViewId( 0, 0 ), v1 = new ViewId( 0, 1 ), v2 = new ViewId( 0, 2 );
+
+		// all views, then a registration for the correspondences
+		assertEquals( 0, new CommandLine( new SparkInterestPointDetection() ).execute( detectArgs( xmlFile, STANDARD_THRESHOLD ) ), "first detection" );
+		assertFalse( Files.exists( tempDir.resolve( "interestpoints.n5" ) ), "the scratch N5 of the blocks is removed" );
+
+		final SpimData2 registered = new XmlIoSpimData2().load( xmlFile.toURI() );
+		TestRegistration.testRegistration( registered, STANDARD_LABEL, false );
+		new XmlIoSpimData2().save( registered, xmlFile.toURI() );
+
+		final SpimData2 before = new XmlIoSpimData2().load( xmlFile.toURI() );
+		assertTrue( corrsTo( before, v1, v0 ) > 0 && corrsTo( before, v2, v0 ) > 0 && corrsTo( before, v1, v2 ) > 0, "fixture: correspondences between all views" );
+		final int points1 = count( before, v1 ), points2 = count( before, v2 );
+
+		// view 0 again, with another threshold
+		final String[] args = detectArgs( xmlFile, 2 * STANDARD_THRESHOLD );
+		final String[] argsView0 = java.util.Arrays.copyOf( args, args.length + 2 );
+		argsView0[ args.length ] = "-vi";
+		argsView0[ args.length + 1 ] = "0,0";
+		assertEquals( 0, new CommandLine( new SparkInterestPointDetection() ).execute( argsView0 ), "re-detection of view 0" );
+		assertFalse( Files.exists( tempDir.resolve( "interestpoints.n5" ) ), "the scratch N5 of the blocks is removed" );
+
+		final SpimData2 after = new XmlIoSpimData2().load( xmlFile.toURI() );
+		final InterestPointsZarrStore store = InterestPointsZarrStore.get( tempDir.toUri() );
+
+		assertTrue( parametersOf( after, v0 ).contains( " t=" + ( 2 * STANDARD_THRESHOLD ) + " " ), parametersOf( after, v0 ) );
+		assertTrue( parametersOf( after, v1 ).contains( " t=" + STANDARD_THRESHOLD + " " ), parametersOf( after, v1 ) );
+		assertTrue( count( after, v0 ) > 0, "view 0 has points again" );
+		assertEquals( points1, count( after, v1 ), "view 1 untouched" );
+		assertEquals( points2, count( after, v2 ), "view 2 untouched" );
+		for ( final ViewId v : new ViewId[] { v0, v1, v2 } )
+			assertTrue( store.hasEntry( Key.of( v, STANDARD_LABEL ) ), "entry of " + v + " in the store" );
+
+		assertEquals( 0, after.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( STANDARD_LABEL ).getCorrespondingInterestPointsCopy().size(), "the new points have no correspondences" );
+		assertEquals( 0, corrsTo( after, v1, v0 ), "the links of view 1 into the re-detected view are gone" );
+		assertEquals( 0, corrsTo( after, v2, v0 ), "the links of view 2 into the re-detected view are gone" );
+		assertTrue( corrsTo( after, v1, v2 ) > 0, "the links between the other views stay" );
+	}
+
+	/** the arguments of the standard DoG detection with the given threshold */
+	static String[] detectArgs( final File xmlFile, final double threshold )
+	{
+		return new String[] {
+			"-x", xmlFile.getAbsolutePath(),
+			"-l", STANDARD_LABEL,
+			"-s", String.valueOf( STANDARD_SIGMA ),
+			"-t", String.valueOf( threshold ),
+			"-i0", String.valueOf( GLOBAL_MIN_INTENSITY ),
+			"-i1", String.valueOf( GLOBAL_MAX_INTENSITY ),
+			"-dsxy", String.valueOf( STANDARD_DOWNSAMPLE_XY ),
+			"-dsz", String.valueOf( STANDARD_DOWNSAMPLE_Z ),
+			"--localSparkBindAddress" };
+	}
+
+	/** the number of points of the standard label in a view */
+	static int count( final SpimData2 data, final ViewId view )
+	{
+		return data.getViewInterestPoints().getViewInterestPointLists( view ).getInterestPointList( STANDARD_LABEL ).getInterestPointsCopy().size();
+	}
+
+	/** the parameter string of the standard label in a view */
+	static String parametersOf( final SpimData2 data, final ViewId view )
+	{
+		return data.getViewInterestPoints().getViewInterestPointLists( view ).getInterestPointList( STANDARD_LABEL ).getParameters();
+	}
+
+	/** the correspondences of the standard label of one view that point into another view */
+	static int corrsTo( final SpimData2 data, final ViewId from, final ViewId to )
+	{
+		int n = 0;
+
+		for ( final CorrespondingInterestPoints c : data.getViewInterestPoints().getViewInterestPointLists( from ).getInterestPointList( STANDARD_LABEL ).getCorrespondingInterestPointsCopy() )
+			if ( c.getCorrespondingViewId().equals( to ) )
+				++n;
+
+		return n;
 	}
 
 	/** the parameter string of a label (the first view that has it) */

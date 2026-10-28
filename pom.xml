@@ -117,7 +117,7 @@
 		<multiview-reconstruction.version>10.0.0-SNAPSHOT</multiview-reconstruction.version>
 		<BigStitcher.version>3.1.0</BigStitcher.version>
 
-		<!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
+		<!-- N5 stable versions aligned with multiview-reconstruction 10.0.0-SNAPSHOT -->
 		<n5.version>4.0.1</n5.version>
 		<commons-compress.version>1.28.0</commons-compress.version>
 		<commons-io.version>2.20.0</commons-io.version>

@@ -73,6 +73,7 @@ import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.bigstitcher.spark.util.ViewUtil.PrefetchPixel;
 import net.preibisch.mvrecon.Threads;
+import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
@@ -105,10 +106,12 @@ import util.URITools;
  * Each selected view is virtually downsampled ({@code --downsampleXY}, {@code --downsampleZ}),
  * optionally restricted to the regions that overlap other views ({@code --overlappingOnly}), cut into
  * blocks of {@code --blockSize} and every block is processed as one Spark task. Per-block detections
- * are written to a temporary N5 inside {@code interestpoints.n5}, merged per view (dropping points
- * closer than {@link #combineDistance} to an already collected one), optionally limited to the
- * brightest {@code --maxSpots}, and finally stored under {@code --label} in the XML and
- * {@code interestpoints.n5} unless this is a dry run.
+ * are written to a scratch N5 group ({@code interestpoints.n5/spark_tmp_*}, removed at the end together with a container
+ * that holds nothing else), merged per view (dropping points closer than {@link #combineDistance} to an already collected
+ * one), optionally limited to the brightest {@code --maxSpots} and staged by the view's task into the dataset's interest
+ * point store ({@code interestpoints.zarr}, {@link InterestPointsZarr#stagePoints}); the driver registers the entries of
+ * {@code --label} in the XML (after dropping the references to a label of that name) and its XML save commits them, unless
+ * this is a dry run.
  */
 public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
@@ -181,7 +184,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
-	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 in interestpoints.n5 (default: false)")
+	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 of the blocks (interestpoints.n5/spark_tmp_*; the results themselves are in interestpoints.zarr) (default: false)")
 	protected boolean keepTemporaryN5 = false;
 
 
@@ -310,6 +313,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		}
 		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
 		System.out.println( "medianFilter: " + medianFilter );
+
+		// the label replaces an existing one of the processed views: drop the correspondences of other views that point at its
+		// old points (and the action history records of it) now, as the GUI does for a re-detection; before the tasks run, since a
+		// staging file of the new points shadows the old entry for every read, and the XML save at the end stages the pruned lists
+		if ( !dryRun )
+		{
+			final List< ViewId > existing = InterestPointTools.viewsWithLabel( dataGlobal, label, viewIdsGlobal );
+
+			if ( !existing.isEmpty() )
+			{
+				System.out.println( "Label '" + label + "' exists in " + existing.size() + " of the selected views, removing the references to it before the re-detection ..." );
+				InterestPointTools.removeReferences( dataGlobal, label, existing );
+			}
+		}
 
 		//
 		// assemble all intervals that need to be processed
@@ -871,6 +888,14 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			n5Writer.remove( tempDataset );
 
+			// a scratch container that holds nothing else (every label of the dataset is in the store) goes too, so that no stray
+			// legacy interestpoints.n5 is left behind for the GUI's "Resave as ZARR store" or InterestPointsN5ToZarr to look into
+			if ( n5Writer.list( "" ).length == 0 )
+			{
+				System.out.println( "Removing the empty scratch container '" + tempURI + "' ... " );
+				n5Writer.remove();
+			}
+
 			System.out.println( "All deleted.");
 		}
 
@@ -893,12 +918,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			// save XML
 			System.out.println( "Saving XML and interest points ..." );
 
-			// as the GUI's (DifferenceOfGaussianGUI / ScaleSpaceGUI, "t=" is parsed by Filter_Detections.parseThreshold), plus the Spark specifics
+			// as the GUI's (DifferenceOfGaussianGUI / ScaleSpaceGUI, "t=" is parsed by Filter_Detections.parseThreshold), plus the Spark
+			// specifics; the tail is the GUI's DifferenceOfGUI.commonParameters() (subpixel localization, grouping, threshold type),
+			// which StoredDetectionParameters reads back when the GUI detects the label again
+			final String commonTail = " localization=" + DifferenceOfGUI.localizationKey( localization == Localization.NONE ? 0 : 1 ) + " groupTiles=false groupIllums=false" +
+					( this.noiseFactor != null ? " thresholdType=noisefloor noiseFactor=" + this.noiseFactor : " thresholdType=fixed" );
 			final String params = method == Method.SCALE_SPACE ?
 					"DOG-SS (Spark) s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + finestLevel + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity :
+							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail :
 					"DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail;
 
 			// the entries of the label for all processed views; the XML save commits their staged points
 			InterestPointTools.addInterestPointEntries( dataGlobal, label, viewIdsGlobal, params );
