@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Callable;
@@ -401,6 +402,23 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						toProcess.add(new ValuePair<ViewId, Interval>(md._1(), new FinalInterval(md._2(), md._3())));
 					downsampledDimensions.put(md._1(), md._4());
 				}));
+
+		// a region inside another one of the same view adds nothing but its own blocks (the corner a diagonal neighbour covers
+		// lies inside the strips of the side neighbours): dropped, as the GUI does (OverlappingRegions.dropContained)
+		if ( overlappingOnly )
+		{
+			final LinkedHashMap< ViewId, List< Interval > > perView = new LinkedHashMap<>();
+			for ( final Pair< ViewId, Interval > p : toProcess )
+				perView.computeIfAbsent( p.getA(), k -> new ArrayList<>() ).add( p.getB() );
+
+			final int before = toProcess.size();
+			toProcess.clear();
+			for ( final Map.Entry< ViewId, List< Interval > > e : perView.entrySet() )
+				for ( final Interval interval : OverlappingRegions.dropContained( e.getValue() ) )
+					toProcess.add( new ValuePair<>( e.getKey(), interval ) );
+
+			System.out.println( "Overlapping regions: " + toProcess.size() + " (" + ( before - toProcess.size() ) + " inside another one dropped)" );
+		}
 
 		long maxIntervalSize = 0;
 
