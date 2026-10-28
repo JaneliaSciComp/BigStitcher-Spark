@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -59,6 +60,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ba
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
@@ -605,17 +607,25 @@ public class Solver extends AbstractRegistration
 		};
 	}
 
+	/** the list of a (view, label) */
+	private static InterestPoints interestPointList( final SpimData2 data, final ViewId viewId, final String label )
+	{
+		return data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
+	}
+
 	/**
-	 * Builds the point-match creator for a solve from the stored corresponding interest points. All interest
-	 * points and correspondences of the requested views and labels are first loaded in parallel. Then, for
-	 * every pair of views (optionally restricted by {@code vsComparisonPairs}) and every combination of their
-	 * labels, the correspondences of view A that point to view B are turned into point matches whose
-	 * coordinates are transformed into global space with the views' current registration models, and added
-	 * as inliers of a {@link PairwiseResult} that carries both labels (used to assign the label weights).
-	 * Pairs in which both views are fixed, or both belong to the same group, are skipped. Views without any
-	 * connection are added as a self-pair without inliers so that they still take part in the solve. If
-	 * loading fails with an {@link InterruptedException} or {@link ExecutionException}, the stack trace is
-	 * printed and the JVM exits with status 1.
+	 * Builds the point-match creator for a solve from the stored corresponding interest points. The interest
+	 * points of the requested views and labels are loaded once, in parallel, and shared by all pairs. The pairs
+	 * come from the stored correspondences themselves: the partners of every (view, label), which the interest
+	 * point store answers from its index without loading points (Lila Schweinfurth, branch ip-store-update),
+	 * restricted to the selected views and labels and optionally by {@code vsComparisonPairs}. For every pair
+	 * and every combination of their labels, the correspondences of view A that point to view B (read for that
+	 * partner only) are turned into point matches whose coordinates are transformed into global space with the
+	 * views' current registration models, and added as inliers of a {@link PairwiseResult} that carries both
+	 * labels (used to assign the label weights). Pairs in which both views are fixed, or both belong to the same
+	 * group, are skipped. Views without any connection are added as a self-pair without inliers so that they
+	 * still take part in the solve. If loading fails with an {@link InterruptedException} or
+	 * {@link ExecutionException}, the stack trace is printed and the JVM exits with status 1.
 	 *
 	 * @param dataGlobal the dataset holding interest points, correspondences and view registrations
 	 * @param viewIdsGlobal the views to connect
@@ -643,6 +653,8 @@ public class Solver extends AbstractRegistration
 
 		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = Collections.synchronizedList( new ArrayList<>() );
 		final Set< ViewId > connectedViews = Collections.synchronizedSet( new HashSet<>() );
+		// interest points per (view, label), shared by all pairs
+		final Map< Pair< ViewId, String >, Map< Integer, InterestPoint > > pointMaps = new ConcurrentHashMap<>();
 
 		final ForkJoinPool pool = new ForkJoinPool( Math.max( 32, Runtime.getRuntime().availableProcessors() ) );
 
@@ -652,8 +664,7 @@ public class Solver extends AbstractRegistration
 
 			pool.submit( () -> ipsToLoad.parallelStream().forEach( info ->
 			{
-				dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getInterestPointsCopy();
-				dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getCorrespondingInterestPointsCopy();
+				pointMaps.put( info, interestPointList( dataGlobal, info.getA(), info.getB() ).getInterestPointsCopy() );
 
 				ViewUtil.progressPercentage(progress.incrementAndGet(), ipsToLoad.size() );
 			})).get();
@@ -661,21 +672,53 @@ public class Solver extends AbstractRegistration
 			// extract all corresponding interest points for given ViewId's and label
 			System.out.println( "\nSetting up all corresponding interest points (in parallel) ... ");
 
-			final ArrayList< Pair< ViewId, ViewId > > tasks = new ArrayList<>();
+			// only view pairs that share correspondences, ordered as in viewIdsGlobal (vA before vB)
+			final Map< ViewId, Integer > viewIndex = new HashMap<>();
+			for ( int i = 0; i < viewIdsGlobal.size(); ++i )
+				viewIndex.put( viewIdsGlobal.get( i ), i );
 
-			for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
-				for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
+			final Set< Pair< ViewId, ViewId > > connectedPairs = Collections.synchronizedSet( new HashSet<>() );
+			pool.submit( () -> viewIdsGlobal.parallelStream().forEach( vA ->
+			{
+				for ( final String labelA : labelMap.get( vA ).keySet() )
 				{
-					final ViewId vA = viewIdsGlobal.get( i );
-					final ViewId vB = viewIdsGlobal.get( j );
-					if ( vsComparisonPairs != null )
+					for ( final Pair< ViewId, String > partner : interestPointList( dataGlobal, vA, labelA ).getCorrespondingViews() )
 					{
-						final Pair< Integer, Integer > key = new ValuePair<>( Math.min( vA.getViewSetupId(), vB.getViewSetupId() ), Math.max( vA.getViewSetupId(), vB.getViewSetupId() ) );
-						if ( !vsComparisonPairs.contains( key ) )
+						final ViewId vB = partner.getA();
+						final String labelB = partner.getB();
+
+						if ( vB.equals( vA ) || !viewIndex.containsKey( vB ) )
 							continue;
+
+						if ( !labelMap.get( vB ).containsKey( labelB ) )
+							continue;
+
+						if ( vsComparisonPairs != null )
+						{
+							final int setupA = vA.getViewSetupId();
+							final int setupB = vB.getViewSetupId();
+							final Pair< Integer, Integer > setupPair = new ValuePair<>( Math.min( setupA, setupB ), Math.max( setupA, setupB ) );
+							if ( !vsComparisonPairs.contains( setupPair ) )
+								continue;
+						}
+
+						if ( viewIndex.get( vA ) < viewIndex.get( vB ) )
+							connectedPairs.add( new ValuePair<>( vA, vB ) );
+						else
+							connectedPairs.add( new ValuePair<>( vB, vA ) );
 					}
-					tasks.add( new ValuePair<>( vA, vB ) ); // order doesn't matter, saved symmetrically
 				}
+			})).get();
+
+			final ArrayList< Pair< ViewId, ViewId > > tasks = new ArrayList<>( connectedPairs );
+			tasks.sort( ( first, second ) ->
+			{
+				final int compareA = Integer.compare( viewIndex.get( first.getA() ), viewIndex.get( second.getA() ) );
+				if ( compareA != 0 )
+					return compareA;
+				return Integer.compare( viewIndex.get( first.getB() ), viewIndex.get( second.getB() ) );
+			} );
+			System.out.println( "Views pairs with correspondences: " + tasks.size() );
 
 			progress.set( 0 );
 
@@ -727,11 +770,18 @@ public class Solver extends AbstractRegistration
 						pairResult.setLabelA( labelA );
 						pairResult.setLabelB( labelB );
 		
-						final Collection<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getCorrespondingInterestPointsCopy();
-						//List<CorrespondingInterestPoints> cpB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-		
-						final Map< Integer, InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getInterestPointsCopy();
-						final Map< Integer, InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB ).getInterestPointsCopy();
+						// only the correspondences from (vA, labelA) to (vB, labelB)
+						final Collection<CorrespondingInterestPoints> cpA =
+								interestPointList( dataGlobal, vA, labelA ).getCorrespondingInterestPointsCopy( vB, labelB );
+						if ( cpA.isEmpty() )
+							continue;
+
+						final Map< Integer, InterestPoint> ipListA = pointMaps.computeIfAbsent(
+								new ValuePair<>( vA, labelA ),
+								key -> interestPointList( dataGlobal, vA, labelA ).getInterestPointsCopy() );
+						final Map< Integer, InterestPoint> ipListB = pointMaps.computeIfAbsent(
+								new ValuePair<>( vB, labelB ),
+								key -> interestPointList( dataGlobal, vB, labelB ).getInterestPointsCopy() );
 		
 						for ( final CorrespondingInterestPoints p : cpA )
 						{
