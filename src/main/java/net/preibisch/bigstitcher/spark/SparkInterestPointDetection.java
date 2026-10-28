@@ -45,19 +45,15 @@ import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
-import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.KDTree;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.algorithm.gauss3.Gauss3;
-import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
@@ -67,7 +63,6 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.detection.LazyBackgroundNormalize;
-import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
@@ -86,8 +81,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
-import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
 import net.preibisch.mvrecon.process.interestpointdetection.NoiseFloor;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
@@ -107,7 +102,7 @@ import util.URITools;
  * optionally restricted to the regions that overlap other views ({@code --overlappingOnly}), cut into
  * blocks of {@code --blockSize} and every block is processed as one Spark task. Per-block detections
  * are written to a scratch N5 group ({@code interestpoints.n5/spark_tmp_*}, removed at the end together with a container
- * that holds nothing else), merged per view (dropping points closer than {@link #combineDistance} to an already collected
+ * that holds nothing else), merged per view (dropping points closer than {@link OverlappingRegions#combineDistance} to an already collected
  * one), optionally limited to the brightest {@code --maxSpots} and staged by the view's task into the dataset's interest
  * point store ({@code interestpoints.zarr}, {@link InterestPointsZarr#stagePoints}); the driver registers the entries of
  * {@code --label} in the XML (after dropping the references to a label of that name) and its XML save commits them, unless
@@ -116,13 +111,6 @@ import util.URITools;
 public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -7654397945854689628L;
-
-	/**
-	 * Distance (in full-resolution pixel coordinates of the view) below which an interest point found in
-	 * one processed region is treated as a duplicate of a point already collected for the same view and
-	 * is dropped when the per-region results of {@code --overlappingOnly} are merged.
-	 */
-	public static double combineDistance = 0.5; // when to merge interestpoints that were found in overlapping ROIS (overlappingOnly)
 
 	/** Which Difference-of-Gaussian extrema to detect. */
 	public enum IP { MIN, MAX, BOTH };
@@ -169,10 +157,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--localization" }, description = "Subpixel localization method, NONE or QUADRATIC (default: QUADRATIC)")
 	protected Localization localization = Localization.QUADRATIC;
 
-	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view. WARNING: this is usually only useful when running it on a single channel/timepoint, otherwise they usually fully overlap (default: false)")
+	@Option(names = { "--overlappingOnly" }, description = "only find interest points in the regions of each view that overlap other selected views, by the current registrations (the regions are detected one by one and combined, points closer than 0.5 px to one of another region are dropped; a view without partner gets none). Partners are all other selected views, or with --onlyCompareOverlapTiles only other volumes. WARNING: other channels or illuminations of the same volume overlap it fully, so with several of them the regions are the whole view unless --onlyCompareOverlapTiles is set (default: false)")
 	protected boolean overlappingOnly = false;
 
-	@Option(names = { "--onlyCompareOverlapTiles" }, description = "if --overlappingOnly is selected, only test overlap for the Tile attribute; you might need this if you have multiple channels/timepoints (default: false)")
+	@Option(names = { "--onlyCompareOverlapTiles" }, description = "with --overlappingOnly: a partner must be another volume of the same timepoint, i.e. differ in tile or angle (the rule of the BigStitcher GUI); other channels or illuminations of the same volume do not count. Before 2026-10-27 this kept partners of the same timepoint and channel (default: false)")
 	protected boolean onlyCompareOverlapTiles = false;
 
 	@Option(names = { "-i0", "--minIntensity" }, required = true, description = "min intensity for segmentation, e.g. 0.0")
@@ -255,7 +243,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final boolean findMin = (this.type == IP.MIN || this.type == IP.BOTH);
 		final boolean findMax = (this.type == IP.MAX || this.type == IP.BOTH);
 		final boolean onlyOverlappingRegions = overlappingOnly;
-		final double combineDistance = SparkInterestPointDetection.combineDistance;
+		final double combineDistance = OverlappingRegions.combineDistance; // the distance (full-resolution px) below which a point of one region of --overlappingOnly duplicates one of another, as in the GUI
 		final Localization localization = this.localization;
 		final int maxSpots = this.maxSpots;
 		final boolean maxSpotsPerOverlap = this.maxSpotsPerOverlap;
@@ -334,15 +322,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final ArrayList< Pair< ViewId, Interval > > toProcess = new ArrayList<>();
 		final HashMap< ViewId, long[] > downsampledDimensions = new HashMap<>();
 
-		// assemble all pairs for parallelization with Spark
+		// assemble all pairs for parallelization with Spark: (view, partner) when only the overlapping regions are processed
+		// (OverlappingRegions of multiview-reconstruction, as the GUI's "Only in regions overlapping other views": the partners are
+		// the other selected views whose bounding boxes intersect the view's, with --onlyCompareOverlapTiles only the other volumes
+		// of the same timepoint, i.e. another tile or angle), else (view, null) for the whole view
 		final ArrayList< Tuple2< ViewId, ViewId > > metadataJobs = new ArrayList<>();
-
-		final HashMap< ViewId, AffineTransform3D > registrations =
-				TransformVirtual.adjustAllTransforms(
-						viewIdsGlobal,
-						dataGlobal.getViewRegistrations().getViewRegistrations(),
-						Double.NaN,
-						Double.NaN );
 
 		for ( final ViewId viewDesc : viewIdsGlobal )
 		{
@@ -350,23 +334,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( onlyOverlappingRegions )
 			{
-				for ( final ViewId otherViewId : OverlappingViews.findAllOverlappingViewsFor( viewId, dataGlobal, registrations, viewIdsGlobal ) )
-				{
-					if ( !otherViewId.equals( viewId ) )
-					{
-						if ( onlyCompareOverlapTiles )
-						{
-							final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
-							final ViewDescription othervd = dataGlobal.getSequenceDescription().getViewDescription( otherViewId );
-							if ( viewId.getTimePointId() == otherViewId.getTimePointId() && vd.getViewSetup().getChannel().getId() == othervd.getViewSetup().getChannel().getId() )
-								metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
-						}
-						else
-						{
-							metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
-						}
-					}
-				}
+				final List< ViewId > candidates = onlyCompareOverlapTiles ? OverlappingRegions.otherVolumes( dataGlobal, viewId, viewIdsGlobal ) : new ArrayList<>( viewIdsGlobal );
+
+				for ( final ViewId otherViewId : OverlappingRegions.overlapping( dataGlobal, viewId, candidates ) )
+					metadataJobs.add( new Tuple2<>( viewId, otherViewId ) );
 			}
 			else
 			{
@@ -403,46 +374,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( overlappingOnly )
 			{
-				final ViewId otherViewId = metaData._2();
+				// the region of this view that the partner covers, in the pixels of the downsampled image (OverlappingRegions: the
+				// partner's full-resolution box mapped by the current registrations and this view's mipmap transform, clipped to the image)
+				final Interval intersection = OverlappingRegions.intersection( dataLocal, metaData._1(), metaData._2(), new FinalInterval( input.getA() ), input.getB() );
 
-				final AffineTransform3D mipmapTransform = input.getB(); // maps downsampled image into global coordinate system
-				final AffineTransform3D t1 = mipmapTransform.inverse(); // maps global coordinates into coordinate system of the downsampled image
-
-				//
-				// does it overlap?
-				//
-				final Dimensions dim = ViewUtil.getDimensions( dataLocal, vd );
-				final Dimensions dimOtherViewId = ViewUtil.getDimensions( dataLocal, otherViewId );
-				final ViewDescription vdOtherViewId = dataLocal.getSequenceDescription().getViewDescription( vd );
-
-				final ViewRegistration reg = ViewUtil.getViewRegistration( dataLocal, vd );
-				final ViewRegistration regOtherViewId = ViewUtil.getViewRegistration( dataLocal, otherViewId );
-
-				// load other mipmap transform
-				final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
-
-				openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, ds, true, true );
-
-				// map the other view into the local coordinate space of the view we find interest points in
-				// apply inverse of the mipmap transform of each
-				final AffineTransform3D t2 = regOtherViewId.getModel().preConcatenate( reg.getModel().inverse() ).preConcatenate( mipmapTransformOtherViewId.inverse() );
-
-				final Interval boundingBox = Intervals.smallestContainingInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
-				final Interval boundingBoxOther = Intervals.smallestContainingInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
-
-				if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
-				{
-					final Interval intersectionBoxes = Intervals.intersect( boundingBox, boundingBoxOther );
-					final Interval intersection = Intervals.intersect( input.getA(), intersectionBoxes ); // make sure it fits (e.g. rounding errors)
-
-					//final long size = ViewUtil.size( intersection );
-					//System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
-					//System.out.println( "intersection=" + Util.printInterval( intersection ) + ", size (#px)=" + size );
-					//maxIntervalSize = Math.max( maxIntervalSize, size );
-
+				if ( intersection != null )
 					resultIntervals.add( new Tuple4<>( metaData._1(), intersection.minAsLongArray(), intersection.maxAsLongArray(), input.getA().dimensionsAsLongArray() ) );
-				}
-
 			}
 			else
 			{
@@ -784,29 +721,15 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				}
 			}
 
+			// combine the lists: with --overlappingOnly the regions of different partners overlap each other, duplicates are dropped
+			// (OverlappingRegions.combine, the rule and distance of the GUI); otherwise the blocks are disjoint and the lists are appended
 			ArrayList< InterestPoint > myIps = new ArrayList<>();
 
-			// combine points since overlapping areas might exist
-			for ( final List< InterestPoint > ips : ipsList )
-			{
-				if ( !overlappingOnly || myIps.size() == 0 )
-				{
+			if ( overlappingOnly )
+				myIps = OverlappingRegions.combine( ipsList, combineDistance );
+			else
+				for ( final List< InterestPoint > ips : ipsList )
 					myIps.addAll( ips );
-				}
-				else
-				{
-					final KDTree< InterestPoint > tree = new KDTree<>(myIps, myIps);
-					final NearestNeighborSearchOnKDTree< InterestPoint > search = new NearestNeighborSearchOnKDTree<>( tree );
-
-					for ( final InterestPoint ip : ips )
-					{
-						search.search( ip );
-
-						if ( search.getDistance() > combineDistance )
-							myIps.add( ip );
-					}
-				}
-			}
 
 			// the scale space merges near-identical peaks (same sign, closer than combineDistance x 2^octave in pixels of the
 			// detection), which the blocks could not do across their boundaries: once per view, as a run on the whole image does

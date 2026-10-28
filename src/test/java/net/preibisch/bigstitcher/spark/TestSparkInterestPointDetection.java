@@ -28,11 +28,17 @@ import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import mpicbg.spim.data.registration.ViewRegistration;
+import mpicbg.spim.data.registration.ViewTransformAffine;
 import mpicbg.spim.data.sequence.ViewId;
+import net.imglib2.realtransform.AffineTransform3D;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -247,6 +253,72 @@ public class TestSparkInterestPointDetection
 		assertEquals( 0, corrsTo( after, v1, v0 ), "the links of view 1 into the re-detected view are gone" );
 		assertEquals( 0, corrsTo( after, v2, v0 ), "the links of view 2 into the re-detected view are gone" );
 		assertTrue( corrsTo( after, v1, v2 ) > 0, "the links between the other views stay" );
+	}
+
+	/**
+	 * --overlappingOnly: the points of a view lie in the regions other views cover by the current registrations, fewer than in
+	 * the whole view, no duplicates where the regions of two partners overlap each other; --onlyCompareOverlapTiles gives the
+	 * same here (the three setups are three angles, i.e. three volumes)
+	 */
+	@Test
+	public void testOverlappingOnly() throws Exception
+	{
+		System.setProperty( "spark.master", "local[*]" );
+
+		// view 1 shifted by 64 px in x and view 2 by 64 px in y: view 0 overlaps view 1 in x >= 64 and view 2 in y >= 64 (full resolution)
+		final SpimData2 spimData = SimulateUtil.setUp();
+		shift( spimData, new ViewId( 0, 1 ), 64, 0 );
+		shift( spimData, new ViewId( 0, 2 ), 0, 64 );
+		final File xmlFile = tempDir.resolve( "dataset-overlap.xml" ).toFile();
+		new XmlIoSpimData2().save( spimData, xmlFile.toURI() );
+
+		final ViewId v0 = new ViewId( 0, 0 );
+		int previous = -1;
+
+		for ( final boolean onlyTiles : new boolean[] { false, true } )
+		{
+			final String[] args = detectArgs( xmlFile, STANDARD_THRESHOLD );
+			final String[] argsOverlap = Arrays.copyOf( args, args.length + ( onlyTiles ? 2 : 1 ) );
+			argsOverlap[ args.length ] = "--overlappingOnly";
+			if ( onlyTiles )
+				argsOverlap[ args.length + 1 ] = "--onlyCompareOverlapTiles";
+
+			assertEquals( 0, new CommandLine( new SparkInterestPointDetection() ).execute( argsOverlap ), "overlappingOnly, onlyCompareOverlapTiles=" + onlyTiles );
+
+			final SpimData2 result = new XmlIoSpimData2().load( xmlFile.toURI() );
+			final List< InterestPoint > points = new ArrayList<>( result.getViewInterestPoints().getViewInterestPointLists( v0 ).getInterestPointList( STANDARD_LABEL ).getInterestPointsCopy().values() );
+
+			assertTrue( points.size() > 10 && points.size() < TestInterestPointDetection.EXPECTED_COUNT_VIEW_0 - 2, "fewer points than in the whole view (" + TestInterestPointDetection.EXPECTED_COUNT_VIEW_0 + "): " + points.size() );
+			for ( final InterestPoint p : points )
+				assertTrue( p.getL()[ 0 ] >= 64 - 2 || p.getL()[ 1 ] >= 64 - 2, "outside the overlaps: " + Arrays.toString( p.getL() ) );
+			for ( int i = 0; i < points.size(); ++i )
+				for ( int j = i + 1; j < points.size(); ++j )
+					assertTrue( distance( points.get( i ), points.get( j ) ) > 0.4, "duplicate " + Arrays.toString( points.get( i ).getL() ) );
+			assertTrue( parametersOf( result, v0 ).contains( " overlappingOnly=true " ), parametersOf( result, v0 ) );
+
+			if ( previous >= 0 )
+				assertEquals( previous, points.size(), "the same partners with --onlyCompareOverlapTiles (three angles = three volumes)" );
+			previous = points.size();
+		}
+	}
+
+	/** shifts a view in world coordinates (= full-resolution pixels of the simulated dataset) */
+	static void shift( final SpimData2 data, final ViewId view, final double dx, final double dy )
+	{
+		final AffineTransform3D t = new AffineTransform3D();
+		t.translate( dx, dy, 0 );
+
+		final ViewRegistration vr = data.getViewRegistrations().getViewRegistration( view );
+		vr.preconcatenateTransform( new ViewTransformAffine( "shift", t ) );
+		vr.updateModel();
+	}
+
+	static double distance( final InterestPoint a, final InterestPoint b )
+	{
+		double sum = 0;
+		for ( int d = 0; d < 3; ++d )
+			sum += ( a.getL()[ d ] - b.getL()[ d ] ) * ( a.getL()[ d ] - b.getL()[ d ] );
+		return Math.sqrt( sum );
 	}
 
 	/** the arguments of the standard DoG detection with the given threshold */

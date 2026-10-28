@@ -67,39 +67,4 @@ public class OverlappingViews
 		return overlapping;
 	}
 
-	/**
-	 * Find all views among {@code viewIds} whose registered bounding box overlaps that of
-	 * {@code viewIdA}. Both bounding boxes are transformed into world coordinates using the given
-	 * {@code registrations}; {@code viewIdA} itself is skipped and no expansion is applied.
-	 *
-	 * @param viewIdA the view to find overlap partners for
-	 * @param spimData contains the image dimensions of all views
-	 * @param registrations transform into world coordinates for each view
-	 * @param viewIds candidate views to check (may contain {@code viewIdA}, which is ignored)
-	 * @return the views of {@code viewIds}, other than {@code viewIdA}, that overlap {@code viewIdA}
-	 */
-	public static ArrayList< ViewId > findAllOverlappingViewsFor(
-			final ViewId viewIdA,
-			final SpimData spimData,
-			final HashMap< ViewId, AffineTransform3D > registrations,
-			final List<ViewId> viewIds)
-	{
-		final ArrayList< ViewId > overlappingViews = new ArrayList<>();
-
-		final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA, registrations.get( viewIdA ) );
-
-		for ( final ViewId viewIdB : viewIds )
-		{
-			if ( viewIdA.equals( viewIdB ) )
-				continue;
-
-			final Interval bounds2 = ViewUtil.getTransformedBoundingBox( spimData, viewIdB, registrations.get( viewIdB ) );
-
-			if ( ViewUtil.overlaps( bounds1, bounds2 ) )
-				overlappingViews.add( viewIdB );
-		}
-
-		return overlappingViews;
-	}
-
 }
