@@ -121,7 +121,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		/**
 		 * Match on the embeddings stored with the interest points (the per-point array of {@code interestpoints.zarr}
 		 * written by pcmatch embed): a radius query in the registered frame, a cosine per candidate pair, a ratio test,
-		 * then RANSAC, {@link EmbeddingsPairwise}; takes {@code --searchRadius} (no limit without it), {@code --descriptorRatio} and
+		 * then RANSAC, {@link EmbeddingsPairwise}; takes {@code --searchRadius} (no limit without it), {@code --descriptorRatio}, {@code --minSimilarity} and
 		 * {@code --arrayName}.
 		 */
 		EMBEDDINGS
@@ -136,7 +136,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
 	protected Double significance = 3.0;
 
-	@Option(names = { "-sr", "--searchRadius" }, description = "the search radius for corresponding points in global coordinate space (px); optional for PRECISE_TRANSLATION and EMBEDDINGS (default: no limit, every point of the other view is a possible partner; for EMBEDDINGS the registration's uncertainty is the right value, e.g. 20 for a well pre-registered dataset, 300-500 for large translations, and it saves time and false partners)")
+	@Option(names = { "-sr", "--searchRadius" }, description = "the search radius for corresponding points in global coordinate space (px); optional for PRECISE_TRANSLATION and EMBEDDINGS (default: no limit, every point of the other view is a possible partner; for EMBEDDINGS a radius restricts the partners to the registration's uncertainty, e.g. 20 for a well pre-registered dataset, 300-500 for large translations)")
 	protected Double searchRadius = null;
 
 	@Option(names = { "--descriptorSearch" }, description = "Only for PRECISE_TRANSLATION; how descriptors are compared: AUTO (chooses per view pair), FLAT_KDTREE, BLOCKED_BRUTE_FORCE or LEGACY (the original loop) (default: AUTO)")
@@ -207,6 +207,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "--descriptorRatio" }, description = "only for EMBEDDINGS: the ratio test in similarity space, a point's best partner within the search radius is a candidate if (1 - best cosine) < ratio x (1 - second best cosine); smaller is stricter, 1.0 keeps every best partner (default: 0.85)")
 	protected double descriptorRatio = EmbeddingsMatcher.defaultRatio;
 
+	@Option(names = { "--minSimilarity" }, description = "only for EMBEDDINGS: the minimal cosine similarity of a candidate (default: 0.3)")
+	protected double minSimilarity = EmbeddingsMatcher.defaultSmin;
+
 	@Option(names = { "--arrayName" }, description = "only for EMBEDDINGS: the per-point array of interestpoints.zarr that holds the embeddings (<label>/tp<T>/arrays/<name>, written by pcmatch embed --array-name); needed only if the labels have more than one array (default: the one array they have)")
 	protected String arrayName = null;
 
@@ -268,9 +271,15 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			return null;
 		}
 
-		if ( registrationMethod != Method.EMBEDDINGS && ( descriptorRatio != EmbeddingsMatcher.defaultRatio || arrayName != null ) )
+		if ( registrationMethod == Method.EMBEDDINGS && !( minSimilarity >= -1 && minSimilarity <= 1 ) )
 		{
-			System.out.println( "--descriptorRatio and --arrayName are only used with -m EMBEDDINGS." );
+			System.out.println( "--minSimilarity must be in [-1, 1], got " + minSimilarity + "." );
+			return null;
+		}
+
+		if ( registrationMethod != Method.EMBEDDINGS && ( descriptorRatio != EmbeddingsMatcher.defaultRatio || minSimilarity != EmbeddingsMatcher.defaultSmin || arrayName != null ) )
+		{
+			System.out.println( "--descriptorRatio, --minSimilarity and --arrayName are only used with -m EMBEDDINGS." );
 			return null;
 		}
 
@@ -352,7 +361,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 				return null;
 			}
 
-			System.out.println( "Matching on the stored embeddings '" + arrayName + "' " + ( searchRadius == null ? "without a search radius limit (every point of the other view is a possible partner; --searchRadius saves time and false partners)" : "within a search radius of " + searchRadius + " px" ) + ", ratio " + descriptorRatio + " (smin " + EmbeddingsMatcher.defaultSmin + ")" );
+			System.out.println( "Matching on the stored embeddings '" + arrayName + "' " + ( searchRadius == null ? "without a search radius limit (every point of the other view is a possible partner)" : "within a search radius of " + searchRadius + " px" ) + ", ratio " + descriptorRatio + ", minimal cosine similarity " + minSimilarity );
 		}
 
 		// clear all correspondences if wanted
@@ -382,6 +391,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final Method registrationMethod = this.registrationMethod;
 		final String candidatesPath = this.candidatesPath;
 		final double descriptorRatio = this.descriptorRatio;
+		final double minSimilarity = this.minSimilarity;
 		final String arrayName = this.arrayName;
 		final DescriptorSearch descriptorSearch = this.descriptorSearch;
 		final double ratioOfDistance = this.significance;
@@ -485,7 +495,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC, candidatesPath,
-						descriptorRatio, arrayName, data.getViewInterestPoints() );
+						descriptorRatio, minSimilarity, arrayName, data.getViewInterestPoints() );
 
 				// compute single pairwise match
 				final PairwiseResult<InterestPoint> result =
@@ -614,7 +624,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						icpMaxError,
 						icpMaxIterations,
 						icpUseRANSAC, candidatesPath,
-						descriptorRatio, arrayName, data.getViewInterestPoints() );
+						descriptorRatio, minSimilarity, arrayName, data.getViewInterestPoints() );
 
 				// compute single pairwise match
 				final PairwiseResult<GroupedInterestPoint<ViewId>> result =
@@ -756,6 +766,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	 * @param candidatesPath path/URI of the N5 store holding the precomputed match candidates
 	 *             ({@code LOAD_CANDIDATES} only, otherwise ignored)
 	 * @param descriptorRatio the ratio test's threshold in similarity space ({@code EMBEDDINGS} only)
+	 * @param minSimilarity the minimal cosine similarity of a candidate ({@code EMBEDDINGS} only)
 	 * @param arrayName the per-point array of the interest point store that holds the embeddings
 	 *             ({@code EMBEDDINGS} only)
 	 * @param interestPoints the interest point lists of the dataset, through which the stored descriptors and the
@@ -778,6 +789,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final boolean icpUseRANSAC,
 			final String candidatesPath,
 			final double descriptorRatio,
+			final double minSimilarity,
 			final String arrayName,
 			final ViewInterestPoints interestPoints )
 	{
@@ -825,7 +837,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 		else if ( registrationMethod == Method.EMBEDDINGS )
 		{
-			matcher = new EmbeddingsPairwise<>( rp, new EmbeddingsParameters( model, limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, descriptorRatio, EmbeddingsMatcher.defaultSmin, arrayName ), interestPoints );
+			matcher = new EmbeddingsPairwise<>( rp, new EmbeddingsParameters( model, limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, descriptorRatio, minSimilarity, arrayName ), interestPoints );
 		}
 		else
 		{
