@@ -51,9 +51,9 @@ import picocli.CommandLine;
 /**
  * {@code match-interestpoints -m EMBEDDINGS} end to end on the simulated beads: FAST_ROTATION finds the true
  * correspondences first, the test plants one random unit vector per corresponding group of points (and one of its own
- * per unmatched point) as the per-point array {@code descriptor} of the store, exactly as pcmatch writes it, and the
+ * per unmatched point) as the per-point array {@code embedding} of the store, exactly as pcmatch writes it, and the
  * embeddings matcher has to find the planted pairs again from the store alone (every point within the radius of
- * every other, so the vectors decide). Without {@code --searchRadius} the command refuses and changes nothing.
+ * every other, so the vectors decide); without {@code --searchRadius} there is no limit, which the simulated beads can afford.
  */
 public class TestEmbeddings
 {
@@ -64,7 +64,7 @@ public class TestEmbeddings
 	static final int COLUMNS = 16;
 
 	@Test
-	public void matchesPlantedDescriptors() throws Exception
+	public void matchesPlantedEmbeddings() throws Exception
 	{
 		System.setProperty( "spark.master", "local[*]" );
 
@@ -124,15 +124,11 @@ public class TestEmbeddings
 				System.arraycopy( vector, 0, values, COLUMNS * r, COLUMNS );
 				++r;
 			}
-			TestInterestPointArrays.writeArray( base, LABEL, v.getTimePointId(), "descriptor", v.getViewSetupId(), ids, values, COLUMNS, "planted-by-the-test" );
+			TestInterestPointArrays.writeArray( base, LABEL, v.getTimePointId(), "embedding", v.getViewSetupId(), ids, values, COLUMNS, "planted-by-the-test" );
 		}
 
-		// without a radius the command refuses: the classic correspondences stay
-		run( new SparkGeometricDescriptorMatching(), "-x", xml, "-l", LABEL, "-m", "EMBEDDINGS", "--clearCorrespondences", "--localSparkBindAddress" );
-		assertEquals( planted, correspondences( xmlFile, LABEL ) );
-
-		// from the store alone: a radius larger than the volume, so that only the vectors tell the partners apart
-		run( new SparkGeometricDescriptorMatching(), "-x", xml, "-l", LABEL, "-m", "EMBEDDINGS", "--searchRadius", "100000", "-tm", "RIGID", "-rm", "NONE",
+		// from the store alone, without a search radius: only the vectors tell the partners apart
+		run( new SparkGeometricDescriptorMatching(), "-x", xml, "-l", LABEL, "-m", "EMBEDDINGS", "-tm", "RIGID", "-rm", "NONE",
 				"--clearCorrespondences", "--localSparkBindAddress" );
 
 		final TreeMap< String, Integer > found = correspondences( xmlFile, LABEL );
@@ -142,6 +138,16 @@ public class TestEmbeddings
 			final int expected = planted.get( pair ), actual = found.get( pair );
 			assertTrue( actual >= 0.9 * expected && actual <= expected + 3, pair + ": planted " + expected + " pairs, found " + actual );
 		}
+
+		// a second array: the command needs --arrayName now and refuses without it (the correspondences stay), the name picks the array
+		final ViewId first = views.get( 0 );
+		TestInterestPointArrays.writeArray( base, LABEL, first.getTimePointId(), "another", first.getViewSetupId(), new int[] { 0 }, new float[ 2 ], 2, "planted-by-the-test" );
+		run( new SparkGeometricDescriptorMatching(), "-x", xml, "-l", LABEL, "-m", "EMBEDDINGS", "-tm", "RIGID", "-rm", "NONE",
+				"--clearCorrespondences", "--localSparkBindAddress" );
+		assertEquals( found, correspondences( xmlFile, LABEL ) );
+		run( new SparkGeometricDescriptorMatching(), "-x", xml, "-l", LABEL, "-m", "EMBEDDINGS", "--searchRadius", "100000", "-tm", "RIGID", "-rm", "NONE", "--arrayName", "embedding",
+				"--clearCorrespondences", "--localSparkBindAddress" );
+		assertEquals( planted.keySet(), correspondences( xmlFile, LABEL ).keySet() );
 	}
 
 	/** The stored correspondences per view pair (lower setup first), counted once per pair. */

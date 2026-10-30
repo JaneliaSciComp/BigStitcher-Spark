@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
@@ -52,6 +53,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ba
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -119,7 +121,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		/**
 		 * Match on the embeddings stored with the interest points (the per-point array of {@code interestpoints.zarr}
 		 * written by pcmatch embed): a radius query in the registered frame, a cosine per candidate pair, a ratio test,
-		 * then RANSAC, {@link EmbeddingsPairwise}; needs {@code --searchRadius}, takes {@code --descriptorRatio} and
+		 * then RANSAC, {@link EmbeddingsPairwise}; takes {@code --searchRadius} (no limit without it), {@code --descriptorRatio} and
 		 * {@code --arrayName}.
 		 */
 		EMBEDDINGS
@@ -134,7 +136,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
 	protected Double significance = 3.0;
 
-	@Option(names = { "-sr", "--searchRadius" }, description = "the search radius for corresponding points in global coordinate space (px); optional for PRECISE_TRANSLATION (default: no limit), required for EMBEDDINGS (the registration's uncertainty, e.g. 20 for a well pre-registered dataset, 300-500 for large translations)")
+	@Option(names = { "-sr", "--searchRadius" }, description = "the search radius for corresponding points in global coordinate space (px); optional for PRECISE_TRANSLATION and EMBEDDINGS (default: no limit, every point of the other view is a possible partner; for EMBEDDINGS the registration's uncertainty is the right value, e.g. 20 for a well pre-registered dataset, 300-500 for large translations, and it saves time and false partners)")
 	protected Double searchRadius = null;
 
 	@Option(names = { "--descriptorSearch" }, description = "Only for PRECISE_TRANSLATION; how descriptors are compared: AUTO (chooses per view pair), FLAT_KDTREE, BLOCKED_BRUTE_FORCE or LEGACY (the original loop) (default: AUTO)")
@@ -205,8 +207,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "--descriptorRatio" }, description = "only for EMBEDDINGS: the ratio test in similarity space, a point's best partner within the search radius is a candidate if (1 - best cosine) < ratio x (1 - second best cosine); smaller is stricter, 1.0 keeps every best partner (default: 0.85)")
 	protected double descriptorRatio = EmbeddingsMatcher.defaultRatio;
 
-	@Option(names = { "--arrayName" }, description = "only for EMBEDDINGS: the per-point array of interestpoints.zarr that holds the embeddings (<label>/tp<T>/arrays/<name>, written by pcmatch embed --array-name) (default: descriptor)")
-	protected String arrayName = "descriptor";
+	@Option(names = { "--arrayName" }, description = "only for EMBEDDINGS: the per-point array of interestpoints.zarr that holds the embeddings (<label>/tp<T>/arrays/<name>, written by pcmatch embed --array-name); needed only if the labels have more than one array (default: the one array they have)")
+	protected String arrayName = null;
 
 	//@Option(names = { "-p", "--pairsPerSparkJob" }, description = "how many pairs of views are processed per spark job (default: 1)")
 	//protected Integer pairsPerSparkJob = 1;
@@ -260,19 +262,13 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			return null;
 		}
 
-		if ( registrationMethod == Method.EMBEDDINGS && searchRadius == null )
-		{
-			System.out.println( "Please supply --searchRadius for EMBEDDINGS: the radius around every point within which partners are looked for, in global coordinates (px); it is the registration's uncertainty (e.g. 20 for a well pre-registered dataset, 300-500 for large translations) and has no default." );
-			return null;
-		}
-
 		if ( registrationMethod == Method.EMBEDDINGS && !( descriptorRatio > 0 && descriptorRatio <= 1 ) )
 		{
 			System.out.println( "--descriptorRatio must be in (0, 1], got " + descriptorRatio + "." );
 			return null;
 		}
 
-		if ( registrationMethod != Method.EMBEDDINGS && ( descriptorRatio != EmbeddingsMatcher.defaultRatio || !arrayName.equals( "descriptor" ) ) )
+		if ( registrationMethod != Method.EMBEDDINGS && ( descriptorRatio != EmbeddingsMatcher.defaultRatio || arrayName != null ) )
 		{
 			System.out.println( "--descriptorRatio and --arrayName are only used with -m EMBEDDINGS." );
 			return null;
@@ -320,9 +316,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		if ( registrationMethod == Method.LOAD_CANDIDATES )
 			System.out.println( "Loading match candidates from: " + candidatesPath );
 
-		if ( registrationMethod == Method.EMBEDDINGS )
-			System.out.println( "Matching on the stored embeddings '" + arrayName + "' within a search radius of " + searchRadius + " px, ratio " + descriptorRatio + " (smin " + EmbeddingsMatcher.defaultSmin + ")" );
-
 		// set up ViewIds, Labels and Weights
 		final HashMap< String, Double > map = new HashMap<>();
 
@@ -332,6 +325,35 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		System.out.println( "labels & weights: " + map);
 
 		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = buildLabelMap( dataGlobal, viewIdsGlobal, map );
+
+		// the stored embeddings: the one array the labels have, or the named one of several
+		if ( registrationMethod == Method.EMBEDDINGS )
+		{
+			final SortedSet< String > names = InterestPointArrays.names( dataGlobal.getViewInterestPoints(), labelMapGlobal );
+
+			if ( arrayName == null )
+			{
+				if ( names.isEmpty() )
+				{
+					System.out.println( "The label(s) " + labels + " have no stored embeddings (no per-point array in interestpoints.zarr): run pcmatch embed first." );
+					return null;
+				}
+				else if ( names.size() > 1 )
+				{
+					System.out.println( "The label(s) " + labels + " have several per-point arrays " + names + ": please pick one with --arrayName." );
+					return null;
+				}
+
+				arrayName = names.first();
+			}
+			else if ( !names.contains( arrayName ) )
+			{
+				System.out.println( "No per-point array '" + arrayName + "' for the label(s) " + labels + " (found: " + names + "): run pcmatch embed --array-name " + arrayName + " first." );
+				return null;
+			}
+
+			System.out.println( "Matching on the stored embeddings '" + arrayName + "' " + ( searchRadius == null ? "without a search radius limit (every point of the other view is a possible partner; --searchRadius saves time and false partners)" : "within a search radius of " + searchRadius + " px" ) + ", ratio " + descriptorRatio + " (smin " + EmbeddingsMatcher.defaultSmin + ")" );
+		}
 
 		// clear all correspondences if wanted
 		if ( clearCorrespondences )
@@ -803,10 +825,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		}
 		else if ( registrationMethod == Method.EMBEDDINGS )
 		{
-			if ( !limitSearchRadius )
-				throw new IllegalArgumentException( "EMBEDDINGS needs a search radius (--searchRadius)." );
-
-			matcher = new EmbeddingsPairwise<>( rp, new EmbeddingsParameters( model, searchRadius, descriptorRatio, EmbeddingsMatcher.defaultSmin, arrayName ), interestPoints );
+			matcher = new EmbeddingsPairwise<>( rp, new EmbeddingsParameters( model, limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, descriptorRatio, EmbeddingsMatcher.defaultSmin, arrayName ), interestPoints );
 		}
 		else
 		{
