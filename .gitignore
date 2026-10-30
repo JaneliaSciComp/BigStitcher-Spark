@@ -13,6 +13,7 @@
 /detect-interestpoints
 /downsample
 /filter-interestpoints
+/embed-interestpoints
 /filter-views
 /fusion
 /match-intensities

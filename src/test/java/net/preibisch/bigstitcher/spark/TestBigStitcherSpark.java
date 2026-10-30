@@ -37,7 +37,7 @@ public class TestBigStitcherSpark
 {
 	/** Mirrors the install_command lines of the {@code install} script. */
 	static final Set< String > SHIM_NAMES = new LinkedHashSet<>( Arrays.asList(
-			"resave", "detect-interestpoints", "filter-interestpoints", "match-interestpoints", "stitching", "solver",
+			"resave", "detect-interestpoints", "filter-interestpoints", "embed-interestpoints", "match-interestpoints", "stitching", "solver",
 			"match-intensities", "solve-intensities", "create-fusion-container", "fusion", "nonrigid-fusion",
 			"split-images", "filter-views", "downsample", "clear-interestpoints", "clear-registrations",
 			"transform-points", "overlay-landmarks" ) );
@@ -47,7 +47,7 @@ public class TestBigStitcherSpark
 	{
 		final CommandLine cl = BigStitcherSpark.commandLine();
 		assertEquals( SHIM_NAMES, cl.getSubcommands().keySet() );
-		assertEquals( 18, SHIM_NAMES.size() );
+		assertEquals( 19, SHIM_NAMES.size() );
 	}
 
 	@Test

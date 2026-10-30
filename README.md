@@ -11,6 +11,7 @@ This package allows you to run compute-intense parts of BigStitcher distributed 
 * `SparkResaveN5`/**`resave`** (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
 * `SparkInterestPointDetection`/**`detect-interestpoints`** (detect interest points for alignment, Difference-of-Gaussian or scale space)
 * `FilterInterestPoints`/**`filter-interestpoints`** (filtered labels of detected interest points: by response, intensity, sigma or a fixed number per view, without detecting again)
+* `SparkInterestPointEmbedding`/**`embed-interestpoints`** (learned embeddings of the interest points of a label, pcmatch's ONNX model evaluated in Java, for `match-interestpoints -m EMBEDDINGS`)
 * `SparkGeometricDescriptorMatching`/**`match-interestpoints`** (perform pair-wise interest point matching)
 * `SparkPairwiseStitching`/**`stitching`** (run pairwise stitching between overlapping tiles)
 * `Solver`/**`solver`** (perform the global solve, works with interest points and stitching)
@@ -69,7 +70,7 @@ java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all comman
 
 `-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
 
-**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `filter-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `filter-interestpoints`, `embed-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
 
 If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
@@ -195,6 +196,14 @@ A **filtered label** keeps no points of its own: it filters an existing label (i
 creates `beads_r0.016`, the detections of `beads` with |response| >= 0.016. `-l` is the label to filter, `--response`, `--intensity` and `--sigma` take a range each (`a` keeps >= a, `a-b` keeps a..b; the intensity in the raw units of the image at the resolution of the detection, the sigma in pixels at full resolution); several entries separated by `,` create one label per entry, e.g. `--response 0.008,0.016,0.032` is a threshold ramp. `--keepPoints 3000` keeps a fixed number of points per view (after the ranges), ranked by `--keepBy` (`response`, `intensity` or `sigma`, default `response`) and `--keepMode` (`highest`, `median` or `lowest`, default `highest`). The label is named base label plus suffix (e.g. `beads_r0.016`, `beads_rh3000`, `beads_s1.5-3`) unless `--newLabel` says otherwise; `--copy` stores the points that pass as a plain label instead of a filtered one. The view-selection flags apply, `--dryRun` only prints what would be created. It runs on the driver only, no Spark job is needed.
 
 Removing a label with `clear-interestpoints --clearMode REMOVE_LABEL` also removes the labels filtered from it, and `FIX_INTERESTPOINTS` drops filtered labels whose base is gone.
+
+## Embed Interest Points<a name="ip-embed">
+
+`embed-interestpoints` computes a learned **embedding** (a unit vector, 64-D for the current model) for every interest point of a label and stores it with the points in `interestpoints.zarr`, as pcmatch's `embed` does; `match-interestpoints -m EMBEDDINGS` then finds the correspondences by the similarity of these vectors instead of the geometric descriptors. The model is pcmatch's ONNX export (`pcmatch export-onnx`, a `.onnx` file with its `.onnx.json` sidecar next to it, which carries the model's fingerprint and the cube geometry); it is evaluated in Java, no ONNX Runtime or GPU is needed. A typical call:
+
+<code>./embed-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads --model /models/translation-stack.onnx</code>
+
+runs one Spark task per view: it samples five isotropic cubes per point from the image pyramid (edges of 5 to 30 detection sigmas, never finer than the level the detection ran at, NaN outside the image), runs the network block by block (`--blockSize`, default 128 points per call) and writes the view's rows into the array `--arrayName` (default `embedding`) of the label. A filtered label is embedded through its base label: all points of the base, stored under the base, so the filtered labels of that base read them too. An array of another model under the same name is replaced as a whole, since rows of two models cannot be matched against each other. The label needs the detection sigma from its parameters string (a DoG or scale-space detection); for a scale-space label every point's own sigma scales its cubes. The view-selection flags apply, `--dryRun` computes without writing. Speed: about 500 points per second and core.
 
 ## Match Interest Points<a name="ip-match">
 
