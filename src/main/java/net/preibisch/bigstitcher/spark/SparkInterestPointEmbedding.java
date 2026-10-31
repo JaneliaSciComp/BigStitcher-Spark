@@ -76,7 +76,7 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 	@Option(names = { "-l", "--label" }, required = true, description = "the interest points to embed, e.g. beads; a filtered label is embedded through its base label (all points of the base, stored under the base)")
 	protected String label = null;
 
-	@Option(names = { "--model" }, required = true, description = "the model: pcmatch's 'export-onnx' file (.onnx) with its '.onnx.json' sidecar next to it (a path every executor can read), or a model of the Hugging Face Hub, hf://<namespace>/<name>[@<revision>][/<file>] (e.g. hf://StephanPreibisch/bigstitcher-embedding-translation-stack64; the revision defaults to main and is pinned to its commit, every executor downloads the model once into --modelCache)")
+	@Option(names = { "--model" }, required = true, description = "the model: pcmatch's 'export-onnx' file (.onnx) with its '.onnx.json' sidecar next to it (a path every executor can read), or a model of the Hugging Face Hub, hf://<namespace>/<name>[@<revision>][/<file>] (e.g. hf://JaneliaSciComp/bigstitcher-embedding-translation-stack64; the revision defaults to main and is pinned to its commit, every executor downloads the model once into --modelCache)")
 	protected String model = null;
 
 	@Option(names = { "--modelCache" }, description = "the directory hub models are downloaded to (default: the system property " + ModelHub.CACHE_PROPERTY + ", else ~/.bigstitcher/models on every node); a shared directory on a cluster, or download the model once and pass its path as --model")
