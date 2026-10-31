@@ -45,14 +45,18 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays.Vectors;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.process.interestpointembedding.ModelHub;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
+import net.preibisch.mvrecon.tests.TestModelHub;
 import net.preibisch.mvrecon.tests.TestOnnxModels;
 import picocli.CommandLine;
 
 /**
  * {@code embed-interestpoints} end to end on the simulated beads with a tiny ONNX model written by mvrecon's test
  * {@code TestOnnxModels}: one Spark task per view writes the view's rows into the per-point array of the label, which the
- * matcher's reader accepts by its count rule; a filtered label is embedded through its base; a dry run writes nothing.
+ * matcher's reader accepts by its count rule; a filtered label is embedded through its base; a dry run writes nothing; a hub
+ * model ({@code --model hf://...}, against mvrecon's {@code TestModelHub.FakeHub}) is pinned, downloaded into {@code --modelCache}
+ * and recorded by its pinned URI.
  */
 public class TestInterestPointEmbedding
 {
@@ -134,6 +138,28 @@ public class TestInterestPointEmbedding
 		assertEquals( basePoints, InterestPointArrays.read( base, LABEL, 0, first.getViewSetupId(), "other" ).size() );
 		assertNull( InterestPointArrays.read( base, LABEL, 0, views.get( 1 ).getViewSetupId(), "other" ) ); // only the selected view
 		assertEquals( 2, InterestPointArrays.list( base, LABEL, 0 ).size() );
+
+		// a model of the hub: pinned on the driver, downloaded into the cache (once per JVM here), recorded by its pinned URI
+		final String hub = ModelHub.hub;
+		try ( final TestModelHub.FakeHub fake = new TestModelHub.FakeHub() )
+		{
+			ModelHub.hub = fake.url();
+			final Path cache = tempDir.resolve( "cache" );
+			final TestOnnxModels.Tiny hubTiny = fake.addModel( "lab/stack-tiny", "0123456789abcdef0123456789abcdef01234567", "tiny.onnx", true, tempDir.resolve( "hub" ), 7 );
+
+			run( new SparkInterestPointEmbedding(), "-x", xml, "-l", LABEL, "--model", "hf://lab/stack-tiny", "--modelCache", cache.toString(), "--arrayName", "hub", "--localSparkBindAddress" );
+
+			data = new XmlIoSpimData2().load( xmlFile.toURI() );
+			for ( final ViewId v : views )
+				assertEquals( hubTiny.fingerprint(), InterestPointArrays.vectors( data.getViewInterestPoints().getViewInterestPointLists( v ), LABEL, "hub" ).attributes().fingerprint() );
+			final List< ActionRecord > hubRecords = data.getActionHistory().getRecords();
+			assertEquals( "hf://lab/stack-tiny@0123456789abcdef0123456789abcdef01234567/tiny.onnx", hubRecords.get( hubRecords.size() - 1 ).getParams().get( "model" ) );
+			assertEquals( 1, ModelHub.cached( cache ).size() );
+		}
+		finally
+		{
+			ModelHub.hub = hub;
+		}
 	}
 
 	static void run( final Object command, final String... args )

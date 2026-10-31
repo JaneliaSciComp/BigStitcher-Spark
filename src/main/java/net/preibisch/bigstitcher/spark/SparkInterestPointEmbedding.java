@@ -24,7 +24,7 @@ package net.preibisch.bigstitcher.spark;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
-import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -47,6 +47,7 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
 import net.preibisch.mvrecon.process.interestpointembedding.EmbeddingModel;
 import net.preibisch.mvrecon.process.interestpointembedding.InterestPointEmbedding;
+import net.preibisch.mvrecon.process.interestpointembedding.ModelHub;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -57,7 +58,8 @@ import scala.Tuple3;
  * in {@code interestpoints.zarr}, what the BigStitcher GUI's "Embed Interest Points" and {@code pcmatch embed} do: one unit
  * vector per point of the (base) label, which {@code match-interestpoints -m EMBEDDINGS} matches on. One Spark task per
  * view: it loads the dataset, the model (pcmatch's ONNX export with its {@code .onnx.json} sidecar, evaluated in Java,
- * {@code mvrecon.process.interestpointembedding}) and the view's points, samples the cubes from the image pyramid, runs the
+ * {@code mvrecon.process.interestpointembedding}; a local file, or a model of the Hugging Face Hub, {@code hf://...}, which the
+ * driver pins to its commit and every executor downloads once into its cache, {@link ModelHub}) and the view's points, samples the cubes from the image pyramid, runs the
  * network block by block and writes the view's rows into the array ({@code setup<S>}); the driver creates the array
  * (replacing one of another model) before the tasks run and records the action in the XML afterwards. The arrays are not
  * part of the store's generations, so the tasks need no staging and no commit.
@@ -74,8 +76,11 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 	@Option(names = { "-l", "--label" }, required = true, description = "the interest points to embed, e.g. beads; a filtered label is embedded through its base label (all points of the base, stored under the base)")
 	protected String label = null;
 
-	@Option(names = { "--model" }, required = true, description = "the model, pcmatch's 'export-onnx' file (.onnx) with its '.onnx.json' sidecar next to it; a path every executor can read")
+	@Option(names = { "--model" }, required = true, description = "the model: pcmatch's 'export-onnx' file (.onnx) with its '.onnx.json' sidecar next to it (a path every executor can read), or a model of the Hugging Face Hub, hf://<namespace>/<name>[@<revision>][/<file>] (e.g. hf://StephanPreibisch/bigstitcher-embedding-translation-stack64; the revision defaults to main and is pinned to its commit, every executor downloads the model once into --modelCache)")
 	protected String model = null;
+
+	@Option(names = { "--modelCache" }, description = "the directory hub models are downloaded to (default: the system property " + ModelHub.CACHE_PROPERTY + ", else ~/.bigstitcher/models on every node); a shared directory on a cluster, or download the model once and pass its path as --model")
+	protected String modelCache = null;
 
 	@Option(names = { "--arrayName" }, description = "the per-point array the vectors are stored in (default: " + InterestPointArrays.EMBEDDING + "); an array of another model under that name is replaced")
 	protected String arrayName = InterestPointArrays.EMBEDDING;
@@ -110,23 +115,21 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 			return null;
 		}
 
-		if ( !Files.isRegularFile( Paths.get( model ) ) )
-		{
-			System.err.println( "ERROR: the model '" + model + "' is no file." );
-			return null;
-		}
-
-		// the model once on the driver: its sidecar and graph are checked here, every task loads it again
+		// the model once on the driver: a hub model is pinned to its commit here, its sidecar and graph are checked, every task loads it again
+		final Path cacheDir = modelCache == null ? ModelHub.defaultCacheDir() : Paths.get( modelCache );
+		final ModelHub.Local driverLocal;
 		final EmbeddingModel driverModel;
 		try
 		{
-			driverModel = EmbeddingModel.load( Paths.get( model ) );
+			driverLocal = ModelHub.localModel( model, cacheDir, ModelHub.defaultTimeout );
+			driverModel = EmbeddingModel.load( driverLocal.path() );
 		}
 		catch ( final IOException e )
 		{
-			System.err.println( "ERROR: cannot load the model: " + e.getMessage() );
+			System.err.println( "ERROR: cannot load the model '" + model + "': " + e.getMessage() );
 			return null;
 		}
+		final String modelSpec = driverLocal.spec(); // the pinned hf:// URI, or the absolute path
 
 		final List< ViewId > views = InterestPointTools.viewsWithLabel( dataGlobal, label, viewIdsGlobal );
 
@@ -140,7 +143,7 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 			System.out.println( "NOTE: " + ( viewIdsGlobal.size() - views.size() ) + " of the selected views have no interest points '" + label + "' and are skipped." );
 
 		System.out.println( "label: " + label );
-		System.out.println( "model: " + driverModel );
+		System.out.println( "model: " + modelSpec + " = " + driverModel );
 		System.out.println( "arrayName: " + arrayName );
 		System.out.println( "blockSize: " + blockSize );
 		System.out.println( "views: " + views.size() );
@@ -172,7 +175,7 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 		sc.setLogLevel( "ERROR" );
 
 		final URI xmlURI = this.xmlURI;
-		final String label = this.label, model = this.model, arrayName = this.arrayName;
+		final String label = this.label, model = modelSpec, arrayName = this.arrayName, cache = cacheDir.toString();
 		final int blockSize = this.blockSize;
 		final boolean dryRun = this.dryRun;
 
@@ -181,7 +184,7 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 		final List< Tuple3< ViewId, Integer, Double > > results = sc.parallelize( Spark.toViewIds( views ), Math.min( Spark.maxPartitions, views.size() ) ).map( view ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
-			final EmbeddingModel taskModel = EmbeddingModel.load( Paths.get( model ) );
+			final EmbeddingModel taskModel = EmbeddingModel.load( ModelHub.localModel( model, Paths.get( cache ), ModelHub.defaultTimeout ).path() );
 
 			final InterestPointEmbedding.Result result = InterestPointEmbedding.embedView( data, view, label, taskModel, blockSize, null );
 
@@ -209,7 +212,7 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 		{
 			final LinkedHashMap< String, String > params = ActionHistoryRecorder.params();
 			ActionHistoryRecorder.put( params, "label", label );
-			ActionHistoryRecorder.put( params, "model", Paths.get( model ).toAbsolutePath().toString() );
+			ActionHistoryRecorder.put( params, "model", model );
 			ActionHistoryRecorder.put( params, "arrayName", arrayName );
 			ActionHistoryRecorder.put( params, "blockSize", blockSize );
 			ActionHistoryRecorder.put( params, "fingerprint", driverModel.contract().fingerprint() );
