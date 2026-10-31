@@ -55,7 +55,7 @@ import scala.Tuple3;
 
 /**
  * Computes the embeddings of a label's interest points with a model and stores them as the per-point array of the label
- * in {@code interestpoints.zarr}, what the BigStitcher GUI's "Embed Interest Points" and {@code pcmatch embed} do: one unit
+ * in {@code interestpoints.zarr}, what the BigStitcher GUI's "Compute interest point embeddings (ONNX)" and {@code pcmatch embed} do: one unit
  * vector per point of the (base) label, which {@code match-interestpoints -m EMBEDDINGS} matches on. One Spark task per
  * view: it loads the dataset, the model (pcmatch's ONNX export with its {@code .onnx.json} sidecar, evaluated in Java,
  * {@code mvrecon.process.interestpointembedding}; a local file, or a model of the Hugging Face Hub, {@code hf://...}, which the
