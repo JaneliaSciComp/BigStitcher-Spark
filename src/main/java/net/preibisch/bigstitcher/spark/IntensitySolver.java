@@ -9,17 +9,18 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.slf4j.LoggerFactory;
 
-import mpicbg.models.Model;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
-import net.preibisch.bigstitcher.spark.SparkIntensityMatching.RegularizationModel;
-import net.preibisch.bigstitcher.spark.SparkIntensityMatching.TransformationModel;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityThresholds;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.Parameters;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.RegularizationModel;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.TransformationModel;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
 import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatches;
 import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatchesIO;
@@ -75,13 +76,32 @@ public class IntensitySolver extends AbstractSelectableViews {
 			+ "e.g. 2 (default: 0, off)")
 	private double backgroundWeight = 0;
 
+	@CommandLine.Option(names = { "--gainField" }, description = "solve per-view gains plus one log-linear ramp fixed in every view's frame "
+			+ "(spotlight's gain field) instead of --transformationModel; best with match-intensities --method MEDIAN (default: false)")
+	private boolean gainField = false;
+
+	@CommandLine.Option(names = { "--gainFieldLambda" }, description = "ridge on the log gains of the --gainField solve; it fixes the "
+			+ "global level and damps views with few overlaps (default: 0.001)")
+	private double gainFieldLambda = 0.001;
+
 	@Override
 	public Void call() throws Exception
 	{
 		this.setRegion();
 
 		// build the model first so an invalid lambda fails before any container is created
-		final Model< ? > model = SparkIntensityMatching.createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
+		final Parameters p = new Parameters();
+		p.model = transformationModel;
+		p.regularization1 = regularizationModel1;
+		p.lambda1 = lambda1;
+		p.regularization2 = regularizationModel2;
+		p.lambda2 = lambda2;
+		p.solverIterations = maxIterations;
+		p.minSignal = minSignal;
+		p.backgroundWeight = backgroundWeight;
+		p.gainField = gainField;
+		p.gainFieldLambda = gainFieldLambda;
+		p.createModel();
 
 		final URI outPathURI = URITools.toURI( outputPathURIString );
 		System.out.println( "Writing coefficients to: " + outPathURI );
@@ -161,47 +181,38 @@ public class IntensitySolver extends AbstractSelectableViews {
 				+ ", regularized by " + regularizationModel1 + " (lambda1=" + lambda1 + ")"
 				+ " and " + regularizationModel2 + " (lambda2=" + lambda2 + ")" );
 		final Map< ViewId, Double > thresholds = IntensityThresholds.read( matchesURI );
-		List< ViewPairCoefficientMatches > toSolve = pairwiseMatches;
+		// specific messages for what the matching did not write
+		if ( minSignal > 0 && thresholds == null )
+			throw new IllegalArgumentException( "--minSignal needs per-view thresholds (thresholds.txt in " + matchesURI
+					+ "), i.e. match-intensities --minThreshold LI or OTSU." );
+
+		final Map< ViewId, Double > backgrounds = backgroundWeight > 0 ? IntensityThresholds.readBackgrounds( matchesURI ) : null;
+		if ( backgroundWeight > 0 && backgrounds == null )
+			throw new IllegalArgumentException( "--backgroundWeight needs per-view backgrounds (backgrounds.txt in " + matchesURI
+					+ "), written by match-intensities --minThreshold LI or OTSU; re-run it if the matches predate that." );
 
 		if ( minSignal > 0 )
-		{
-			if ( thresholds == null )
-				throw new IllegalArgumentException( "--minSignal needs per-view thresholds (thresholds.txt in " + matchesURI
-						+ "), i.e. match-intensities --minThreshold LI or OTSU." );
-			toSolve = IntensityCorrection.dropWeakMatches( toSolve, thresholds, minSignal );
 			System.out.println( "Ignoring matches less than " + minSignal + " above either view's threshold." );
-		}
-
 		if ( backgroundWeight > 0 )
-		{
-			final Map< ViewId, Double > backgrounds = IntensityThresholds.readBackgrounds( matchesURI );
-			if ( backgrounds == null )
-				throw new IllegalArgumentException( "--backgroundWeight needs per-view backgrounds (backgrounds.txt in " + matchesURI
-						+ "), written by match-intensities --minThreshold LI or OTSU; re-run it if the matches predate that." );
-			toSolve = IntensityCorrection.addBackgroundMatches( toSolve, backgrounds, backgroundWeight );
 			System.out.println( "Adding each pair's background levels as a match of weight " + backgroundWeight + "." );
-		}
+
+		// the matches were unbleached with this factor; fusion and the preview need it with the coefficients
+		p.numCoefficients = coefficientsSize;
+		p.bleachFactor = Parameters.bleachFactor( matchingDone );
+		if ( p.bleachFactor > 0 )
+			System.out.println( "Matches were unbleached with factor " + p.bleachFactor + ", storing it with the coefficients." );
 
 		System.out.println( "Running solve... " );
 
-		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, toSolve, maxIterations, model );
+		final Map< ViewId, Coefficients > coefficients = IntensityCorrectionPipeline.solve( spimData, pairwiseMatches, thresholds, backgrounds, p );
 
-		// carry the thresholds the gains were measured on over to the coefficients, so
-		// fusion can restrict the correction to the same foreground
 		if ( thresholds != null )
 		{
 			final long missing = coefficients.keySet().stream().filter( v -> !thresholds.containsKey( v ) ).count();
-
 			if ( missing > 0 )
 				System.out.println( "WARNING: " + missing + " of " + coefficients.size() + " views have no entry in thresholds.txt; "
 						+ "those will be corrected everywhere even with --intensityMaskBelowThreshold." );
-
-			System.out.println( "Storing per-view thresholds for " + ( coefficients.size() - missing ) + " views with the coefficients." );
-
-			coefficients.replaceAll( ( viewId, c ) -> {
-				final Double threshold = thresholds.get( viewId );
-				return threshold == null ? c : c.withThreshold( threshold );
-			} );
+			System.out.println( "Stored per-view thresholds for " + ( coefficients.size() - missing ) + " views with the coefficients." );
 		}
 
 		IntensityCorrection.writeCoefficients( n5Writer, outputGroup, outputDataset, coefficients );

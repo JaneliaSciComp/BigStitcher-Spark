@@ -1,11 +1,5 @@
 package net.preibisch.bigstitcher.spark;
 
-import static net.imglib2.util.Intervals.intersect;
-import static net.imglib2.util.Intervals.isEmpty;
-
-import java.io.IOException;
-import java.net.URI;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
@@ -15,54 +9,37 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 
-import mpicbg.models.AffineModel1D;
-import mpicbg.models.IdentityModel;
-import mpicbg.models.InterpolatedAffineModel1D;
-import mpicbg.models.Model;
-import mpicbg.models.TranslationModel1D;
 import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
-import net.preibisch.mvrecon.process.fusion.intensity.mpicbg.ScaleModel1D;
-import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.RealInterval;
-import net.imglib2.util.Pair;
-import net.imglib2.util.Cast;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
-import net.preibisch.mvrecon.process.fusion.intensity.AutoThreshold;
 import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.mvrecon.process.fusion.intensity.IntensityThresholds;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
-import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
-import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatches;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.Method;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.Parameters;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.RegularizationModel;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.Threshold;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrectionPipeline.TransformationModel;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityThresholds;
 import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatchesIO;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import scala.Tuple2;
 import util.URITools;
 
+/**
+ * Pairwise intensity matching of overlapping views, distributed: one Spark task per view for the LI / OTSU
+ * threshold, one per pair for the matching, the matches written to {@code --outputPath} for
+ * {@link IntensitySolver}. The steps themselves are multiview-reconstruction's {@link IntensityCorrectionPipeline},
+ * which the GUI runs in memory.
+ */
 public class SparkIntensityMatching extends AbstractSelectableViews
 {
-	public enum IntensityMatchingMethod
-	{
-		RANSAC, HISTOGRAM
-	}
-
-	public enum TransformationModel
-	{
-		AFFINE, TRANSLATION, SCALE, IDENTITY
-	}
-
-	public enum RegularizationModel
-	{
-		NONE, AFFINE, TRANSLATION, SCALE, IDENTITY
-	}
-
 	@Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
 	private String numCoefficientsString = "8,8,8";
 
@@ -82,11 +59,16 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	private int minNumCandidates = 1000;
 
 	@Option(names = {"--method"}, defaultValue = "RANSAC", showDefaultValue = CommandLine.Help.Visibility.ALWAYS,
-			description = "Method to match intensities between overlapping views: RANSAC or HISTOGRAM")
-	private IntensityMatchingMethod intensityMatchingMethod;
+			description = "Method to match intensities between overlapping views: RANSAC, HISTOGRAM or MEDIAN (the ratio of the medians "
+					+ "of the voxels both views see, a pure gain per pair; for a SCALE solve or solve-intensities --gainField)")
+	private Method intensityMatchingMethod;
 
 	@Option(names = { "--numBins" }, description = "number of quantile samples (bins) taken from each intensity distribution for histogram matching (default: 100, only for HISTOGRAM method)")
 	private int numBins = 100;
+
+	@Option(names = { "--bleachFactor" }, description = "fraction of intensity lost each time a voxel was imaged before: a voxel "
+			+ "covered by n earlier views (same timepoint, earlier = lower setup id) is matched as v / (1 - bleachFactor)^n (default: 0 = no bleaching)")
+	private double bleachFactor = 0;
 
 	@Option(names = { "-tm", "--transformationModel" }, description = "which 1D transformation model to use for intensity matching; AFFINE, TRANSLATION, SCALE or IDENTITY (default: AFFINE)")
 	private TransformationModel transformationModel = TransformationModel.AFFINE;
@@ -118,144 +100,91 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 	@CommandLine.Option(names = { "--maxTrust" }, description = "reject candidates with a cost larger than maxTrust * median cost (default: 3, only for RANSAC method)")
 	private double maxTrust = 3.0;
 
-	private SpimData2 dataGlobal;
-
-	private List< ViewId > viewIdsGlobal;
+	/** the command-line options as the pipeline's parameters */
+	Parameters parameters()
+	{
+		final Parameters p = new Parameters().threshold( minThresholdString );
+		p.method = intensityMatchingMethod;
+		p.numCoefficients = Import.csvStringToIntArray( numCoefficientsString );
+		p.renderScale = renderScale;
+		p.maxIntensity = maxIntensityThreshold;
+		p.minNumCandidates = minNumCandidates;
+		p.numBins = numBins;
+		p.bleachFactor = bleachFactor;
+		p.model = transformationModel;
+		p.regularization1 = regularizationModel1;
+		p.lambda1 = lambda1;
+		p.regularization2 = regularizationModel2;
+		p.lambda2 = lambda2;
+		p.ransacIterations = iterations;
+		p.maxEpsilon = maxEpsilon;
+		p.minInlierRatio = minInlierRatio;
+		p.minNumInliers = minNumInliers;
+		p.maxTrust = maxTrust;
+		return p;
+	}
 
 	@Override
 	public Void call() throws Exception
 	{
 		this.setRegion();
 
-		if ( numBins < 2 )
-			throw new IllegalArgumentException( "--numBins must be >= 2 (a single sample only ever matches each distribution's minimum), but was " + numBins );
+		// fails on the driver (e.g. an invalid lambda), not in every Spark task
+		final Parameters p = parameters();
+		p.validate();
 
-		final AutoThreshold.Method autoThresholdMethod = parseAutoThresholdMethod( minThresholdString );
-		final double fixedMinIntensityThreshold = autoThresholdMethod == null ? Double.parseDouble( minThresholdString ) : Double.NaN;
-
-		// build the model once here so an invalid lambda fails on the driver, not in every Spark task
-		createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
-
-		this.dataGlobal = this.loadSpimData2();
-
+		final SpimData2 dataGlobal = this.loadSpimData2();
 		if ( dataGlobal == null )
 			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
-		this.viewIdsGlobal = serializable( loadViewIds( dataGlobal ) );
-
-		if ( viewIdsGlobal == null || viewIdsGlobal.isEmpty() )
+		final List< ViewId > viewIds = loadViewIds( dataGlobal ).stream()
+				.map( v -> new ViewId( v.getTimePointId(), v.getViewSetupId() ) ) // serializable
+				.collect( Collectors.toList() );
+		if ( viewIds.isEmpty() )
 			throw new IllegalArgumentException( "No ViewIds found." );
 
+		final java.net.URI xmlURI = this.xmlURI;
+		final java.net.URI outputURI = URITools.toURI( outputPathURIString );
 
-		// Global variables that need to be serialized for Spark as each job needs access to them
-		final URI xmlURI = this.xmlURI;
-		final double renderScale = this.renderScale;
-		final int[] coefficientsSize = Import.csvStringToIntArray( numCoefficientsString );
-		final URI outputURI = URITools.toURI( outputPathURIString );
-		final double maxIntensityThreshold = this.maxIntensityThreshold;
-		final long downsampling = Math.max( 1, Math.round( 1.0 / renderScale ) );
-		final int minNumCandidates = this.minNumCandidates;
-		final int iterations = this.iterations;
-		final double maxEpsilon = this.maxEpsilon;
-		final double minInlierRatio = this.minInlierRatio;
-		final int minNumInliers = this.minNumInliers;
-		final double maxTrust = this.maxTrust;
-		final IntensityMatchingMethod method = this.intensityMatchingMethod;
-		final int numBins = this.numBins;
-		final TransformationModel transformationModel = this.transformationModel;
-		final RegularizationModel regularizationModel1 = this.regularizationModel1;
-		final double lambda1 = this.lambda1;
-		final RegularizationModel regularizationModel2 = this.regularizationModel2;
-		final double lambda2 = this.lambda2;
+		System.out.println( "Intensity matching: " + p );
+		new ViewPairCoefficientMatchesIO( outputURI ).writeCoefficientsSize( p.numCoefficients );
 
-		System.out.println( "Intensity matching model: " + transformationModel
-				+ ", regularized by " + regularizationModel1 + " (lambda1=" + lambda1 + ")"
-				+ " and " + regularizationModel2 + " (lambda2=" + lambda2 + ")" );
-
-		new ViewPairCoefficientMatchesIO( outputURI ).writeCoefficientsSize( coefficientsSize );
-
-		final SparkConf conf = new SparkConf().setAppName("SparkIntensityMatching");
-
+		final SparkConf conf = new SparkConf().setAppName( "SparkIntensityMatching" );
 		if ( localSparkBindAddress )
 		{
-			conf.set("spark.driver.bindAddress", "127.0.0.1");
-			conf.set("spark.driver.host", "localhost");
-			org.apache.spark.util.Utils.setCustomHostname("localhost");
+			conf.set( "spark.driver.bindAddress", "127.0.0.1" );
+			conf.set( "spark.driver.host", "localhost" );
+			org.apache.spark.util.Utils.setCustomHostname( "localhost" );
 		}
+		final JavaSparkContext sc = new JavaSparkContext( conf );
+		sc.setLogLevel( "ERROR" );
 
-		final JavaSparkContext sc = new JavaSparkContext(conf);
-		sc.setLogLevel("ERROR");
-
+		// on the driver: with Spark every task would load the XML, too slow for hundreds of ViewSetups
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing bounds ... " );
+		final Map< ViewId, RealInterval > viewBounds = IntensityCorrectionPipeline.bounds( dataGlobal, viewIds );
+		final List< ViewId[] > pairs = IntensityCorrectionPipeline.overlappingPairs( viewIds, viewBounds );
+		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + pairs.size() + " overlapping pairs" );
 
-		// doing this with Spark is too slow, since it requires to load the XML many times, which takes long for 415 ViewSetups
-		/*
-		final JavaRDD< ViewId > viewIdRDD = sc.parallelize( viewIdsGlobal, Math.min( Spark.maxPartitions, viewIdsGlobal.size() ) );
-		final JavaPairRDD< ViewId, RealInterval > viewBoundsRDD = viewIdRDD.mapToPair( viewId -> {
-			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-			final RealInterval bounds = IntensityCorrection.getBounds( dataLocal, viewId );
-			return new Tuple2<>( viewId, IntensityCorrection.SerializableRealInterval.serializable( bounds ) );
-		} );
-		final Map< ViewId, RealInterval > viewBounds = viewBoundsRDD.collectAsMap();
-		*/
+		final Map< ViewId, List< ViewId > > bleachers = IntensityCorrectionPipeline.bleachers( viewIds, viewBounds, p.bleachFactor );
+		if ( p.bleachFactor > 0 )
+			System.out.println( "Unbleaching with factor " + p.bleachFactor + "; views with earlier overlapping views: "
+					+ bleachers.values().stream().filter( b -> !b.isEmpty() ).count() );
 
-		final Map< ViewId, RealInterval > viewBounds = new HashMap<ViewId, RealInterval>();
-
-		viewIdsGlobal.forEach( viewId -> {
-			final RealInterval bounds = IntensityCorrection.getBounds( dataGlobal, viewId );
-			viewBounds.put(viewId, IntensityCorrection.SerializableRealInterval.serializable( bounds ) );
-		} );
-
-		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing view ids to match ... " );
-
-		final List< Tuple2< ViewId, ViewId > > viewIdPairsToMatch = new ArrayList<>();
-		final int numViewIds = viewIdsGlobal.size();
-		for ( int i = 0; i < numViewIds; i++ )
-		{
-			final ViewId view0 = viewIdsGlobal.get( i );
-			final RealInterval bounds0 = viewBounds.get( view0 );
-			for ( int j = i + 1; j < numViewIds; j++ )
-			{
-				final ViewId view1 = viewIdsGlobal.get( j );
-				final RealInterval bounds1 = viewBounds.get( view1 );
-				if ( !isEmpty( intersect( bounds0, bounds1 ) ) )
-				{
-					viewIdPairsToMatch.add( new Tuple2<>( view0, view1 ) );
-				}
-			}
-		}
-
-		// one threshold per view, from the whole view at --renderScale, like the reference
-		// Python pipeline's per-tile Li/Otsu; each pair is then gated at the higher of the two
+		// one threshold per view, each pair is then gated at the higher of the two
 		final Map< ViewId, Double > viewThresholds;
-
-		if ( autoThresholdMethod == null )
+		if ( p.threshold == Threshold.FIXED )
 		{
 			viewThresholds = null;
 		}
 		else
 		{
-			final List< ViewId > viewsToThreshold = viewIdPairsToMatch.stream()
-					.flatMap( pair -> Stream.of( pair._1(), pair._2() ) )
-					.distinct()
-					.collect( Collectors.toList() );
-
-			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing " + autoThresholdMethod
-					+ " threshold for " + viewsToThreshold.size() + " views (at most " + downsampling + "x downsampling) ... " );
+			final List< ViewId > viewsToThreshold = pairs.stream().flatMap( Stream::of ).distinct().collect( Collectors.toList() );
+			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): computing " + p.threshold
+					+ " threshold for " + viewsToThreshold.size() + " views ... " );
 
 			final JavaRDD< ViewId > viewRDD = sc.parallelize( viewsToThreshold, Math.min( Spark.maxPartitions, viewsToThreshold.size() ) );
-
-			// threshold and background level from the same image, so the background costs no extra read
-			final Map< ViewId, double[] > levels = new HashMap<>( viewRDD.mapToPair( viewId -> {
-				final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-				final Pair< RandomAccessibleInterval< ? >, Long > img = AutoThreshold.openForHistogram(
-						dataLocal.getSequenceDescription().getImgLoader(), viewId, downsampling );
-				System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( viewId )
-						+ " threshold from stored level at " + img.getB() + "x downsampling" );
-				return new Tuple2<>( viewId, new double[] {
-						AutoThreshold.compute( autoThresholdMethod, Cast.unchecked( img.getA() ) ),
-						IntensityThresholds.percentile( Cast.unchecked( img.getA() ), IntensityThresholds.BACKGROUND_PERCENTILE ) } );
-			} ).collectAsMap() );
+			final Map< ViewId, double[] > levels = new HashMap<>( viewRDD.mapToPair( viewId -> new Tuple2<>( viewId,
+					IntensityCorrectionPipeline.viewLevels( Spark.getSparkJobSpimData2( xmlURI ).getSequenceDescription().getImgLoader(), viewId, p ) ) ).collectAsMap() );
 
 			viewThresholds = new HashMap<>();
 			final Map< ViewId, Double > viewBackgrounds = new HashMap<>();
@@ -263,163 +192,32 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 				viewThresholds.put( viewId, l[ 0 ] );
 				viewBackgrounds.put( viewId, l[ 1 ] );
 			} );
-			IntensityThresholds.writeBackgrounds( outputURI, viewBackgrounds );
 
-			// a constant view cannot be split; fall back to the default floor of 1 so it is
-			// not silently matched against its full background
-			viewThresholds.replaceAll( ( viewId, threshold ) -> {
-				if ( !Double.isNaN( threshold ) )
-					return threshold;
-				System.out.println( "WARNING: view " + Group.pvid( viewId ) + " has a constant image at this scale, "
-						+ autoThresholdMethod + " threshold undefined, using 1 instead." );
-				return 1.0;
-			} );
-
-			printThresholdSummary( viewThresholds );
+			final double[] sorted = viewThresholds.values().stream().mapToDouble( Double::doubleValue ).sorted().toArray();
+			System.out.println( String.format( "Per-view thresholds: min %.2f, median %.2f, max %.2f", sorted[ 0 ], sorted[ sorted.length / 2 ], sorted[ sorted.length - 1 ] ) );
 			IntensityThresholds.write( outputURI, viewThresholds );
+			IntensityThresholds.writeBackgrounds( outputURI, viewBackgrounds );
 		}
 
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): running ... " );
-
-		final JavaRDD< Tuple2< ViewId, ViewId > > viewPairRDD = sc.parallelize( viewIdPairsToMatch, Math.min( Spark.maxPartitions, viewIdPairsToMatch.size() ) );
-		viewPairRDD.foreach( views -> {
-			final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
-			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + views._1().getViewSetupId() + "<>" + views._2().getViewSetupId() );
-
-			final Model< ? > model = createModelInstance( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 );
-
-			// the shared floor: a pair is compared only where BOTH views are foreground
-			final double minIntensityThreshold = viewThresholds == null
-					? fixedMinIntensityThreshold
-					: Math.max( viewThresholds.get( views._1() ), viewThresholds.get( views._2() ) );
-
-			final ViewPairCoefficientMatches matches;
-			if ( method == IntensityMatchingMethod.RANSAC )
-			{
-				matches = IntensityCorrection.matchRansac( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
-						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, model, iterations, maxEpsilon, minInlierRatio, minNumInliers, maxTrust );
-			}
-			else // method == IntensityMatchingMethod.HISTOGRAM
-			{
-				matches = IntensityCorrection.matchHistograms( dataLocal, views._1(), views._2(), renderScale, coefficientsSize,
-						minIntensityThreshold, maxIntensityThreshold, minNumCandidates, model, numBins );
-			}
-			final ViewPairCoefficientMatchesIO matchWriter = new ViewPairCoefficientMatchesIO(outputURI);
-			matchWriter.write( matches );
+		final JavaRDD< ViewId[] > pairRDD = sc.parallelize( pairs, Math.max( 1, Math.min( Spark.maxPartitions, pairs.size() ) ) );
+		pairRDD.foreach( pair -> {
+			System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + pair[ 0 ].getViewSetupId() + "<>" + pair[ 1 ].getViewSetupId() );
+			new ViewPairCoefficientMatchesIO( outputURI ).write(
+					IntensityCorrectionPipeline.matchPair( Spark.getSparkJobSpimData2( xmlURI ), pair[ 0 ], pair[ 1 ], viewThresholds, bleachers, p ) );
 		} );
 
 		// only now: a crashed job must NOT leave a directory that looks complete
-		IntensityThresholds.writeDone( outputURI, "minThreshold=" + minThresholdString + " maxThreshold=" + maxIntensityThreshold
-				+ " numCoefficients=" + numCoefficientsString + " renderScale=" + renderScale + " method=" + method
-				+ " model=" + transformModelSummary( transformationModel, regularizationModel1, lambda1, regularizationModel2, lambda2 ) );
+		IntensityThresholds.writeDone( outputURI, p.toString() );
 
 		sc.close();
-
-		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Done.");
-
+		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): Done." );
 		return null;
 	}
 
-	/**
-	 * @return the auto-threshold method named by {@code --minThreshold}, or null if it is a fixed value
-	 */
-	static AutoThreshold.Method parseAutoThresholdMethod( final String minThreshold )
+	public static void main( final String... args ) throws SpimDataException
 	{
-		final String s = minThreshold.trim();
-
-		for ( final AutoThreshold.Method method : AutoThreshold.Method.values() )
-			if ( method.name().equalsIgnoreCase( s ) )
-				return method;
-
-		try
-		{
-			Double.parseDouble( s );
-			return null;
-		}
-		catch ( final NumberFormatException e )
-		{
-			throw new IllegalArgumentException( "--minThreshold must be a number, LI or OTSU, but was '" + minThreshold + "'" );
-		}
+		System.out.println( Arrays.toString( args ) );
+		System.exit( new CommandLine( new SparkIntensityMatching() ).execute( args ) );
 	}
-
-	private static void printThresholdSummary( final Map< ViewId, Double > viewThresholds )
-	{
-		final double[] sorted = viewThresholds.values().stream().mapToDouble( Double::doubleValue ).sorted().toArray();
-
-		System.out.println( String.format( "Per-view thresholds: min %.2f, median %.2f, max %.2f",
-				sorted[ 0 ], sorted[ sorted.length / 2 ], sorted[ sorted.length - 1 ] ) );
-	}
-
-	@SuppressWarnings({ "rawtypes", "unchecked" })
-	public static Model< ? > createModelInstance(
-			final TransformationModel transformationModel,
-			final RegularizationModel regularizationModel1,
-			final double lambda1,
-			final RegularizationModel regularizationModel2,
-			final double lambda2 )
-	{
-		Model< ? > model = createBaseModel( transformationModel );
-
-		if ( regularizationModel1 != RegularizationModel.NONE )
-			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel1 ), checkLambda( "--lambda1", lambda1 ) );
-
-		if ( regularizationModel2 != RegularizationModel.NONE )
-			model = new InterpolatedAffineModel1D( model, createRegularizationModel( regularizationModel2 ), checkLambda( "--lambda2", lambda2 ) );
-
-		return model;
-	}
-
-	static String transformModelSummary( final TransformationModel tm, final RegularizationModel rm1, final double lambda1,
-			final RegularizationModel rm2, final double lambda2 )
-	{
-		return tm + "+" + rm1 + "(" + lambda1 + ")+" + rm2 + "(" + lambda2 + ")";
-	}
-
-	static double checkLambda( final String name, final double lambda )
-	{
-		// the negated form also rejects NaN
-		if ( !( lambda >= 0.0 && lambda <= 1.0 ) )
-			throw new IllegalArgumentException( name + " must be in [0..1], but was " + lambda );
-
-		return lambda;
-	}
-
-	private static Model< ? > createBaseModel( final TransformationModel transformationModel )
-	{
-		if ( transformationModel == TransformationModel.TRANSLATION )
-			return new TranslationModel1D();
-		else if ( transformationModel == TransformationModel.SCALE )
-			return new ScaleModel1D();
-		else if ( transformationModel == TransformationModel.IDENTITY )
-			return new IdentityModel();
-		else
-			return new AffineModel1D();
-	}
-
-	private static Model< ? > createRegularizationModel( final RegularizationModel regularizationModel )
-	{
-		if ( regularizationModel == RegularizationModel.TRANSLATION )
-			return new TranslationModel1D();
-		else if ( regularizationModel == RegularizationModel.SCALE )
-			return new ScaleModel1D();
-		else if ( regularizationModel == RegularizationModel.IDENTITY )
-			return new IdentityModel();
-		else
-			return new AffineModel1D();
-	}
-
-	static List< ViewId > serializable( final List< ? extends ViewId > list )
-	{
-		return list
-				.stream()
-				.map( v -> new ViewId( v.getTimePointId(), v.getViewSetupId() ) )
-				.collect( Collectors.toList() );
-	}
-
-	public static void main(final String... args) throws SpimDataException
-	{
-		System.out.println(Arrays.toString(args));
-		System.exit(new CommandLine(new SparkIntensityMatching()).execute(args));
-	}
-
 }
