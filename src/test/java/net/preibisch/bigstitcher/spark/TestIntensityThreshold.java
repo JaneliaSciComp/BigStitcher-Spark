@@ -23,7 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.RandomAccessibleInterval;
 import net.imglib2.type.numeric.integer.UnsignedShortType;
-import net.preibisch.bigstitcher.spark.util.IntensityThresholds;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityThresholds;
 import net.preibisch.mvrecon.SimulateUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;

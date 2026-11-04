@@ -16,7 +16,7 @@ import net.preibisch.bigstitcher.spark.SparkIntensityMatching.RegularizationMode
 import net.preibisch.bigstitcher.spark.SparkIntensityMatching.TransformationModel;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
-import net.preibisch.bigstitcher.spark.util.IntensityThresholds;
+import net.preibisch.mvrecon.process.fusion.intensity.IntensityThresholds;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
