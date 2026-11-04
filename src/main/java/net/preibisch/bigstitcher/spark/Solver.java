@@ -292,7 +292,7 @@ public class Solver extends AbstractRegistration
 
 		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
-			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, setup.getPairs(), fixedViewIds, vsComparisonPairs );
 		else
 			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal, vsComparisonPairs);
 
@@ -512,7 +512,7 @@ public class Solver extends AbstractRegistration
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
 			final Map< ViewId, ? extends Map< String, Double > > labelMap,
-			final Collection< Group< ViewId > > groups,
+			final Collection< ? extends Pair< ViewId, ViewId > > candidatePairs,
 			final HashSet< ViewId > fixedViewIds,
 			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
 	{
@@ -544,19 +544,19 @@ public class Solver extends AbstractRegistration
 
 			final ArrayList< Pair< ViewId, ViewId > > tasks = new ArrayList<>();
 
-			for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
-				for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
+			// the pairs of the PairwiseSetup (registration strategy, overlap, groups), same as the GUI, instead of all n^2 pairs
+			for ( final Pair< ViewId, ViewId > pair : candidatePairs )
+			{
+				final ViewId vA = pair.getA();
+				final ViewId vB = pair.getB();
+				if ( vsComparisonPairs != null )
 				{
-					final ViewId vA = viewIdsGlobal.get( i );
-					final ViewId vB = viewIdsGlobal.get( j );
-					if ( vsComparisonPairs != null )
-					{
-						final Pair< Integer, Integer > key = new ValuePair<>( Math.min( vA.getViewSetupId(), vB.getViewSetupId() ), Math.max( vA.getViewSetupId(), vB.getViewSetupId() ) );
-						if ( !vsComparisonPairs.contains( key ) )
-							continue;
-					}
-					tasks.add( new ValuePair<>( vA, vB ) ); // order doesn't matter, saved symmetrically
+					final Pair< Integer, Integer > key = new ValuePair<>( Math.min( vA.getViewSetupId(), vB.getViewSetupId() ), Math.max( vA.getViewSetupId(), vB.getViewSetupId() ) );
+					if ( !vsComparisonPairs.contains( key ) )
+						continue;
 				}
+				tasks.add( new ValuePair<>( vA, vB ) ); // order doesn't matter, saved symmetrically
+			}
 
 			progress.set( 0 );
 
@@ -585,14 +585,6 @@ public class Solver extends AbstractRegistration
 					System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are both fixed." );
 					return;
 				}
-
-				// both are part of the same group, no need to connect them
-				for ( final Group< ViewId > group : groups )
-					if ( group.contains( vA ) && group.contains( vB ) )
-					{
-						System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are part of the same group." );
-						return;
-					}
 
 				final AffineTransform3D mA = models.get( vA );
 				final AffineTransform3D mB = models.get( vB );
