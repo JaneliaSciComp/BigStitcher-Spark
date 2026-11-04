@@ -326,7 +326,7 @@ public class Solver extends AbstractRegistration
 							pmc,
 							cs,
 							fixedViewIds,
-							groups );
+							groups, false /* outputTransforms: the final models are printed below */ );
 		}
 		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 		{
@@ -338,7 +338,7 @@ public class Solver extends AbstractRegistration
 							new MaxErrorLinkRemoval(),
 							removedInconsistentPairs,
 							fixedViewIds,
-							groups );
+							groups, false /* outputTransforms: the final models are printed below */ );
 		}
 		else //if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE || globalOptParameters.method == GlobalOptType.TWO_ROUND_ITERATIVE )
 		{
@@ -359,7 +359,7 @@ public class Solver extends AbstractRegistration
 									dataGlobal.getViewRegistrations().getViewRegistrations() ) ),
 					new ConvergenceStrategy( Double.MAX_VALUE ),
 					fixedViewIds,
-					groups );
+					groups, false /* outputTransforms: the final models are printed below */ );
 		}
 
 		// update models in ViewRegistration
