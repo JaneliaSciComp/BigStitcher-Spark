@@ -737,10 +737,16 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 						if ( intensityN5PathURI != null )
 						{
+							// TPS renders the underlying (unsplit) views, and the coefficients were solved for those
+							final List< ViewId > coefficientViews = fusionMethod == FusionMethod.AFFINE
+									? overlappingViews
+									: SplitImgLoaderThinPlateSplineFusion.underlyingViewIds( overlappingViews,
+											( ( SplitViewerImgLoader ) dataLocal.getSequenceDescription().getImgLoader() ).new2oldSetupId() );
+
 							coefficients = new HashMap<>();
 							try ( N5Reader intensityN5Reader = URITools.instantiateN5Reader( intensityN5StorageType, intensityN5PathURI ) )
 							{
-								overlappingViews.forEach( v -> {
+								coefficientViews.forEach( v -> {
 									final Coefficients coeff = IntensityCorrection.readCoefficients( intensityN5Reader, intensityN5Group, intensityN5Dataset, v );
 									// the stored per-view threshold only takes effect if it was asked for
 									coefficients.put( v, intensityMaskBelowThreshold ? coeff : coeff.withThreshold( Double.NaN ) );
@@ -1315,9 +1321,9 @@ public class SparkFusion extends AbstractInfrastructure implements Callable<Void
 
 				final ThinplateSplineTransform tps = new ThinplateSplineTransform( lm.getTargetPoints(), lm.getSourcePoints() );
 				final Dimensions dims = uSD.getViewDescriptions().get( uvid ).getViewSetup().getSize();
-				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, dims );
 				final AffineTransform3D approxAffine = BlkThinPlateSplineFusion.fitAffineTransform(
 						lm.getSourcePoints(), lm.getTargetPoints() );
+				final Interval bbox = BlkThinPlateSplineFusion.inverseTransformedBoundingBox( tps, approxAffine, dims );
 
 				final String dsPath = DisplacementFieldN5Tools.datasetPath( uvid );
 				try ( final N5Writer w = URITools.instantiateN5Writer( spec.storageType, spec.outPathURI ) )

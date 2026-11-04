@@ -33,6 +33,10 @@ import java.util.Map;
 
 import org.janelia.saalfeldlab.n5.N5Exception;
 
+import net.imglib2.RandomAccessibleInterval;
+import net.imglib2.type.numeric.RealType;
+import net.imglib2.view.Views;
+
 import mpicbg.spim.data.sequence.ViewId;
 import util.URITools;
 
@@ -42,6 +46,9 @@ import util.URITools;
  * <li>"thresholds.txt" -- the per-view thresholds the gains were measured on
  *     ("timepointId setupId threshold" per line), so the solve and the fusion can pick up
  *     what the matching used;</li>
+ * <li>"backgrounds.txt" -- each view's background level, same format, a low percentile of the
+ *     same image the threshold is computed from; the solve can add it as a match so that
+ *     overlapping views' backgrounds come out level;</li>
  * <li>"matching-done.txt" -- written only once matching has finished, recording the
  *     parameters. Without it, a crashed or killed matching run leaves a directory that
  *     still looks complete (the per-pair files from a PREVIOUS run are all still there),
@@ -51,6 +58,13 @@ import util.URITools;
 public class IntensityThresholds
 {
 	private static final String FILENAME = "thresholds.txt";
+	private static final String BACKGROUNDS = "backgrounds.txt";
+
+	/**
+	 * Percentile of the background a view's background level is taken at. Low rather than the median because
+	 * tissue only ever pulls the estimate up (spotlight's emptiness stage uses the same).
+	 */
+	public static final double BACKGROUND_PERCENTILE = 5;
 
 	private static final String DONE = "matching-done.txt";
 
@@ -92,7 +106,17 @@ public class IntensityThresholds
 
 	public static void write( final URI matchesURI, final Map< ViewId, Double > thresholds ) throws IOException
 	{
-		final URI fn = matchesURI.resolve( FILENAME );
+		write( matchesURI, FILENAME, thresholds );
+	}
+
+	public static void writeBackgrounds( final URI matchesURI, final Map< ViewId, Double > backgrounds ) throws IOException
+	{
+		write( matchesURI, BACKGROUNDS, backgrounds );
+	}
+
+	private static void write( final URI matchesURI, final String filename, final Map< ViewId, Double > thresholds ) throws IOException
+	{
+		final URI fn = matchesURI.resolve( filename );
 
 		try ( final PrintWriter pw = URITools.openFileWriteCloudWriter( URITools.getKeyValueAccess( matchesURI ), fn ) )
 		{
@@ -111,7 +135,21 @@ public class IntensityThresholds
 	 */
 	public static Map< ViewId, Double > read( final URI matchesURI ) throws IOException
 	{
-		final URI fn = matchesURI.resolve( FILENAME );
+		return read( matchesURI, FILENAME );
+	}
+
+	/**
+	 * @return the stored background levels, or null if the matching did not write them
+	 *         (fixed --minThreshold, or matches from before backgrounds were recorded)
+	 */
+	public static Map< ViewId, Double > readBackgrounds( final URI matchesURI ) throws IOException
+	{
+		return read( matchesURI, BACKGROUNDS );
+	}
+
+	private static Map< ViewId, Double > read( final URI matchesURI, final String filename ) throws IOException
+	{
+		final URI fn = matchesURI.resolve( filename );
 
 		try (
 				final InputStream is = URITools.openFileReadCloudStream( URITools.getKeyValueAccess( matchesURI ), fn );
@@ -137,5 +175,30 @@ public class IntensityThresholds
 		{
 			return null;
 		}
+	}
+
+	/**
+	 * The {@code percentile}-th percentile of {@code img}, from an exact histogram of the values rounded to
+	 * integers in [0, 65535] (the 256 bins between min and max that the thresholds use are far too coarse
+	 * for a background level when a few bright voxels stretch the range).
+	 */
+	public static < T extends RealType< T > > double percentile( final RandomAccessibleInterval< T > img, final double percentile )
+	{
+		final long[] counts = new long[ 65536 ];
+		long n = 0;
+		for ( final T t : Views.iterable( img ) )
+		{
+			++counts[ ( int ) Math.max( 0, Math.min( 65535, Math.round( t.getRealDouble() ) ) ) ];
+			++n;
+		}
+		final long rank = ( long ) Math.ceil( percentile / 100.0 * n );
+		long cumulative = 0;
+		for ( int v = 0; v < counts.length; ++v )
+		{
+			cumulative += counts[ v ];
+			if ( cumulative >= rank && cumulative > 0 )
+				return v;
+		}
+		return Double.NaN;
 	}
 }

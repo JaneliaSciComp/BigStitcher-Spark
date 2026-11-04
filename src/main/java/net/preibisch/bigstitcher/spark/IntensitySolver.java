@@ -1,7 +1,6 @@
 package net.preibisch.bigstitcher.spark;
 
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +18,6 @@ import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.IntensityThresholds;
 import net.preibisch.bigstitcher.spark.util.N5Util;
-import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.process.fusion.intensity.IntensityCorrection;
@@ -65,6 +63,17 @@ public class IntensitySolver extends AbstractSelectableViews {
 
 	@CommandLine.Option(names = { "--lambda2" }, description = "lambda [0..1] for the second regularization model (default: 0.01)")
 	private double lambda2 = 0.01;
+
+	@CommandLine.Option(names = { "--minSignal" }, description = "ignore a pair's match when its matched intensities reach less than "
+			+ "this far above either view's threshold (needs match-intensities --minThreshold LI/OTSU). In views without specimen the "
+			+ "threshold splits background noise and the few counts above it would set the gain, e.g. 50 (default: 0, off)")
+	private double minSignal = 0;
+
+	@CommandLine.Option(names = { "--backgroundWeight" }, description = "add the two views' background levels (backgrounds.txt from "
+			+ "match-intensities --minThreshold LI/OTSU) as one more match of this weight to every pair. The matches are otherwise all "
+			+ "foreground, so with -tm AFFINE where the background lands is extrapolation; this keeps overlapping backgrounds level, "
+			+ "e.g. 2 (default: 0, off)")
+	private double backgroundWeight = 0;
 
 	@Override
 	public Void call() throws Exception
@@ -144,31 +153,41 @@ public class IntensitySolver extends AbstractSelectableViews {
 						+ " were computed with. Omit --numCoefficients to use the stored value." );
 		}
 
-		final List< ViewPairCoefficientMatches > pairwiseMatches = new ArrayList<>();
-		for ( int i = 0; i < views.size(); ++i )
-		{
-			ViewUtil.progressPercentage(i, views.size());
+		// one directory listing, not a probe per possible pair (millions of opens for thousands of views)
+		final List< ViewPairCoefficientMatches > pairwiseMatches = matchesIO.readAll( views );
 
-			for ( int j = i + 1; j < views.size(); ++j )
-			{
-				final ViewPairCoefficientMatches matches = matchesIO.read( views.get( i ), views.get( j ) );
-				if ( matches != null )
-					pairwiseMatches.add( matches );
-			}
-		}
-
-		System.out.println( "\nConnected pairs: " + pairwiseMatches.size() );
+		System.out.println( "Connected pairs: " + pairwiseMatches.size() );
 		System.out.println( "Intensity solving model: " + transformationModel
 				+ ", regularized by " + regularizationModel1 + " (lambda1=" + lambda1 + ")"
 				+ " and " + regularizationModel2 + " (lambda2=" + lambda2 + ")" );
+		final Map< ViewId, Double > thresholds = IntensityThresholds.read( matchesURI );
+		List< ViewPairCoefficientMatches > toSolve = pairwiseMatches;
+
+		if ( minSignal > 0 )
+		{
+			if ( thresholds == null )
+				throw new IllegalArgumentException( "--minSignal needs per-view thresholds (thresholds.txt in " + matchesURI
+						+ "), i.e. match-intensities --minThreshold LI or OTSU." );
+			toSolve = IntensityCorrection.dropWeakMatches( toSolve, thresholds, minSignal );
+			System.out.println( "Ignoring matches less than " + minSignal + " above either view's threshold." );
+		}
+
+		if ( backgroundWeight > 0 )
+		{
+			final Map< ViewId, Double > backgrounds = IntensityThresholds.readBackgrounds( matchesURI );
+			if ( backgrounds == null )
+				throw new IllegalArgumentException( "--backgroundWeight needs per-view backgrounds (backgrounds.txt in " + matchesURI
+						+ "), written by match-intensities --minThreshold LI or OTSU; re-run it if the matches predate that." );
+			toSolve = IntensityCorrection.addBackgroundMatches( toSolve, backgrounds, backgroundWeight );
+			System.out.println( "Adding each pair's background levels as a match of weight " + backgroundWeight + "." );
+		}
+
 		System.out.println( "Running solve... " );
 
-		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, pairwiseMatches, maxIterations, model );
+		final Map< ViewId, Coefficients > coefficients = IntensityCorrection.solve( coefficientsSize, toSolve, maxIterations, model );
 
 		// carry the thresholds the gains were measured on over to the coefficients, so
 		// fusion can restrict the correction to the same foreground
-		final Map< ViewId, Double > thresholds = IntensityThresholds.read( matchesURI );
-
 		if ( thresholds != null )
 		{
 			final long missing = coefficients.keySet().stream().filter( v -> !thresholds.containsKey( v ) ).count();

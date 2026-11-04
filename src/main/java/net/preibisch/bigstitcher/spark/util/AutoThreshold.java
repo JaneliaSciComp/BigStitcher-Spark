@@ -43,6 +43,9 @@ public class AutoThreshold
 
 	private static final int NUM_BINS = 256;
 
+	// Σ bin * count stays below Integer.MAX_VALUE
+	private static final long MAX_TOTAL = Integer.MAX_VALUE / NUM_BINS;
+
 	/**
 	 * The coarsest STORED resolution level that is no coarser than {@code maxDownsampling},
 	 * read as-is.
@@ -116,10 +119,12 @@ public class AutoThreshold
 			return Double.NaN;
 
 		final double binWidth = ( max - min ) / NUM_BINS;
-		final int[] histogram = new int[ NUM_BINS ];
+		final long[] counts = new long[ NUM_BINS ];
 
 		for ( final T t : Views.iterable( img ) )
-			++histogram[ Math.min( NUM_BINS - 1, ( int ) ( ( t.getRealDouble() - min ) / binWidth ) ) ];
+			++counts[ Math.min( NUM_BINS - 1, ( int ) ( ( t.getRealDouble() - min ) / binWidth ) ) ];
+
+		final int[] histogram = toIntHistogram( counts );
 
 		// AutoThresholder returns the index of the last background bin (or -1 if it
 		// cannot split); intensity matching discards anything strictly below the
@@ -130,6 +135,25 @@ public class AutoThreshold
 			return Double.NaN;
 
 		return min + ( bin + 1 ) * binWidth;
+	}
+
+	/**
+	 * AutoThresholder.Li sums {@code bin * count} over the histogram in {@code int}s, which
+	 * overflows past ~8M voxels and on large views ends in a negative bin index. Both methods
+	 * only depend on relative counts, so scale them down until that sum fits.
+	 */
+	static int[] toIntHistogram( final long[] counts )
+	{
+		long total = 0;
+		for ( final long c : counts )
+			total += c;
+
+		final double scale = Math.min( 1.0, ( double ) MAX_TOTAL / total );
+		final int[] histogram = new int[ counts.length ];
+		for ( int i = 0; i < counts.length; ++i )
+			histogram[ i ] = ( int ) Math.round( counts[ i ] * scale );
+
+		return histogram;
 	}
 
 	private static AutoThresholder.Method ijMethod( final Method method )

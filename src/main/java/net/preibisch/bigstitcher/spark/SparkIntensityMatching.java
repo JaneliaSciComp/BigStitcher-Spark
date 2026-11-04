@@ -245,14 +245,25 @@ public class SparkIntensityMatching extends AbstractSelectableViews
 
 			final JavaRDD< ViewId > viewRDD = sc.parallelize( viewsToThreshold, Math.min( Spark.maxPartitions, viewsToThreshold.size() ) );
 
-			viewThresholds = new HashMap<>( viewRDD.mapToPair( viewId -> {
+			// threshold and background level from the same image, so the background costs no extra read
+			final Map< ViewId, double[] > levels = new HashMap<>( viewRDD.mapToPair( viewId -> {
 				final SpimData2 dataLocal = Spark.getSparkJobSpimData2( xmlURI );
 				final Pair< RandomAccessibleInterval< ? >, Long > img = AutoThreshold.openForHistogram(
 						dataLocal.getSequenceDescription().getImgLoader(), viewId, downsampling );
 				System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): " + Group.pvid( viewId )
 						+ " threshold from stored level at " + img.getB() + "x downsampling" );
-				return new Tuple2<>( viewId, AutoThreshold.compute( autoThresholdMethod, Cast.unchecked( img.getA() ) ) );
+				return new Tuple2<>( viewId, new double[] {
+						AutoThreshold.compute( autoThresholdMethod, Cast.unchecked( img.getA() ) ),
+						IntensityThresholds.percentile( Cast.unchecked( img.getA() ), IntensityThresholds.BACKGROUND_PERCENTILE ) } );
 			} ).collectAsMap() );
+
+			viewThresholds = new HashMap<>();
+			final Map< ViewId, Double > viewBackgrounds = new HashMap<>();
+			levels.forEach( ( viewId, l ) -> {
+				viewThresholds.put( viewId, l[ 0 ] );
+				viewBackgrounds.put( viewId, l[ 1 ] );
+			} );
+			IntensityThresholds.writeBackgrounds( outputURI, viewBackgrounds );
 
 			// a constant view cannot be split; fall back to the default floor of 1 so it is
 			// not silently matched against its full background
