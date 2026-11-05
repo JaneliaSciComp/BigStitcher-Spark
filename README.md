@@ -138,7 +138,7 @@ It is analogous for the interest point dataset:
 
 <code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
 
-Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
+Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. Every Spark task loads its compute block (`--blockSize` x `--blockScale`) into memory before writing it, which needs that much memory per task; `--no-preloadComputeBlocks` streams the blocks instead, which is very slow for the virtual Bio-Formats loader (every plane is re-read for every block). Datasets of the views that already exist in the container, e.g. from an interrupted run, stop the resaving; `--overwriteExistingDatasets` deletes those views' datasets first and keeps the others.
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over user-defined blocks across all input images at once, so also few, very big images will be processed efficiently.
 

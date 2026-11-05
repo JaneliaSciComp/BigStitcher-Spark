@@ -168,6 +168,19 @@ s0, s1, s2, … all use the **same** `computeBlockSize`. Don't scale shardSize w
   - sharding OFF → compute-block multiplier
   - sharding ON → shard-size factor (default `16,16,1`)
 
+### Resave: preloaded compute blocks, existing datasets (2026-11-05)
+- Each s0 task hands its compute block to `N5ApiTools.resaveS0Block( ..., preload )` (MVR 2026-11-04): the block is copied into memory
+  once, because the virtual Bio-Formats file-list loader caches one plane and `N5Utils.saveBlock` traverses the planes once per N5
+  block (streaming re-read every plane hundreds of times). Memory: one compute block per concurrent task (512 MB at 16 bit with the
+  defaults 128,128,64 x 16,16,1); the driver prints the exact need. `--no-preloadComputeBlocks` streams.
+- Datasets of the views that already exist in the container (a second run, an interrupted one) stop the run with a message naming
+  them before anything is written; `--overwriteExistingDatasets` deletes only those views' groups (`N5ApiTools.existsBDVView` /
+  `removeBDVView`), a dry run says what it would delete. Test `TestSparkResaveLocal` (local Spark on the simulated beads).
+- **picocli negatable options (4.7.7, measured 2026-11-05):** `--no-X` sets the field to its *default*, `--X` to the opposite. A
+  `boolean` that defaults to true must therefore be declared as `names = "--no-X"`, `negatable = true` (then `--no-X` = false,
+  `--X` = true, as `--no-preloadComputeBlocks`); declared as `--X` with default true, `--no-X` does nothing and `--X` turns it
+  off. A `Boolean` field left null (not given) is fine either way: `--X` = true, `--no-X` = false (`--finestLevel`).
+
 ## Container Metadata (root attributes under `Bigstitcher-Spark/`)
 
 `StorageType`, `DataType`, `UseSharding`, `ShardSize`, `ShardSizeFactor`, `MultiResolutionInfos`, `BlockSize`, `Compression`, `MinIntensity`, `MaxIntensity`, `NumChannels`, `NumTimepoints`, `FusionFormat`.
