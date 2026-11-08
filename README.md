@@ -37,6 +37,7 @@ Additonally there are some utility methods:
   * [Detect Interest Points](#ip-detect)
   * [Match Interest Points](#ip-match)
   * [Solver](#solver)
+  * [Define Dataset / Apply Transformation](#define)
   * [Affine Fusion](#affine-fusion)
     * [Create Fusion Container](#create-fusion-container)
     * [Run Affine Fusion](#run-affine-fusion)
@@ -67,7 +68,7 @@ java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all comman
 
 `-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
 
-**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`, `define-dataset`, `apply-transformation`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
 
 If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
@@ -246,7 +247,23 @@ Two utilities for editing the interest-point data and the registrations stored i
 
 ***Note:*** whenever data is removed from selected views, correspondences in *unselected* views that point into the selection are removed as well, so the project stays consistent. `--silent` skips the per-view listing, which otherwise loads all selected interest points just to print counts (recommended for large or cloud-hosted datasets).
 
-`clear-registrations` strips transformations from the selected views: `--keep N` keeps only the first N transformations (in order of application, e.g. calibration first), `--remove N` removes the last N.
+`clear-registrations` strips transformations from the selected views, exactly one of: `--keep N` keeps only the first N transformations (in order of application, e.g. calibration first), `--remove N` removes the last N, `--index 1,3` removes the ones at these positions (0 = the first applied; every view's chain is printed with its indices, so a `--dryRun` shows them), `--name 'Mirror *'` removes the ones whose name matches the pattern (`*` any text, `?` one character; repeat for several patterns).
+
+## Define Dataset / Apply Transformation<a name="define">
+
+Two utilities that create a project and set up its initial transformations without BigStitcher's dialogs, e.g. for a deskewed diSPIM acquisition whose geometry (slice spacing, reversed scan direction, arm rotation) is known beforehand, so that only the interest point detection and the registration remain.
+
+<code>./define-dataset -x ~/data/dataset.xml -i viewA.tif -i viewB.tif -i viewC.tif --voxelSize 0.0534,0.0534,0.549 --voxelSize 0.0534,0.0534,0.836 --voxelSize 0.0534,0.0534,0.5 --unit um</code>
+
+`define-dataset` is the command-line counterpart of "Define Multi-View Dataset" for the plain case of one image file per view: every `-i` file (anything Bio-Formats reads; each channel of a file becomes a view with that channel id, only the first series is used) becomes a view setup with the image size read from the file, the voxel size from `--voxelSize x,y,z` (one per image or one for all; default: the file's metadata, which ImageJ TIFFs often get wrong) and `--unit`, and the attributes `--angle`, `--tile`, `--illumination` (one id per image or one for all; default: the image index as the angle, tile and illumination 0) and `--timepoint`. The XML gets the Bio-Formats file-list image loader and the calibration transforms (voxel size over the smallest voxel size) and is refused if it exists, unless `--overwrite`. `--dryRun` prints the setups and writes nothing. Resave to N5/OME-Zarr afterwards with `resave` for fast access.
+
+<code>./apply-transformation -x ~/data/dataset.xml --mirror z --angleId 1</code>
+
+<code>./apply-transformation -x ~/data/dataset.xml --rotate y,-56.7 --angleId 1</code>
+
+<code>./apply-transformation -x ~/data/dataset.xml --centerOnView 0,2 --angleId 0,1</code>
+
+`apply-transformation` is "Apply Transformations" as a command: it adds one view transform to the selected views (the usual selection flags; all views without them), after the existing transforms like the dialog, or before them (in the image's pixel coordinates) with `--applyFirst`. Exactly one of `--rotate AXIS,DEGREES` (the dialog's right-handed rotation about x, y or z), `--translate dx,dy,dz`, `--scale sx,sy,sz`, `--mirror x|y|z`, `--affine m00,...,m23` (12 row-major values as in the XML) or `--centerOnView TIMEPOINT,SETUP` (the translation that puts the centre of each selected view's image, through its current transforms, onto the centre of the reference view: a starting point for the registration). `--name` sets the transform's name in the XML, `--dryRun` only prints. Transforms are removed again with `clear-registrations` (by index or name). A shear is not offered yet, since BigDataViewer's interpolation of a sheared view breaks down (future work).
 
 ## Affine Fusion<a name="affine-fusion">
 

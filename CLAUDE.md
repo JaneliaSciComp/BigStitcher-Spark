@@ -58,9 +58,11 @@ src/main/java/net/preibisch/bigstitcher/spark/
 │   ├── Spark.java
 │   ├── SpimData2Util.java
 │   └── ViewUtil.java
+├── ApplyTransformation.java              # 'Apply Transformations' as a command (rotate/translate/scale/mirror/affine/centerOnView)
 ├── ClearInterestPoints.java
 ├── ClearRegistrations.java
 ├── CreateFusionContainer.java            # Phase 1: container metadata setup
+├── DefineDataset.java                    # 'Define Multi-View Dataset' for one image file per view (Bio-Formats file-list loader)
 ├── Filter_Views.java                     # New: filter SpimData2 XML by attributes
 ├── IntensitySolver.java
 ├── Solver.java                           # Global optimization
@@ -177,6 +179,27 @@ s0, s1, s2, … all use the **same** `computeBlockSize`. Don't scale shardSize w
   → `AbstractSelectableViews` (view-selection knobs)
 
 When adding a new CLI flag, decide which level it belongs at — flags shared across multiple commands belong in `AbstractInfrastructure`, registration-only flags in `AbstractRegistration`.
+
+## Recent Themes (November 2026): dataset definition and transformations from the command line
+
+- `define-dataset` (`DefineDataset`, driver-only, 2026-11-08): one `-i` image per view (every channel of a file is a view; series 0
+  only), sizes through mvr's `FileListDatasetDefinitionUtil.detectDimensionsInFile` (Bio-Formats), voxel sizes from `--voxelSize`
+  (per image or one for all) or the file metadata, attributes `--angle`/`--tile`/`--illumination` (per image or one for all; default
+  angle = image index), the `FileMapImgLoaderLOCI` file-list loader (`spimreconstruction.filelist`), calibration via
+  `DatasetCreationUtils.createViewRegistrations` (voxel / min voxel), base path = the XML's directory so the file paths come out
+  relative. Refuses an existing XML without `--overwrite` and duplicate attribute combinations. Test `TestDefineDataset` writes
+  ImageJ TIFFs (incl. a 2-channel hyperstack) with `ij.io.FileSaver` and reads the pixels back through the loader.
+- `apply-transformation` (`ApplyTransformation`, driver-only, 2026-11-08): the GUI's "Apply Transformations" for the selected
+  views; exactly one of `--rotate AXIS,DEG` (explicit matrices in the vecmath convention of `Apply_Transformation`, about y
+  `x' = cos x + sin z`, pinned by `TestApplyTransformation` to the numbers BigStitcher wrote for +33 degrees), `--translate`,
+  `--scale`, `--mirror`, `--affine` (12 values) or `--centerOnView TP,SETUP` (translation of the transformed
+  image centre `(size-1)/2` onto the reference's); `preconcatenateTransform` (applied last) by default, `concatenateTransform`
+  with `--applyFirst`. No `--shear` for now (Stephan, 2026-11-08: BDV's interpolation of a sheared view breaks down and the
+  images are not shown properly; future work). Motivation: the Shroff diSPIM import (see `~/workspace/shroff-shearing/CLAUDE.md`): deskewed stacks get
+  calibration, mirror z (View_B), the arm rotation and a centred start translation before detection and registration.
+- `clear-registrations` (2026-11-08) removes by `--index` (order of application, 0 = first applied, the chain is printed with
+  indices) and by `--name PATTERN` (`*`/`?` globs, `ClearRegistrations.globToPattern`) besides `--keep`/`--remove`; exactly one
+  mode, nothing is saved when nothing matched. Test `TestClearRegistrations` (transforms planted with `apply-transformation`).
 
 ## Recent Themes (April 2026)
 

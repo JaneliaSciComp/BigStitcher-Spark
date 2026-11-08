@@ -144,6 +144,8 @@ install_command nonrigid-fusion "net.preibisch.bigstitcher.spark.SparkNonRigidFu
 
 echo 'Installing utils ...'
 
+install_command define-dataset "net.preibisch.bigstitcher.spark.DefineDataset"
+install_command apply-transformation "net.preibisch.bigstitcher.spark.ApplyTransformation"
 install_command split-images "net.preibisch.bigstitcher.spark.SplitDatasets"
 install_command filter-views "net.preibisch.bigstitcher.spark.Filter_Views"
 install_command downsample "net.preibisch.bigstitcher.spark.SparkDownsample"
