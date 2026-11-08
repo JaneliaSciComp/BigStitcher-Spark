@@ -38,6 +38,7 @@ Additonally there are some utility methods:
   * [Match Interest Points](#ip-match)
   * [Solver](#solver)
   * [Define Dataset / Apply Transformation](#define)
+  * [Screenshot](#screenshot)
   * [Affine Fusion](#affine-fusion)
     * [Create Fusion Container](#create-fusion-container)
     * [Run Affine Fusion](#run-affine-fusion)
@@ -68,7 +69,7 @@ java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all comman
 
 `-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
 
-**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`, `define-dataset`, `apply-transformation`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`, `define-dataset`, `apply-transformation`, `screenshot`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
 
 If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
@@ -264,6 +265,22 @@ Two utilities that create a project and set up its initial transformations witho
 <code>./apply-transformation -x ~/data/dataset.xml --centerOnView 0,2 --angleId 0,1</code>
 
 `apply-transformation` is "Apply Transformations" as a command: it adds one view transform to the selected views (the usual selection flags; all views without them), after the existing transforms like the dialog, or before them (in the image's pixel coordinates) with `--applyFirst`. Exactly one of `--rotate AXIS,DEGREES` (the dialog's right-handed rotation about x, y or z), `--translate dx,dy,dz`, `--scale sx,sy,sz`, `--mirror x|y|z`, `--affine m00,...,m23` (12 row-major values as in the XML) or `--centerOnView TIMEPOINT,SETUP` (the translation that puts the centre of each selected view's image, through its current transforms, onto the centre of the reference view: a starting point for the registration). `--name` sets the transform's name in the XML, `--dryRun` only prints. Transforms are removed again with `clear-registrations` (by index or name). A shear is not offered yet, since BigDataViewer's interpolation of a sheared view breaks down (future work).
+
+## Screenshot<a name="screenshot">
+
+Headless BigDataViewer renderings of a project: the selected views under their **current** registrations, composited with per-view colours and display ranges, written as PNG files without a window (works over ssh with `DISPLAY` unset, e.g. on a cluster node). Made for judging an alignment by eye or by a script after `solver`: a view pair in magenta and green turns white where the two views agree and shows coloured doubles where they do not. Read-only: the XML is never written.
+
+<code>./screenshot -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/shots --pairs overlapping --planes xy,xz --auto --json</code>
+
+<code>./screenshot -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/shots --overview --single --planes xy,xz,yz --render slice --width 2048</code>
+
+**What** (at least one): `--pairs overlapping` renders one image set per pair of selected views whose registered bounding boxes intersect (the `OVERLAPPING_ONLY` rule of the registration), `--pairs 'A,B;C,D'` the given setup pairs; the camera is centred on the intersection of the two boxes, view A is magenta and view B green (`--colors`), files `pair_tp<T>_s<A>_s<B>_<plane>.png`. `--overview` shows all selected views together, centred on their union box, one colour per view (`--palette colorstream` = BigStitcher's per-view colours from `--paletteStart`, `fixed` = magenta, green, cyan, yellow, orange, blue cycling, or an explicit list with exactly one colour per selected view), files `overview_<plane>.png`. `--single` renders every selected view alone in grey, files `view_tp<T>_s<S>_<plane>.png`. `--transform FILE.json` renders the selected views once per viewer transform in the file (the JSON BigStitcher's BDV fly-through saves: an array of 12-value affines, global to screen pixels, applied as-is to `--width` x `--height`), files `transform<i>.png`. The usual view-selection flags apply; without a timepoint selection the first timepoint is rendered, and one call renders one timepoint.
+
+**Camera**: `--planes xy,xz,yz` (default `xy`) are the viewing axes of the global frame: xy looks along z with x right and y down (BigDataViewer's default), xz has x right and z down, yz has y right and z down. `--render mip` (default) is a maximum projection over `--depth` global pixels centred on the box (default: the whole box for pairs and single views, a quarter of it for the overview), in steps of `--step` global pixels (default: the largest of one voxel of the shown views along that axis, one screen pixel and depth/256, so a projection costs at most 257 frames); `--render slice` is one plane through the box centre. `--width` (1024), `--height` (from the box aspect, 16..4096), `--margin` (0.1 of the box on every side), `--maxScale` (4): a box smaller than the image, e.g. the overlap strip of two neighbouring tiles, is drawn at most at this magnification into a correspondingly smaller image rather than blown up to the full width. `--level L` pins the resolution level of every view instead of letting the renderer choose it from the screen scale.
+
+**Display**: `--auto` (the default) takes the 0.1 / 99.9 percentiles of every view at a coarse resolution level, for a pair image inside the pair's overlap box so that both views show with comparable brightness where they overlap, `--min a --max b` one range for all views, `--range S=a:b` a range per setup. `--json [path]` writes a manifest (default `<outputDir>/screenshots.json`) with, per image, the file, kind, views, plane, render mode, depth, step, frames, the box, the viewer transform (12 values, the same layout as a `--transform` file), size, scale, colours and ranges, so a script can tell what every picture shows. `--dryRun` prints the planned images and writes nothing.
+
+***Note:*** to check that the pictures react to a misalignment, shift one view with `./apply-transformation -x dataset.xml --translate 20,0,0 -vi 0,3` on a copy of the project: its pair images then show magenta/green doubles 20 pixels apart. Overlays of interest points and bounding boxes are not implemented yet.
 
 ## Affine Fusion<a name="affine-fusion">
 

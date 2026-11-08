@@ -40,14 +40,14 @@ public class TestBigStitcherSpark
 			"resave", "detect-interestpoints", "match-interestpoints", "stitching", "solver",
 			"match-intensities", "solve-intensities", "create-fusion-container", "fusion", "nonrigid-fusion",
 			"define-dataset", "apply-transformation", "split-images", "filter-views", "downsample", "clear-interestpoints", "clear-registrations",
-			"transform-points", "overlay-landmarks" ) );
+			"transform-points", "overlay-landmarks", "screenshot" ) );
 
 	@Test
 	public void everyShimCommandIsRegistered()
 	{
 		final CommandLine cl = BigStitcherSpark.commandLine();
 		assertEquals( SHIM_NAMES, cl.getSubcommands().keySet() );
-		assertEquals( 19, SHIM_NAMES.size() );
+		assertEquals( 20, SHIM_NAMES.size() );
 	}
 
 	@Test
@@ -59,6 +59,7 @@ public class TestBigStitcherSpark
 		assertEquals( 0, BigStitcherSpark.commandLine().execute( "detect-interestpoints", "--version" ) );
 		assertEquals( 0, BigStitcherSpark.commandLine().execute( "define-dataset", "--help" ) );
 		assertEquals( 0, BigStitcherSpark.commandLine().execute( "apply-transformation", "--help" ) );
+		assertEquals( 0, BigStitcherSpark.commandLine().execute( "screenshot", "--help" ) );
 	}
 
 	@Test
