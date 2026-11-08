@@ -76,6 +76,8 @@ public class BigStitcherSpark implements Runnable
 		COMMANDS.put( "fusion", SparkFusion.class );
 		COMMANDS.put( "nonrigid-fusion", SparkNonRigidFusion.class );
 		// utils
+		COMMANDS.put( "define-dataset", DefineDataset.class );
+		COMMANDS.put( "apply-transformation", ApplyTransformation.class );
 		COMMANDS.put( "split-images", SplitDatasets.class );
 		COMMANDS.put( "filter-views", Filter_Views.class );
 		COMMANDS.put( "downsample", SparkDownsample.class );
