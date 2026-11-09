@@ -32,7 +32,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
-import mpicbg.models.AffineModel1D;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.registration.ViewRegistrations;
 import mpicbg.spim.data.sequence.MissingViews;
@@ -47,6 +46,7 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
+import net.preibisch.mvrecon.process.fusion.intensity.Coefficients;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunction;
@@ -287,11 +287,11 @@ public class Filter_Views extends AbstractBasic
 			}
 		}
 
-		// IntensityAdjustments
-		final HashMap< ViewId, AffineModel1D > newIntensities = new HashMap<>();
+		// IntensityAdjustments (mvr >= 9.1.2: per-view Coefficients, read lazily from the project's container)
+		final HashMap< ViewId, Coefficients > newIntensities = new HashMap<>();
 		final IntensityAdjustments oldIntensities = src.getIntensityAdjustments();
 		if ( oldIntensities != null )
-			for ( final Entry< ViewId, AffineModel1D > e : oldIntensities.getIntensityAdjustments().entrySet() )
+			for ( final Entry< ViewId, Coefficients > e : oldIntensities.getCoefficients().entrySet() )
 				if ( keepView( e.getKey(), keepSetupIds, keepTimepointIds ) )
 					newIntensities.put( e.getKey(), e.getValue() );
 

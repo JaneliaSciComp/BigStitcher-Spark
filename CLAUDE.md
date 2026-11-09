@@ -355,12 +355,11 @@ null directory and the 3-argument constructor it never saves or loads a memo and
 from scratch each time, the loader prints a one-line notice). The released jars built against mvr 9.1.1 (0.1.3 to 0.1.5)
 still have the crash until mvr ships the fix and `main` moves to that release.
 
-### mvr master and mvr scalespace have diverged (2026-11-09)
+### mvr master and mvr scalespace diverged for a while (merged 2026-11-09)
 
 - mvr 9.1.2 (master) replaced `IntensityAdjustments`' `HashMap<ViewId, AffineModel1D>` by per-view `Coefficients` read lazily
-  from the project's container (`getCoefficients()`, `put`, constructor from a `Map`); mvr scalespace (10.0.0-SNAPSHOT) still has
-  the `AffineModel1D` API. `Filter_Views` therefore differs between `main` (mvr 9.1.3) and `scalespace`; keep that in mind when
-  merging `main` into `scalespace` (take scalespace's version until mvr scalespace gets the intensity update).
+  from the project's container (`getCoefficients()`, `put`, constructor from a `Map`); mvr scalespace kept the `AffineModel1D`
+  API until the branches were merged on 2026-11-09. `Filter_Views` uses the `Coefficients` API (mvr >= 9.1.2 and 10.0.0-SNAPSHOT).
 - `mvn compile` without `clean` after changing a dependency version in the pom reports success on stale classes (nothing in
   `src` changed, so javac is skipped); always `mvn clean compile` after a version bump before trusting it.
 - mvr 9.1.3 lacked scalespace's `Arrays.copyOf(..., 3)` for the OME-Zarr mipmap transform (`N5ApiTools`, commit 7ba11e45b): the
@@ -412,8 +411,10 @@ Cluster/cloud: submit the cluster jar via `spark-submit --class net.preibisch.bi
 
 ## Branches
 
-- **`scalespace-pr108`** — current dev, matches mvr's `scalespace-pr108` (the Zarr interest point store on top of `scalespace`: scale space, attributes, filtered labels). Pinned to mvr 10.0.0-SNAPSHOT. `zarrv3` was the dev branch before (mvr 9.0.0-SNAPSHOT).
-- `main` — stable.
+- `main` — the one branch since 2026-11-09: `scalespace` (and with it `scalespace-pr108`'s work) was merged into it, as mvr's
+  `scalespace` was merged into mvr `master`. `main` therefore depends on mvr 10.0.0-SNAPSHOT until mvr 10.0.0 is released;
+  the release script refuses SNAPSHOT dependencies, so the next BigStitcher-Spark release waits for that.
+- Releases so far: 0.1.0 to 0.1.6 (0.1.6 of 2026-11-09 is the last one built on the mvr 9.1.x line, with mvr 9.1.4).
 - Many feature branches still alive (`TPS`, `intensity`, `blocksupplier`, `OpenDAL`, `keller`, `omezarr`, …) — most look merged-or-stale.
 - Remotes: `origin` should point at **JaneliaSciComp/BigStitcher-Spark** (the canonical repo; `PreibischLab/BigStitcher-Spark` is a GitHub redirect), `allen` = AllenNeuralDynamics fork.
 
