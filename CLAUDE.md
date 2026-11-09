@@ -340,6 +340,18 @@ null directory and the 3-argument constructor it never saves or loads a memo and
 from scratch each time, the loader prints a one-line notice). The released jars built against mvr 9.1.1 (0.1.3 to 0.1.5)
 still have the crash until mvr ships the fix and `main` moves to that release.
 
+### mvr master and mvr scalespace have diverged (2026-11-09)
+
+- mvr 9.1.2 (master) replaced `IntensityAdjustments`' `HashMap<ViewId, AffineModel1D>` by per-view `Coefficients` read lazily
+  from the project's container (`getCoefficients()`, `put`, constructor from a `Map`); mvr scalespace (10.0.0-SNAPSHOT) still has
+  the `AffineModel1D` API. `Filter_Views` therefore differs between `main` (mvr 9.1.3) and `scalespace`; keep that in mind when
+  merging `main` into `scalespace` (take scalespace's version until mvr scalespace gets the intensity update).
+- `mvn compile` without `clean` after changing a dependency version in the pom reports success on stale classes (nothing in
+  `src` changed, so javac is skipped); always `mvn clean compile` after a version bump before trusting it.
+- mvr 9.1.3 lacked scalespace's `Arrays.copyOf(..., 3)` for the OME-Zarr mipmap transform (`N5ApiTools`, commit 7ba11e45b): the
+  5-D downsampling array trips BDV's `assert resolution.length == 3` under surefire's `-ea` (`TestSparkResaveLocal`), harmless in
+  production because the first three entries are x, y, z. Cherry-picked onto mvr master for 9.1.4.
+
 ## Testing
 
 ```bash
