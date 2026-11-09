@@ -365,6 +365,11 @@
             <groupId>info.picocli</groupId>
             <artifactId>picocli</artifactId>
         </dependency>
+        <!-- the screenshot manifest and the viewer-transform files (version managed by pom-scijava) -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-hdf5</artifactId>

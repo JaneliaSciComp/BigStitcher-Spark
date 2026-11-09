@@ -85,6 +85,7 @@ public class BigStitcherSpark implements Runnable
 		COMMANDS.put( "clear-registrations", ClearRegistrations.class );
 		COMMANDS.put( "transform-points", TransformPoints.class );
 		COMMANDS.put( "overlay-landmarks", OverlayLandmarks.class );
+		COMMANDS.put( "screenshot", Screenshot.class );
 	}
 
 	@Spec

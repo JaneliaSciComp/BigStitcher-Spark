@@ -48,6 +48,10 @@ src/main/java/net/preibisch/bigstitcher/spark/
 │   ├── GenerateComputeBlockMasks.java
 │   ├── OverlappingBlocks.java
 │   └── OverlappingViews.java
+├── render/                               # headless BigDataViewer rendering (screenshot command)
+│   ├── Camera.java                       # planes, viewer transform, screen-z range, MIP step rule (pure maths)
+│   ├── HeadlessBdvRenderer.java          # sources/converters, BasicViewerState, MultiResolutionRenderer, MIP target, PNG
+│   └── ScreenshotManifest.java           # --json manifest and BDVFlyThrough-style transform files (Gson)
 ├── util/                                 # Spark/N5/IO helpers
 │   ├── BDVSparkInstantiateViewSetup.java
 │   ├── DataTypeUtil.java
@@ -76,6 +80,7 @@ src/main/java/net/preibisch/bigstitcher/spark/
 ├── SparkIntensityMatching.java
 ├── SparkNonRigidFusion.java
 ├── SparkPairwiseStitching.java
+├── Screenshot.java                       # headless BDV screenshots of pairs / overview / single views (driver-only)
 ├── SparkResaveN5.java
 ├── SplitDatasets.java                    # Adaptive image splitting
 └── TransformPoints.java
@@ -198,6 +203,25 @@ When adding a new CLI flag, decide which level it belongs at — flags shared ac
 
 ## Recent Themes (November 2026): dataset definition and transformations from the command line
 
+- `screenshot` (`Screenshot` + `render/`, driver-only, 2026-11-08; Stephan's hand-off for the judge-alignment skill): renders
+  what BDV shows for the selected views under their current registrations into PNGs with no window (`java.awt.headless` set
+  in `main()`/`call()`). Recipe: `WrapBasicImgLoader.wrapImgLoaderIfNecessary` (non-BDV loaders such as the simulated one),
+  `BigDataViewer.initSetups` (one `SourceAndConverter` + `RealARGBColorConverterSetup` per setup, i-th = `getViewSetupsOrdered().get(i)`),
+  a `BasicViewerState` (`setNumTimepoints` before `setCurrentTimepoint(index)`, FUSED, NLINEAR), `MultiResolutionRenderer(target,
+  () -> {}, {1}, 0, threads, null, false, CacheControl.Dummy)` with `requestRepaint(); paint(state)` per frame (non-volatile =
+  complete frame); a MIP steps the viewer transform along screen z and keeps the per-channel max (as `RecordMaxProjectionDialog`).
+  Colours need alpha 255; PNGs are written opaque (`TYPE_INT_RGB`, no-data = black). Camera: right-handed plane rotations (xy, xz:
+  screen z = -y, yz: screen z = +x), box fitted with a margin and a magnification cap (`--maxScale` 4: a thin overlap strip is
+  drawn into a small image, not blown up to 1024 x 4096 with 257 frames of 4 Mpx, which made ds1 take 5 min instead of 26 s),
+  MIP step = max(one voxel of the shown views along the viewing axis (`Camera.voxelExtentAlongScreenZ`, ds1's z voxel is 3.2
+  global px), 1 screen px, depth/256). `--auto` ranges of a PAIR are percentiles inside the pair's overlap box (a tile with
+  one bright blob otherwise renders its ordinary structure dim next to the partner). Pairs use
+  `SimpleBoundingBoxOverlap` (the registration's OVERLAPPING_ONLY rule) and the intersection of `getBoundingBoxReal` boxes;
+  overview colours `ColorStream.get(start+i)` / a fixed cycle / an explicit list. Gson is now a direct dependency. No shear-free
+  overlays yet (`--label`, `--boxes` are a second iteration; `Frame` keeps the viewer transform for them). Test gotchas: the
+  simulated views are ONE bead cloud rotated 0/45/90 degrees about x (`SimulateMultiViewDataset.axisRotation`; register the
+  inverse to align them) and UnsignedShort with peaks about 1000; the pair test measures the red/green cross-correlation peak and
+  reads the scale from the manifest of the SAME run, since a shifted view changes the intersection box and the scale.
 - `define-dataset` (`DefineDataset`, driver-only, 2026-11-08): one `-i` image per view (every channel of a file is a view; series 0
   only), sizes through mvr's `FileListDatasetDefinitionUtil.detectDimensionsInFile` (Bio-Formats), voxel sizes from `--voxelSize`
   (per image or one for all) or the file metadata, attributes `--angle`/`--tile`/`--illumination` (per image or one for all; default

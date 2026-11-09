@@ -145,7 +145,7 @@ echo "  $JAR_VERSION"
 # verified against the downloaded jar below, so an older release simply gets fewer executables.
 
 WORKFLOW_COMMANDS="resave detect-interestpoints filter-interestpoints embed-interestpoints match-interestpoints stitching solver match-intensities solve-intensities create-fusion-container fusion nonrigid-fusion"
-UTIL_COMMANDS="define-dataset apply-transformation split-images filter-views downsample clear-interestpoints clear-registrations transform-points overlay-landmarks"
+UTIL_COMMANDS="define-dataset apply-transformation split-images filter-views downsample clear-interestpoints clear-registrations transform-points overlay-landmarks screenshot"
 
 # $1 - executable name, $2 - subcommand ("" for the dispatcher itself)
 install_command () {

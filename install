@@ -155,6 +155,7 @@ install_command clear-interestpoints "net.preibisch.bigstitcher.spark.ClearInter
 install_command clear-registrations "net.preibisch.bigstitcher.spark.ClearRegistrations"
 install_command transform-points "net.preibisch.bigstitcher.spark.TransformPoints"
 install_command overlay-landmarks "net.preibisch.bigstitcher.spark.OverlayLandmarks"
+install_command screenshot "net.preibisch.bigstitcher.spark.Screenshot"
 
 
 rm cp.txt
