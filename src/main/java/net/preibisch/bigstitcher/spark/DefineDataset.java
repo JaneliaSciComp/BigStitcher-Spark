@@ -57,7 +57,7 @@ import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.boundingbox.BoundingBoxes;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapEntry;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.FileMapImgLoaderLOCI;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
@@ -218,7 +218,10 @@ public class DefineDataset extends AbstractInfrastructure
 			final ViewDescription vd = sd.getViewDescription( timepoint, e.getKey() );
 			fileMap.put( vd, e.getValue() );
 		}
-		sd.setImgLoader( new FileMapImgLoaderLOCI( fileMap, sd, false ) );
+		// the virtual loader (planes are read on demand and one plane is cached), as the GUI's "Define Multi-View Dataset" uses it;
+		// the legacy FileMapImgLoaderLOCI loads a whole stack into memory on every getImage(), which runs out of heap
+		// when Spark tasks resave several multi-GB stacks in parallel (seen 2026-11-09 with 5.7 GB TIFFs)
+		sd.setImgLoader( new FileMapImgLoaderLOCI2( fileMap, sd, false ) );
 
 		double minResolution = Double.MAX_VALUE;
 		for ( final ViewSetup vs : setups )

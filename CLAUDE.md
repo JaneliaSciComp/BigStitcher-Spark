@@ -66,7 +66,7 @@ src/main/java/net/preibisch/bigstitcher/spark/
 ├── ClearInterestPoints.java
 ├── ClearRegistrations.java
 ├── CreateFusionContainer.java            # Phase 1: container metadata setup
-├── DefineDataset.java                    # 'Define Multi-View Dataset' for one image file per view (Bio-Formats file-list loader)
+├── DefineDataset.java                    # 'Define Multi-View Dataset' for one image file per view (virtual Bio-Formats loader, filemap2)
 ├── Filter_Views.java                     # New: filter SpimData2 XML by attributes
 ├── IntensitySolver.java
 ├── Solver.java                           # Global optimization
@@ -172,6 +172,17 @@ s0, s1, s2, … all use the **same** `computeBlockSize`. Don't scale shardSize w
   - sharding OFF → compute-block multiplier
   - sharding ON → shard-size factor (default `16,16,1`)
 
+### Resave memory per Spark task scales with the shard volume (2026-11-09)
+
+Measured on the Shroff Optic lobe stacks (three Bio-Formats TIFFs of 5724 x 2498 x 201, 4706 x 2341 x 201 and
+2048 x 2048 x 121 uint16, `define-dataset` project, Zarr v3): with the default `--blockScale 16,16,1` (shards of
+2048 x 2048 x 64 = 512 MB uncompressed) and `local[4]` the s0 pass needed more than 8 GB of heap and the first
+downsampling level more than 16 GB (`AbstractDownsample.getSourceBuffer` allocates the 2 x 2 x 1 source region of a
+whole shard, i.e. four shard volumes, per task; OOM in `MemoryStore.putIterator` because the RDD is cached). With
+`--blockScale 8,8,1` (1024 x 1024 x 64 shards, 128 MB) the same resave ran with 8 GB and 4 tasks: s0 116 s, the five
+pyramid levels 20 s, 3.2 GB of Zarr (1.3 / 1.4 / 0.55 GB per view). Rule of thumb: about five shard volumes of heap per
+concurrent task for the downsampling levels, plus Bio-Formats plane buffers for s0.
+
 ## Container Metadata (root attributes under `Bigstitcher-Spark/`)
 
 `StorageType`, `DataType`, `UseSharding`, `ShardSize`, `ShardSizeFactor`, `MultiResolutionInfos`, `BlockSize`, `Compression`, `MinIntensity`, `MaxIntensity`, `NumChannels`, `NumTimepoints`, `FusionFormat`.
@@ -211,7 +222,7 @@ When adding a new CLI flag, decide which level it belongs at — flags shared ac
 - `define-dataset` (`DefineDataset`, driver-only, 2026-11-08): one `-i` image per view (every channel of a file is a view; series 0
   only), sizes through mvr's `FileListDatasetDefinitionUtil.detectDimensionsInFile` (Bio-Formats), voxel sizes from `--voxelSize`
   (per image or one for all) or the file metadata, attributes `--angle`/`--tile`/`--illumination` (per image or one for all; default
-  angle = image index), the `FileMapImgLoaderLOCI` file-list loader (`spimreconstruction.filelist`), calibration via
+  angle = image index), the virtual `FileMapImgLoaderLOCI2` loader (`spimreconstruction.filemap2`, planes on demand; the legacy `FileMapImgLoaderLOCI` loads whole stacks and ran out of heap in `resave`, 2026-11-09), calibration via
   `DatasetCreationUtils.createViewRegistrations` (voxel / min voxel), base path = the XML's directory so the file paths come out
   relative. Refuses an existing XML without `--overwrite` and duplicate attribute combinations. Test `TestDefineDataset` writes
   ImageJ TIFFs (incl. a 2-channel hyperstack) with `ij.io.FileSaver` and reads the pixels back through the loader.
@@ -299,6 +310,22 @@ Must explicitly specify `ZARR` (v3) or `ZARR2` (v2). Tests should default to `ZA
 
 ### Friendly XML-load errors
 `AbstractBasic` catches `SpimDataException` and prints a one-line message instead of a stack trace. Don't undo this when refactoring.
+
+### Bio-Formats file-list datasets need mvr's Memoizer fix (2026-11-09)
+
+The pom excludes `com.esotericsoftware:kryo` 5 (Bio-Formats' dependency) because it clashes with Spark's `kryo-shaded`
+4 (same package; Spark's chill/KryoSerializer need the 4.x API, and maven-shade cannot keep both). Bio-Formats'
+`Memoizer` serializes reader state with Kryo 5 (`kryo.util.DefaultInstantiatorStrategy`, a class that Kryo 4 does not
+have and cannot be shimmed because the Memoizer casts Kryo's own strategy object to it), and mvr's file-list loaders
+(`LegacyFileMapImgLoaderLOCI`, `FileMapImgLoaderLOCI2`) wrap every reader in a Memoizer with a temp memo directory.
+Result: any pixel access to a `spimreconstruction.filelist` dataset whose `setId` takes longer than 100 ms (every real
+stack; the tiny test files never trigger it) died with `NoClassDefFoundError: com/esotericsoftware/kryo/util/
+DefaultInstantiatorStrategy` in `Memoizer.saveMemo`: `resave`, `detect-interestpoints`, `screenshot` etc. on a
+`define-dataset` project. `define-dataset` itself only reads headers and worked. Fix in mvr (branch scalespace,
+`BioformatsReaderUtils.memoizerDirectory`): the Memoizer gets its directory only when Kryo 5 is on the classpath; with a
+null directory and the 3-argument constructor it never saves or loads a memo and never touches Kryo (readers are set up
+from scratch each time, the loader prints a one-line notice). The released jars built against mvr 9.1.1 (0.1.3 to 0.1.5)
+still have the crash until mvr ships the fix and `main` moves to that release.
 
 ## Testing
 
