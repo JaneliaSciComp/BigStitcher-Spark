@@ -202,7 +202,8 @@ public class TestScreenshot
 	public void misregistrationShowsAsDoubles() throws Exception
 	{
 		final File aligned = out( "aligned" );
-		assertEquals( 0, run( aligned, "--pairs", "0,2", "--planes", "xy", "--margin", "0", "--json" ) );
+		// --step 8: 16 MIP frames instead of 127 keep the test fast; the beads (sigma about 2 px) still show
+		assertEquals( 0, run( aligned, "--pairs", "0,2", "--planes", "xy", "--margin", "0", "--step", "8", "--json" ) );
 		assertArrayEquals( new String[] { "pair_tp0_s0_s2_xy.png" }, pngs( aligned ) );
 		final BufferedImage a = ImageIO.read( new File( aligned, "pair_tp0_s0_s2_xy.png" ) );
 		assertTrue( nonBlack( a ) > 100 );
@@ -220,7 +221,7 @@ public class TestScreenshot
 
 		assertEquals( 0, shift( "--translate", "20,0,0", "-vi", "0,2" ) );
 		final File shifted = out( "shifted" );
-		assertEquals( 0, run( shifted, "--pairs", "0,2", "--planes", "xy", "--margin", "0", "--json" ) );
+		assertEquals( 0, run( shifted, "--pairs", "0,2", "--planes", "xy", "--margin", "0", "--step", "8", "--json" ) );
 		final BufferedImage b = ImageIO.read( new File( shifted, "pair_tp0_s0_s2_xy.png" ) );
 		final int dxShifted = peakShift( b, 80 );
 		// the intersection box shrinks with the shift, so the scale of this image differs from the aligned one
@@ -233,7 +234,7 @@ public class TestScreenshot
 	public void singleViewsAreGrey() throws Exception
 	{
 		final File dir = out( "s" );
-		assertEquals( 0, run( dir, "--single", "--planes", "xy" ) );
+		assertEquals( 0, run( dir, "--single", "--planes", "xy", "--render", "slice" ) );
 		assertArrayEquals( new String[] { "view_tp0_s0_xy.png", "view_tp0_s1_xy.png", "view_tp0_s2_xy.png" }, pngs( dir ) );
 		for ( final String f : pngs( dir ) )
 		{
@@ -266,7 +267,8 @@ public class TestScreenshot
 	public void manifestListsEveryFile() throws Exception
 	{
 		final File dir = out( "m" );
-		assertEquals( 0, run( dir, "--overview", "--single", "--planes", "xy,xz", "--json", "--palette", "fixed" ) );
+		// a coarse --step keeps the 8 MIPs to a handful of frames each
+		assertEquals( 0, run( dir, "--overview", "--single", "--planes", "xy,xz", "--step", "32", "--json", "--palette", "fixed" ) );
 		final File json = new File( dir, "screenshots.json" );
 		assertTrue( json.isFile() );
 		final ScreenshotManifest m = ScreenshotManifest.load( json );
