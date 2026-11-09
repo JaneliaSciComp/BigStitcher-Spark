@@ -221,7 +221,9 @@ When adding a new CLI flag, decide which level it belongs at — flags shared ac
   overlays yet (`--label`, `--boxes` are a second iteration; `Frame` keeps the viewer transform for them). Test gotchas: the
   simulated views are ONE bead cloud rotated 0/45/90 degrees about x (`SimulateMultiViewDataset.axisRotation`; register the
   inverse to align them) and UnsignedShort with peaks about 1000; the pair test measures the red/green cross-correlation peak and
-  reads the scale from the manifest of the SAME run, since a shifted view changes the intersection box and the scale.
+  reads the scale from the manifest of the SAME run, since a shifted view changes the intersection box and the scale. A
+  full-resolution MIP of the 127 px fixture is 127 frames (about 1.5 s per source), so the tests render slices or MIPs with
+  a coarse `--step` (8 for the pair test, 32 for the manifest test); the whole class takes under 4 s.
 - `define-dataset` (`DefineDataset`, driver-only, 2026-11-08): one `-i` image per view (every channel of a file is a view; series 0
   only), sizes through mvr's `FileListDatasetDefinitionUtil.detectDimensionsInFile` (Bio-Formats), voxel sizes from `--voxelSize`
   (per image or one for all) or the file metadata, attributes `--angle`/`--tile`/`--illumination` (per image or one for all; default
