@@ -140,7 +140,7 @@ public class TestDefineDataset
 		assertTrue( xml.exists() );
 
 		final String text = Files.readString( xml.toPath() );
-		assertTrue( text.contains( "format=\"spimreconstruction.filelist\"" ), "Bio-Formats file-list loader" );
+		assertTrue( text.contains( "format=\"spimreconstruction.filemap2\"" ), "Bio-Formats file-list loader" );
 		assertTrue( text.contains( ">a.tif<" ) && text.contains( ">c.tif<" ), "relative file paths" );
 
 		final SpimData2 d = load( xml );
