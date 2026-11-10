@@ -65,6 +65,8 @@ public class BigStitcherSpark implements Runnable
 		// workflow tools
 		COMMANDS.put( "resave", SparkResaveN5.class );
 		COMMANDS.put( "detect-interestpoints", SparkInterestPointDetection.class );
+		COMMANDS.put( "filter-interestpoints", FilterInterestPoints.class );
+		COMMANDS.put( "embed-interestpoints", SparkInterestPointEmbedding.class );
 		COMMANDS.put( "match-interestpoints", SparkGeometricDescriptorMatching.class );
 		COMMANDS.put( "stitching", SparkPairwiseStitching.class );
 		COMMANDS.put( "solver", Solver.class );
@@ -74,6 +76,8 @@ public class BigStitcherSpark implements Runnable
 		COMMANDS.put( "fusion", SparkFusion.class );
 		COMMANDS.put( "nonrigid-fusion", SparkNonRigidFusion.class );
 		// utils
+		COMMANDS.put( "define-dataset", DefineDataset.class );
+		COMMANDS.put( "apply-transformation", ApplyTransformation.class );
 		COMMANDS.put( "split-images", SplitDatasets.class );
 		COMMANDS.put( "filter-views", Filter_Views.class );
 		COMMANDS.put( "downsample", SparkDownsample.class );
@@ -81,6 +85,7 @@ public class BigStitcherSpark implements Runnable
 		COMMANDS.put( "clear-registrations", ClearRegistrations.class );
 		COMMANDS.put( "transform-points", TransformPoints.class );
 		COMMANDS.put( "overlay-landmarks", OverlayLandmarks.class );
+		COMMANDS.put( "screenshot", Screenshot.class );
 	}
 
 	@Spec

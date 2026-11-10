@@ -328,7 +328,7 @@ public class Solver extends AbstractRegistration
 
 			try
 			{
-				pmc = setupPointMatchesFromInterestPoints( xmlURI, sc, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
+				pmc = setupPointMatchesFromInterestPoints( dataGlobal, xmlURI, sc, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
 			}
 			finally
 			{
@@ -612,14 +612,17 @@ public class Solver extends AbstractRegistration
 
 	/**
 	 * Builds the point-match creator for a solve from the stored corresponding interest points, using Spark.
-	 * Every pair of views (optionally restricted by {@code vsComparisonPairs}) is one Spark task; pairs in which
-	 * both views are fixed, or both belong to the same group, are skipped. A task loads the dataset XML itself
-	 * and, for every combination of the two views' labels, turns the correspondences of view A that point to
-	 * view B into point matches whose coordinates are transformed into global space with the views' current
+	 * Every pair of views that shares correspondences is one Spark task: the partners of every (view, label),
+	 * which the interest point store answers from its index without loading points (Lila Schweinfurth, branch
+	 * ip-store-update), restricted to the selected views and labels and optionally by {@code vsComparisonPairs};
+	 * pairs in which both views are fixed, or both belong to the same group, are skipped. A task loads the
+	 * dataset XML itself and, for every combination of the two views' labels, turns the correspondences of view A
+	 * that point to view B (read for that partner only) into point matches whose coordinates are transformed into global space with the views' current
 	 * registration models. They are returned as inliers of a {@link PairwiseResult} that carries both labels
 	 * (used to assign the label weights). Views without any connection are added as a self-pair without inliers
 	 * so that they still take part in the solve.
 	 *
+	 * @param dataGlobal the dataset, used on the driver to find the pairs of views that share correspondences
 	 * @param xmlURI the dataset XML, loaded by every Spark task
 	 * @param sc the Spark context the tasks run on
 	 * @param viewIdsGlobal the views to connect
@@ -632,6 +635,7 @@ public class Solver extends AbstractRegistration
 	 *         pair of views to process or no connection was found
 	 */
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
+			final SpimData2 dataGlobal,
 			final URI xmlURI,
 			final JavaSparkContext sc,
 			final List< ViewId > viewIdsGlobal,
@@ -668,11 +672,37 @@ public class Solver extends AbstractRegistration
 				}
 		}
 
+		// only pairs of views that share correspondences (in both directions, the order of the task does not matter)
+		final Set< String > connectedPairs = new HashSet<>();
+
+		for ( final ViewId vA : viewIdsGlobal )
+			for ( final String labelA : labelMap.get( vA ).keySet() )
+			{
+				final InterestPoints interestPointsA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA );
+
+				if ( interestPointsA == null )
+					continue;
+
+				for ( final Pair< ViewId, String > partner : interestPointsA.getCorrespondingViews() )
+				{
+					final Map< String, Double > labelsB = labelMap.get( partner.getA() );
+
+					if ( labelsB == null || !labelsB.containsKey( partner.getB() ) )
+						continue;
+
+					connectedPairs.add( pairKey( viewIdKey( vA ), viewIdKey( partner.getA() ) ) );
+					connectedPairs.add( pairKey( viewIdKey( partner.getA() ), viewIdKey( vA ) ) );
+				}
+			}
+
 		for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
 			for ( int j = i + 1; j < viewIdsGlobal.size(); ++j )
 			{
 				final ViewId vA = viewIdsGlobal.get( i );
 				final ViewId vB = viewIdsGlobal.get( j );
+
+				if ( !connectedPairs.contains( pairKey( viewIdKey( vA ), viewIdKey( vB ) ) ) )
+					continue;
 
 				if ( vsComparisonPairs != null )
 				{
@@ -744,8 +774,7 @@ public class Solver extends AbstractRegistration
 				if ( interestPointsA == null )
 					continue;
 
-				final Map< Integer, InterestPoint > ipListA = interestPointsA.getInterestPointsCopy();
-				final Collection< CorrespondingInterestPoints > cpA = interestPointsA.getCorrespondingInterestPointsCopy();
+				Map< Integer, InterestPoint > ipListA = null; // loaded once, only if some label of B has correspondences
 
 				for ( final String labelB : labelsB )
 				{
@@ -753,6 +782,15 @@ public class Solver extends AbstractRegistration
 
 					if ( interestPointsB == null )
 						continue;
+
+					// only the correspondences from (vA, labelA) to (vB, labelB)
+					final Collection< CorrespondingInterestPoints > cpA = interestPointsA.getCorrespondingInterestPointsCopy( vB, labelB );
+
+					if ( cpA.isEmpty() )
+						continue;
+
+					if ( ipListA == null )
+						ipListA = interestPointsA.getInterestPointsCopy();
 
 					final Map< Integer, InterestPoint > ipListB = interestPointsB.getInterestPointsCopy();
 

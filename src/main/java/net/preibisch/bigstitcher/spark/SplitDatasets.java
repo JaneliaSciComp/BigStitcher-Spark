@@ -53,8 +53,10 @@ import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.VirtualFilteredInterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.pointspreadfunctions.PointSpreadFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.StitchingResults;
 import net.preibisch.mvrecon.process.splitting.ConsensusSetCriterion;
@@ -350,21 +352,15 @@ public class SplitDatasets extends AbstractBasic
 				for ( final long[][] si : serIntervals )
 					intervals.add( Spark.deserializeInterval( si ) );
 
-				// Create saver that writes interest points on-the-fly.
-				// Open one N5Writer on ${baseDir}/interestpoints.n5 per task and reuse it for every save,
-				// so we don't pay an open/close cycle per InterestPoints object.
-				final URI containerUri = URITools.toURI(
-						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
+				// Create saver that writes interest points on-the-fly. Executors must not commit to the shared store:
+				// each task writes one durable staging file, which the driver's XML save commits.
 				final SplittingTools.InterestPointSaver saver = vipl -> {
-					try ( final N5Writer n5Writer = URITools.instantiateN5Writer( StorageFormat.N5, containerUri ) )
+					try
 					{
+						final ArrayList< InterestPoints > allLists = new ArrayList<>();
 						for ( final ViewInterestPointLists v : vipl.values() )
-							for ( final InterestPoints ips : v.getHashMap().values() )
-							{
-								final InterestPointsN5 n5ips = ( InterestPointsN5 ) ips;
-								n5ips.saveInterestPoints( false, n5Writer );
-								n5ips.saveCorrespondingInterestPoints( false, n5Writer );
-							}
+							allLists.addAll( v.getHashMap().values() );
+						InterestPointsZarr.saveStaged( allLists );
 					}
 					catch ( final Exception e )
 					{
@@ -483,7 +479,7 @@ public class SplitDatasets extends AbstractBasic
 			// ==================== 6. Phase 3: Correspondences via Spark ====================
 			IOFunctions.println( "(" + new Date( System.currentTimeMillis() ) + "): Phase 3 - Processing correspondences via Spark..." );
 
-			// Collect old label names for reconstructing InterestPointsN5 objects
+			// Collect old label names for reconstructing the lazy interest point lists (InterestPointsZarr / VirtualFilteredInterestPoints)
 			final Set< String > oldLabelNames = new HashSet<>();
 			for ( final ViewSetup oldSetup : oldSetups )
 			{
@@ -551,7 +547,7 @@ public class SplitDatasets extends AbstractBasic
 					localOld2New.put( entry.getKey(), ids );
 				}
 
-				// Reconstruct newInterestpoints from disk (lazy-loading InterestPointsN5 objects)
+				// Reconstruct newInterestpoints from the store (lazy-loading lists over what phase 2 staged)
 				final URI baseDir = data.getBasePathURI();
 				final Map< ViewId, ViewInterestPointLists > newInterestpoints = new HashMap<>();
 
@@ -564,10 +560,12 @@ public class SplitDatasets extends AbstractBasic
 							final ViewId viewId = new ViewId( tp.getId(), nSetupId );
 							final ViewInterestPointLists vipl = new ViewInterestPointLists( tp.getId(), nSetupId );
 
+							final ViewInterestPointLists oldVipl = data.getViewInterestPoints().getViewInterestPointLists( new ViewId( tp.getId(), entry.getKey() ) );
+
 							for ( final String label : oldLabelNamesArray )
 							{
 								final String newLabel = label + "_split";
-								vipl.addInterestPointList( newLabel, InterestPoints.newInstance( baseDir, viewId, newLabel ) );
+								vipl.addInterestPointList( newLabel, splitLabelLike( oldVipl == null ? null : oldVipl.getInterestPointList( label ), baseDir, viewId, newLabel ) );
 							}
 
 							if ( finalIpAdding3 != InterestPointAdding.NONE )
@@ -578,19 +576,12 @@ public class SplitDatasets extends AbstractBasic
 					}
 				}
 
-				// Open one N5Writer on ${baseDir}/interestpoints.n5 per task and reuse it for every
-				// saveCorrespondingInterestPoints call across all newSetups in this (oldSetup, tp).
-				final URI corrContainerUri = URITools.toURI(
-						URITools.appendName( data.getBasePathURI(), InterestPointsN5.baseN5 ) );
-				try ( final N5Writer corrN5Writer = URITools.instantiateN5Writer( StorageFormat.N5, corrContainerUri ) )
+				try
 				{
-					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> {
-						for ( final InterestPoints ips : vipl.getHashMap().values() )
-						{
-							final InterestPointsN5 n5ips = ( InterestPointsN5 ) ips;
-							n5ips.saveCorrespondingInterestPoints( false, corrN5Writer );
-						}
-					};
+					// collect the corrected lists of all new setups of this task and write them as one staging file
+					// (executors never commit; the driver's XML save does)
+					final ArrayList< InterestPoints > pending = new ArrayList<>();
+					final SplittingTools.CorrespondenceSaver corrSaver = vipl -> pending.addAll( vipl.getHashMap().values() );
 
 					// Share one IP-map cache across all newSetup iterations in this task so we don't
 					// reload the same target-view IP copies repeatedly. Single-threaded scope → plain HashMap is fine.
@@ -606,6 +597,8 @@ public class SplitDatasets extends AbstractBasic
 								corrSaver,
 								ipMapCache );
 					}
+
+					InterestPointsZarr.saveStaged( pending );
 				}
 				catch ( final Exception e )
 				{
@@ -668,10 +661,7 @@ public class SplitDatasets extends AbstractBasic
 								continue;
 
 							final String newLabel = label + "_split";
-							final InterestPoints newIps = InterestPoints.newInstance( baseDir, viewId, newLabel );
-							final String oldParams = oldVipl.getInterestPointList( label ).getParameters();
-							newIps.setParameters( oldParams != null ? oldParams : "" );
-							vipl.addInterestPointList( newLabel, newIps );
+							vipl.addInterestPointList( newLabel, splitLabelLike( oldVipl.getInterestPointList( label ), baseDir, viewId, newLabel ) );
 						}
 
 						if ( fakeInterestPoints != InterestPointAdding.NONE )
@@ -968,5 +958,35 @@ public class SplitDatasets extends AbstractBasic
 	{
 		System.out.println( Arrays.toString( args ) );
 		System.exit( new CommandLine( new SplitDatasets() ).execute( args ) );
+	}
+
+	/**
+	 * The lazy object of a split label, as the XML instantiates it: a plain label as a plain InterestPointsZarr (its points were
+	 * staged by the splitting), a filtered label (VirtualFilteredInterestPoints) as a filter of the split base label, which is
+	 * what SplittingTools.processSetupStatic created through InterestPoints.copyTo. Nothing is marked modified, so a save on the
+	 * driver does not overwrite what the workers wrote. The parameters are the old label's (adapted to the split base for a
+	 * filtered label): the XML writer needs them.
+	 *
+	 * @param oldIps - the label of the old view, null if the old view did not have it (a plain, empty-pointing object then, as before)
+	 */
+	static InterestPoints splitLabelLike( final InterestPoints oldIps, final URI baseDir, final ViewId viewId, final String newLabel )
+	{
+		final InterestPoints newIps;
+
+		if ( oldIps instanceof VirtualFilteredInterestPoints )
+		{
+			final VirtualFilteredInterestPoints virtual = (VirtualFilteredInterestPoints)oldIps;
+			final String newBaseLabel = virtual.getBaseLabel() + "_split";
+			newIps = new VirtualFilteredInterestPoints( baseDir, InterestPointsN5.createN5datasetPath( viewId.getTimePointId(), viewId.getViewSetupId(), newLabel ), newBaseLabel, virtual.getFilter() );
+			newIps.setParameters( virtual.getFilter().describe( newBaseLabel ) );
+		}
+		else
+		{
+			newIps = InterestPoints.newInstance( baseDir, viewId, newLabel );
+			final String oldParams = oldIps == null ? null : oldIps.getParameters();
+			newIps.setParameters( oldParams != null ? oldParams : "" );
+		}
+
+		return newIps;
 	}
 }

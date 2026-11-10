@@ -133,6 +133,8 @@ echo 'Installing workflow tools ...'
 
 install_command resave "net.preibisch.bigstitcher.spark.SparkResaveN5"
 install_command detect-interestpoints "net.preibisch.bigstitcher.spark.SparkInterestPointDetection"
+install_command filter-interestpoints "net.preibisch.bigstitcher.spark.FilterInterestPoints"
+install_command embed-interestpoints "net.preibisch.bigstitcher.spark.SparkInterestPointEmbedding"
 install_command match-interestpoints "net.preibisch.bigstitcher.spark.SparkGeometricDescriptorMatching"
 install_command stitching "net.preibisch.bigstitcher.spark.SparkPairwiseStitching"
 install_command solver "net.preibisch.bigstitcher.spark.Solver"
@@ -148,6 +150,8 @@ install_command create-dataset "net.preibisch.bigstitcher.spark.CreateDataset"
 
 echo 'Installing utils ...'
 
+install_command define-dataset "net.preibisch.bigstitcher.spark.DefineDataset"
+install_command apply-transformation "net.preibisch.bigstitcher.spark.ApplyTransformation"
 install_command split-images "net.preibisch.bigstitcher.spark.SplitDatasets"
 install_command filter-views "net.preibisch.bigstitcher.spark.Filter_Views"
 install_command downsample "net.preibisch.bigstitcher.spark.SparkDownsample"
@@ -156,6 +160,7 @@ install_command clear-registrations "net.preibisch.bigstitcher.spark.ClearRegist
 install_command transform-points "net.preibisch.bigstitcher.spark.TransformPoints"
 install_command duplicate-transformation "net.preibisch.bigstitcher.spark.DuplicateTransformation"
 install_command overlay-landmarks "net.preibisch.bigstitcher.spark.OverlayLandmarks"
+install_command screenshot "net.preibisch.bigstitcher.spark.Screenshot"
 
 
 if [ $(pwd) == "$INSTALL_DIR" ]; then

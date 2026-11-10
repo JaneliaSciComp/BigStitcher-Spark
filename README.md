@@ -9,7 +9,9 @@
 This package allows you to run compute-intense parts of BigStitcher distributed on your workstation, a cluster or the cloud using Apache Spark. The following modules are currently available in BigStitcher-Spark listed as `JavaClassName`/**`cmd-line-tool-name`** (you can find documentation below, but a good start is also to just check out the cmd-line arguments, they mostly follow the BigStitcher GUI; each module takes an existing XML):
 
 * `SparkResaveN5`/**`resave`** (resave an XML dataset you defined in BigStitcher - use virtual loading only - into N5 for processing)
-* `SparkInterestPointDetection`/**`detect-interestpoints`** (detect interest points for alignment)
+* `SparkInterestPointDetection`/**`detect-interestpoints`** (detect interest points for alignment, Difference-of-Gaussian or scale space)
+* `FilterInterestPoints`/**`filter-interestpoints`** (filtered labels of detected interest points: by response, intensity, sigma or a fixed number per view, without detecting again)
+* `SparkInterestPointEmbedding`/**`embed-interestpoints`** (learned embeddings of the interest points of a label, pcmatch's ONNX model evaluated in Java, for `match-interestpoints -m EMBEDDINGS`)
 * `SparkGeometricDescriptorMatching`/**`match-interestpoints`** (perform pair-wise interest point matching)
 * `SparkPairwiseStitching`/**`stitching`** (run pairwise stitching between overlapping tiles)
 * `Solver`/**`solver`** (perform the global solve, works with interest points and stitching)
@@ -33,13 +35,16 @@ Additonally there are some utility methods:
 * [**Example Datasets**](#examples)
 * [**Usage**](#usage)
   * [Resave Dataset](#resave)
-  * [Pairwise Stitching](#stitching)
-  * [Detect Interest Points](#ip-detect)
-  * [Match Interest Points](#ip-match)
-  * [Solver](#solver)
   * [Flatfield Correction](#flatfield)
     * [Estimate Flatfield/Darkfield](#estimate-flatfield)
     * [Apply Correction](#correct-flatfield)
+  * [Pairwise Stitching](#stitching)
+  * [Detect Interest Points](#ip-detect)
+  * [Filter Interest Points](#ip-filter)
+  * [Match Interest Points](#ip-match)
+  * [Solver](#solver)
+  * [Define Dataset / Apply Transformation](#define)
+  * [Screenshot](#screenshot)
   * [Affine Fusion](#affine-fusion)
     * [Create Fusion Container](#create-fusion-container)
     * [Run Affine Fusion](#run-affine-fusion)
@@ -70,7 +75,7 @@ java -Xmx64g -jar BigStitcher-Spark-local.jar --help          # lists all comman
 
 `-Xmx` is the memory available to the local Spark. By default all cores are used; limit them with `-Dspark.master='local[8]'` (quote it, the brackets are shell globs). No further JVM flags are required, the jar's manifest carries the module-access settings Spark 4 needs on Java 17/21.
 
-**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
+**Building from source** instead (developers): install **[Apache Maven](https://maven.apache.org)** (`mvn -v`; `JAVA_HOME` must point at the JDK), clone the repo, `cd BigStitcher-Spark` and run `./install -t <num-cores> -m <mem-in-GB>`. This builds the project and creates one executable per module in the working directory (`resave`, `detect-interestpoints`, `filter-interestpoints`, `embed-interestpoints`, `match-interestpoints`, `stitching`, `solver`, `match-intensities`, `solve-intensities`, `create-fusion-container`, `fusion`, `nonrigid-fusion`, `split-images`, `filter-views`, `downsample`, `clear-interestpoints`, `clear-registrations`, `transform-points`, `overlay-landmarks`, `define-dataset`, `apply-transformation`, `screenshot`), each preset with the given cores and memory. The executables contain absolute paths into your local Maven repository, so they only work on the machine that built them.
 
 If you run the code directly from your IDE, you will need to add JVM parameters for the local Spark execution (e.g. 8 cores, 50GB RAM), plus the `--add-opens` flags listed in the `install` script:
 ```
@@ -138,7 +143,7 @@ It is analogous for the interest point dataset:
 
 <code>./resave -x ~/SparkTest/IP/dataset.xml -xo ~/SparkTest/IP/dataset.xml</code>
 
-Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. 
+Please run `resave` without parameters to get help for all command line arguments. Using `--blockSize` you can change the blocksize of the N5, and `--blockScale` defines how many blocks at once will be processed by a Spark job. With `-ds` you can define your own downsampling steps if the automatic ones are not well suited. Every Spark task loads its compute block (`--blockSize` x `--blockScale`) into memory before writing it, which needs that much memory per task; `--no-preloadComputeBlocks` streams the blocks instead, which is very slow for the virtual Bio-Formats loader (every plane is re-read for every block). Datasets of the views that already exist in the container, e.g. from an interrupted run, stop the resaving; `--overwriteExistingDatasets` deletes those views' datasets first and keeps the others.
 
 ***Note:*** `--dryRun` allows the user to test the functionality without writing any data. The Spark implementation parallelizes over user-defined blocks across all input images at once, so also few, very big images will be processed efficiently.
 
@@ -162,11 +167,23 @@ Interest-point based registration is generally more reliable and faster than sti
 
 <code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 -t 0.008 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
 
-The results will be written in the `XML` and the `interestpoints.n5` directory, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization. If you want to inspect the interest points you can open the XML in BigStitcher, go to multiview mode, right click, start the **Interest Point Explorer** and click on the number of detections that will then be overlaid onto the images (see screenshot below).
+The results will be written in the `XML` and the interest point store `interestpoints.zarr` next to it, in order to compute transformation models and apply them to the images you need to run [matching](#ip-match) followed by the [solver](#solver) that computes a global optimization. If you want to inspect the interest points you can open the XML in BigStitcher, go to multiview mode, right click, start the **Interest Point Explorer** and click on the number of detections that will then be overlaid onto the images (see screenshot below).
+
+Interest points of projects written before October 2026 live in a per-view `interestpoints.n5`; they are read as they are and can be moved into the store once with `java -cp <the fat jar> net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5ToZarr dataset.xml` (one group per label and timepoint instead of thousands of small files; nothing changes in the XML).
 
 Please run `detect-interestpoints` without parameters to get help for all command line arguments. `-s` and `-t` define the sigma and threshold of the Difference-of-Gaussian, respectively and `-l` specifies the label for the interest points. `--minIntensity` and `--maxIntensity` set the intensity range in which all processed blocks are normalized to `[0...1]`; these values are mandatory since each individual Spark job is unable to figure out correct min/max values of the images. You could find good guesses for all these values by starting the interactive interest point detection in BigStitcher. `-dsxy` and `-dsz` define the downsampling at which interest point detection is performed. Using `--localization` you can specify the type of subpixel localization, either `NONE` or `QUADRATIC`. `--type` allows to set which type of intensity peaks should be identified; `MIN`, `MAX` or `BOTH`. Finally, `--blockSize` sets the blocksize that will be processed in each Spark job.
 
-`--overlappingOnly` is a feature that will only identify interest points in areas of each image that is currently overlapping with another image. `--storeIntensities` will extract intensities of each interest point and store it in the `interestpoints.n5` directory as extra datasets. `--prefetch` will use parallel threads to pre-load all image data blocks ahead of the computation, which is desirable for cloud execution.
+`--overlappingOnly` only identifies interest points in the regions of each image that overlap other selected images by the current registrations (the same rule as the BigStitcher GUI's "Only in regions overlapping other views": one detection per region, combined, points closer than 0.5 px to one of another region dropped); `--onlyCompareOverlapTiles` counts only other volumes of the same timepoint as partners, i.e. other tiles or angles, not other channels or illuminations of the same volume (which overlap it fully). `--prefetch` will use parallel threads to pre-load all image data blocks ahead of the computation, which is desirable for cloud execution.
+
+Every detection stores three attributes next to its position, exactly as the BigStitcher GUI does: the **DoG response**, the **sigma** (in pixels at full resolution) and the **image intensity** at the detection (linearly interpolated, in the raw units of the image at the resolution of the detection). They are stored with every point (the `points` array of a label in `interestpoints.zarr` holds x, y, z, response, sigma and intensity as float32) and are what [`filter-interestpoints`](#ip-filter) and the interactive filter of the BigStitcher GUI work with (the former `--storeIntensities` is gone, intensities are always stored). `--maxSpots` keeps the brightest points per view by that intensity; prefer a filtered label (`filter-interestpoints --keepPoints`), which keeps the full detection.
+
+`--method SCALE_SPACE` runs the **scale-space Difference-of-Gaussian** of BigStitcher instead of the single-scale one: starting at `-s` (the initial blur, e.g. 1.6) it finds structures of all sizes and stores the sigma of each, so beads and nuclei of different sizes come out of one run and can be separated by `filter-interestpoints --sigma`. `--steps` (per octave, default 4), `--octaves` (default -1 = all the image allows) and `--no-finestLevel` (keep scale extrema only; by default all spatial extrema of the finest level are kept, since sub-resolution structures like beads are no scale extrema) are its parameters, `-dsxy`/`-dsz` is the resolution it starts at.
+
+`--anisotropy` gives the ratio z voxel / x voxel of the raw data; the Gaussians are then isotropic in physical units (the BigStitcher GUI suggests 0.8 x the calibration ratio, since the PSF blurs z more than the calibration says). Without it the Difference-of-Gaussian blurs isotropically in pixels as it always did, the scale space uses the calibration ratio.
+
+`--noiseFactor` replaces `-t`: the threshold becomes the factor times the **noise floor** of the data, the robust standard deviation of the finest Difference-of-Gaussian level, estimated in 16 random blocks of every view (one Spark job per view) and pooled as the highest of the views, as "Estimate from noise floor" in the BigStitcher GUI does (2.5 is its default). The resolved threshold is printed and stored with the label, nothing is estimated at detection time:
+
+<code>./detect-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads -s 1.8 --noiseFactor 2.5 -dsxy 2 --minIntensity 0 --maxIntensity 255</code>
 
 You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--illuminationId`, Angles `--angleId` and Timepoints `--timepointId` will be processed, a typical choice could be `--timepointId 18 --tileId 0,1,2,3,6,7,8` to only process the timepoint 18 and select Tiles. If you would like to choose Views more fine-grained, you can specify their ViewIds directly, e.g. `-vi '0,0' -vi '0,1' -vi '1,1'` to process ViewId 0 & 1 of Timepoint 0 and ViewId 1 of Timepoint 1. By default, everything will be processed.
 
@@ -174,6 +191,24 @@ You can choose which Tiles `--tileId`, Channels `--channelId`, Iluminations `--i
 
 <img align="left" src="https://github.com/JaneliaSciComp/BigStitcher-Spark/blob/main/src/main/resources/BigStitcher-interestpoints.jpg" alt="Visualizing interest points in BigStitcher">
 &nbsp;
+
+## Filter Interest Points<a name="ip-filter">
+
+A **filtered label** keeps no points of its own: it filters an existing label (its base) on the fly by ranges of the |DoG response|, the image intensity and the sigma of the detections and/or keeps a fixed number of points per view, has its own correspondences, and follows a re-detection of its base. It is the way to try several thresholds without detecting again, to split the structures a scale-space detection found by their size, or to keep the strongest n points per view (this is what "Filter/Manage Interest Points" of the BigStitcher GUI creates, and the Interest Point Explorer shows filtered labels in italics). A typical call:
+
+<code>./filter-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads --response 0.016</code>
+
+creates `beads_r0.016`, the detections of `beads` with |response| >= 0.016. `-l` is the label to filter, `--response`, `--intensity` and `--sigma` take a range each (`a` keeps >= a, `a-b` keeps a..b; the intensity in the raw units of the image at the resolution of the detection, the sigma in pixels at full resolution); several entries separated by `,` create one label per entry, e.g. `--response 0.008,0.016,0.032` is a threshold ramp. `--keepPoints 3000` keeps a fixed number of points per view (after the ranges), ranked by `--keepBy` (`response`, `intensity` or `sigma`, default `response`) and `--keepMode` (`highest`, `median` or `lowest`, default `highest`). The label is named base label plus suffix (e.g. `beads_r0.016`, `beads_rh3000`, `beads_s1.5-3`) unless `--newLabel` says otherwise; `--copy` stores the points that pass as a plain label instead of a filtered one. The view-selection flags apply, `--dryRun` only prints what would be created. It runs on the driver only, no Spark job is needed.
+
+Removing a label with `clear-interestpoints --clearMode REMOVE_LABEL` also removes the labels filtered from it, and `FIX_INTERESTPOINTS` drops filtered labels whose base is gone.
+
+## Embed Interest Points<a name="ip-embed">
+
+`embed-interestpoints` computes a learned **embedding** (a unit vector, 64-D for the current model) for every interest point of a label and stores it with the points in `interestpoints.zarr`, as pcmatch's `embed` does; `match-interestpoints -m EMBEDDINGS` then finds the correspondences by the similarity of these vectors instead of the geometric descriptors. The model is pcmatch's ONNX export (`pcmatch export-onnx`, a `.onnx` file with its `.onnx.json` sidecar next to it, which carries the model's fingerprint and the cube geometry); it is evaluated in Java, no ONNX Runtime or GPU is needed. A typical call:
+
+<code>./embed-interestpoints -x ~/SparkTest/IP/dataset.xml -l beads --model hf://JaneliaSciComp/bigstitcher-embedding-translation-stack64</code>
+
+takes the model from the Hugging Face Hub (`hf://<namespace>/<name>[@<revision>][/<file>]`; the revision defaults to `main` and is pinned to its commit, which the action history records; every executor downloads the `.onnx` and its sidecar once into `--modelCache`, default `~/.bigstitcher/models` on each node or the system property `bigstitcher.models`, verified by sha256). On a cluster without internet access download the two files once and pass the `.onnx` as `--model /models/translation-stack.onnx` (a path every executor can read, the sidecar next to it). The command runs one Spark task per view: it samples five isotropic cubes per point from the image pyramid (edges of 5 to 30 detection sigmas, never finer than the level the detection ran at, NaN outside the image), runs the network block by block (`--blockSize`, default 128 points per call) and writes the view's rows into the array `--arrayName` (default `embedding`) of the label. A filtered label is embedded through its base label: all points of the base, stored under the base, so the filtered labels of that base read them too. An array of another model under the same name is replaced as a whole, since rows of two models cannot be matched against each other. The label needs the detection sigma from its parameters string (a DoG or scale-space detection); for a scale-space label every point's own sigma scales its cubes. The view-selection flags apply, `--dryRun` computes without writing. Speed: about 500 points per second and core.
 
 ## Match Interest Points<a name="ip-match">
 
@@ -185,7 +220,7 @@ A typical, simple command line call to register each timepoint alignment individ
 
 Please run `match-interestpoints` without parameters to get help for all command line arguments. `-l` defines the label of the detected interest points used for matching. `-tm` specifies the transformation model to be used (`TRANSLATION`, `RIGID` or (default)`AFFINE`), `-rm` defines the regularization model (`NONE`, `IDENTITY`, `TRANSLATION`, (default)`RIGID` or `AFFINE`) and `--lambda` `[0..1]` is the lambda for the regularization model, which is set to `0.1` by default. `-vr` defines which views/images will be matched; `OVERLAPPING_ONLY` or `ALL_AGAINST_ALL`. `--clearCorrespondence` removes potentially existing, stored matches between views, if it is not called the identified matches will be added to the existing ones.
 
-`-m` defines the matching method; `FAST_ROTATION`, `PRECISE_TRANSLATION` or `ICP`.
+`-m` defines the matching method; `FAST_ROTATION`, `PRECISE_TRANSLATION`, `ICP`, `EMBEDDINGS`, or `LOAD_CANDIDATES` (precomputed candidates from an N5 store, `--candidatesPath`; only RANSAC runs).
 * `FAST_ROTATION` is a rotation invariant method that uses geometric hashing and can find corresponding constellation of points even if they are significantly rotated relative to each other.
   * `-s` defines the significance during descriptor matching, to establish a correspondence the best matching descriptor has to be `s` times better than the second best matching descriptor.
   * `-r` is the level of redundancy during descriptor matching, it adds extra neighbors to each descriptor and tests all combinations of neighboring points. 
@@ -193,6 +228,8 @@ Please run `match-interestpoints` without parameters to get help for all command
   * supports the same parameters `-r`, `-s` as FAST_ROTATION above, and additionally support `-n` to specify the number of neighboring points that are used to build geometric descriptors, `-sr` to limit the search to a radius around each point, and `--descriptorSearch` to pick the descriptor comparison (`AUTO` chooses per view pair between a flat KD-tree and a blocked brute force sweep; `LEGACY` is the original exhaustive loop)
 * `ICP` is a method that iteratively assignes closest pairs of points between two images until convergence and can be used for fine alignment.
   * `-ime` is the ICP maximum allowed error, `-iit` defines the number of ICP iterations and `--icpUseRANSAC` enables RANSAC at every ICP iteration
+* `EMBEDDINGS` matches on the vectors `pcmatch embed` stored with the interest points (the per-point array `embedding` of `interestpoints.zarr`, one unit vector per point); no images are read. Partners within `-sr`/`--searchRadius` (optional, as for PRECISE_TRANSLATION: without it every point of the other view is a possible partner, which works well; a radius restricts the partners to the registration's uncertainty in global px, about 20 for a well pre-registered dataset, 300-500 for large translations) are compared by cosine, the best one is a candidate if `(1 - best) < ratio x (1 - second best)`, or if it is alone within the radius.
+  * `--descriptorRatio` is that ratio (default 0.85, smaller is stricter), `--minSimilarity` the cosine similarity a candidate needs at least (default 0.3), `--arrayName` picks the array when a label has more than one (otherwise the one it has is used). A filtered label uses the vectors of its base label (the array must hold one row per point of the base label); a label that was detected again since the vectors were written fails with "run pcmatch embed again"; grouped views are not supported. The BigStitcher GUI offers the same matcher as "Embeddings".
 
 All methods use RANSAC to robustly identify a set of corresponding points in the set or correspondence candidates (optional for ICP). `-rit` defines the number of RANSAC iterations (increasing might help to find more correspondences), `-rme` the maximum error (epsilon) for RANSAC (increasing might help to find more correspondences), `-rmir` the minimum inlier ratio (setting to `0.0` might help to find more correspondences), and `-rmif` defines the minimum inlier factor for RANSAC (i.e. how many times the minimal number of inliers required by the transformation model need to be identified so a pair is valid).
 
@@ -276,11 +313,43 @@ Two utilities for editing the interest-point data and the registrations stored i
 
 <code>./clear-registrations -x ~/SparkTest/IP/dataset.xml --remove 1 -vi '0,0'</code>
 
-`clear-interestpoints` modes (`--clearMode`): `CLEAR_EVERYTHING` (default) removes all interest points and correspondences of the selected views; without a view selection it deletes the whole `interestpoints.n5` directory. `CLEAR_ALL_CORRESPONDENCES` keeps the detections and drops the correspondence links. `ADD_LABEL` / `REMOVE_LABEL` add an empty interest-point list with the given `--label`, or remove that label, from the selected views. `FIX_INTERESTPOINTS` repairs a project whose views were removed from the XML (drops orphaned entries, N5 groups and correspondences); it always covers the whole dataset and ignores the view selection.
+`clear-interestpoints` modes (`--clearMode`): `CLEAR_EVERYTHING` (default) removes all interest points and correspondences of the selected views; without a view selection it deletes the whole interest point store (`interestpoints.zarr`, and a legacy `interestpoints.n5`). `CLEAR_ALL_CORRESPONDENCES` keeps the detections and drops the correspondence links. `ADD_LABEL` / `REMOVE_LABEL` add an empty interest-point list with the given `--label`, or remove that label (with the [filtered labels](#ip-filter) of it), from the selected views. `FIX_INTERESTPOINTS` repairs a project whose views were removed from the XML (drops orphaned entries, legacy N5 groups and correspondences, and filtered labels whose base label is gone); it always covers the whole dataset and ignores the view selection.
 
 ***Note:*** whenever data is removed from selected views, correspondences in *unselected* views that point into the selection are removed as well, so the project stays consistent. `--silent` skips the per-view listing, which otherwise loads all selected interest points just to print counts (recommended for large or cloud-hosted datasets).
 
-`clear-registrations` strips transformations from the selected views: `--keep N` keeps only the first N transformations (in order of application, e.g. calibration first), `--remove N` removes the last N.
+`clear-registrations` strips transformations from the selected views, exactly one of: `--keep N` keeps only the first N transformations (in order of application, e.g. calibration first), `--remove N` removes the last N, `--index 1,3` removes the ones at these positions (0 = the first applied; every view's chain is printed with its indices, so a `--dryRun` shows them), `--name 'Mirror *'` removes the ones whose name matches the pattern (`*` any text, `?` one character; repeat for several patterns).
+
+## Define Dataset / Apply Transformation<a name="define">
+
+Two utilities that create a project and set up its initial transformations without BigStitcher's dialogs, e.g. for a deskewed diSPIM acquisition whose geometry (slice spacing, reversed scan direction, arm rotation) is known beforehand, so that only the interest point detection and the registration remain.
+
+<code>./define-dataset -x ~/data/dataset.xml -i viewA.tif -i viewB.tif -i viewC.tif --voxelSize 0.0534,0.0534,0.549 --voxelSize 0.0534,0.0534,0.836 --voxelSize 0.0534,0.0534,0.5 --unit um</code>
+
+`define-dataset` is the command-line counterpart of "Define Multi-View Dataset" for the plain case of one image file per view: every `-i` file (anything Bio-Formats reads; each channel of a file becomes a view with that channel id, only the first series is used) becomes a view setup with the image size read from the file, the voxel size from `--voxelSize x,y,z` (one per image or one for all; default: the file's metadata, which ImageJ TIFFs often get wrong) and `--unit`, and the attributes `--angle`, `--tile`, `--illumination` (one id per image or one for all; default: the image index as the angle, tile and illumination 0) and `--timepoint`. The XML gets the virtual Bio-Formats image loader (`spimreconstruction.filemap2`, planes are read on demand) and the calibration transforms (voxel size over the smallest voxel size) and is refused if it exists, unless `--overwrite`. `--dryRun` prints the setups and writes nothing. Resave to N5/OME-Zarr afterwards with `resave` for fast access.
+
+<code>./apply-transformation -x ~/data/dataset.xml --mirror z --angleId 1</code>
+
+<code>./apply-transformation -x ~/data/dataset.xml --rotate y,-56.7 --angleId 1</code>
+
+<code>./apply-transformation -x ~/data/dataset.xml --centerOnView 0,2 --angleId 0,1</code>
+
+`apply-transformation` is "Apply Transformations" as a command: it adds one view transform to the selected views (the usual selection flags; all views without them), after the existing transforms like the dialog, or before them (in the image's pixel coordinates) with `--applyFirst`. Exactly one of `--rotate AXIS,DEGREES` (the dialog's right-handed rotation about x, y or z), `--translate dx,dy,dz`, `--scale sx,sy,sz`, `--mirror x|y|z`, `--affine m00,...,m23` (12 row-major values as in the XML) or `--centerOnView TIMEPOINT,SETUP` (the translation that puts the centre of each selected view's image, through its current transforms, onto the centre of the reference view: a starting point for the registration). `--name` sets the transform's name in the XML, `--dryRun` only prints. Transforms are removed again with `clear-registrations` (by index or name). A shear is not offered yet, since BigDataViewer's interpolation of a sheared view breaks down (future work).
+
+## Screenshot<a name="screenshot">
+
+Headless BigDataViewer renderings of a project: the selected views under their **current** registrations, composited with per-view colours and display ranges, written as PNG files without a window (works over ssh with `DISPLAY` unset, e.g. on a cluster node). Made for judging an alignment by eye or by a script after `solver`: a view pair in magenta and green turns white where the two views agree and shows coloured doubles where they do not. Read-only: the XML is never written.
+
+<code>./screenshot -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/shots --pairs overlapping --planes xy,xz --auto --json</code>
+
+<code>./screenshot -x ~/SparkTest/IP/dataset.xml -o ~/SparkTest/IP/shots --overview --single --planes xy,xz,yz --render slice --width 2048</code>
+
+**What** (at least one): `--pairs overlapping` renders one image set per pair of selected views whose registered bounding boxes intersect (the `OVERLAPPING_ONLY` rule of the registration), `--pairs 'A,B;C,D'` the given setup pairs; the camera is centred on the intersection of the two boxes, view A is magenta and view B green (`--colors`), files `pair_tp<T>_s<A>_s<B>_<plane>.png`. `--overview` shows all selected views together, centred on their union box, one colour per view (`--palette colorstream` = BigStitcher's per-view colours from `--paletteStart`, `fixed` = magenta, green, cyan, yellow, orange, blue cycling, or an explicit list with exactly one colour per selected view), files `overview_<plane>.png`. `--single` renders every selected view alone in grey, files `view_tp<T>_s<S>_<plane>.png`. `--transform FILE.json` renders the selected views once per viewer transform in the file (the JSON BigStitcher's BDV fly-through saves: an array of 12-value affines, global to screen pixels, applied as-is to `--width` x `--height`), files `transform<i>.png`. The usual view-selection flags apply; without a timepoint selection the first timepoint is rendered, and one call renders one timepoint.
+
+**Camera**: `--planes xy,xz,yz` (default `xy`) are the viewing axes of the global frame: xy looks along z with x right and y down (BigDataViewer's default), xz has x right and z down, yz has y right and z down. `--render mip` (default) is a maximum projection over `--depth` global pixels centred on the box (default: the whole box for pairs and single views, a quarter of it for the overview), in steps of `--step` global pixels (default: the largest of one voxel of the shown views along that axis, one screen pixel and depth/256, so a projection costs at most 257 frames); `--render slice` is one plane through the box centre. `--width` (1024), `--height` (from the box aspect, 16..4096), `--margin` (0.1 of the box on every side), `--maxScale` (4): a box smaller than the image, e.g. the overlap strip of two neighbouring tiles, is drawn at most at this magnification into a correspondingly smaller image rather than blown up to the full width. `--level L` pins the resolution level of every view instead of letting the renderer choose it from the screen scale.
+
+**Display**: `--auto` (the default) takes the 0.1 / 99.9 percentiles of every view at a coarse resolution level, for a pair image inside the pair's overlap box so that both views show with comparable brightness where they overlap, `--min a --max b` one range for all views, `--range S=a:b` a range per setup. `--json [path]` writes a manifest (default `<outputDir>/screenshots.json`) with, per image, the file, kind, views, plane, render mode, depth, step, frames, the box, the viewer transform (12 values, the same layout as a `--transform` file), size, scale, colours and ranges, so a script can tell what every picture shows. `--dryRun` prints the planned images and writes nothing.
+
+***Note:*** to check that the pictures react to a misalignment, shift one view with `./apply-transformation -x dataset.xml --translate 20,0,0 -vi 0,3` on a copy of the project: its pair images then show magenta/green doubles 20 pixels apart. Overlays of interest points and bounding boxes are not implemented yet.
 
 ## Affine Fusion<a name="affine-fusion">
 

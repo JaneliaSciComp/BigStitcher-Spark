@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
@@ -49,10 +50,14 @@ import net.preibisch.legacy.io.IOFunctions;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.AdvancedRegistrationParameters;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.InterestPointOverlapType;
+import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
+import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointArrays;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPointLists;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.MatcherPairwiseTools;
@@ -62,8 +67,6 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.GroupedInterestPoint;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.InterestPointGroupingMinDistance;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.centerofmass.CenterOfMassPairwise;
-import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.centerofmass.CenterOfMassParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.geometrichashing.GeometricHashingParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.icp.IterativeClosestPointPairwise;
@@ -72,6 +75,9 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.DescriptorSearch;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMPairwise;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.rgldm.RGLDMParameters;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings.EmbeddingsMatcher;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings.EmbeddingsPairwise;
+import net.preibisch.mvrecon.process.interestpointregistration.pairwise.methods.embeddings.EmbeddingsParameters;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -108,32 +114,29 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		 */
 		ICP,
 		/**
-		 * Center of mass (average or median, see {@code --centerOfMassType}) matching,
-		 * {@link CenterOfMassPairwise}, like the "Center of mass" algorithm of the GUI.
-		 */
-		CENTER_OF_MASS,
-		/**
 		 * Load precomputed match candidates from the N5 store at {@code --candidatesPath} and only run
 		 * RANSAC on them, {@link LoadCandidatesPairwise}.
 		 */
-		LOAD_CANDIDATES
+		LOAD_CANDIDATES,
+		/**
+		 * Match on the embeddings stored with the interest points (the per-point array of {@code interestpoints.zarr}
+		 * written by pcmatch embed): a radius query in the registered frame, a cosine per candidate pair, a ratio test,
+		 * then RANSAC, {@link EmbeddingsPairwise}; takes {@code --searchRadius} (no limit without it), {@code --descriptorRatio}, {@code --minSimilarity} and
+		 * {@code --arrayName}.
+		 */
+		EMBEDDINGS
 	};
-
-	public enum CenterOfMassType { AVERAGE, MEDIAN };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label(s) of the interest points used for registration (e.g. -l beads -l nuclei)")
 	protected ArrayList<String> labels = null;
 
-	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, PRECISE_TRANSLATION, ICP, CENTER_OF_MASS or LOAD_CANDIDATES to import your own match candidates and only run RANSAC")
+	@Option(names = { "-m", "--method" }, required = true, description = "the matching method; FAST_ROTATION, PRECISE_TRANSLATION, ICP, LOAD_CANDIDATES to import your own match candidates and only run RANSAC, or EMBEDDINGS to match on the vectors pcmatch embed stored with the interest points (needs --searchRadius)")
 	protected Method registrationMethod = null;
-
-	@Option(names = { "--centerOfMassType" }, description = "type of center of mass computation; AVERAGE or MEDIAN (default: AVERAGE, only used with CENTER_OF_MASS method)")
-	protected CenterOfMassType centerOfMassType = CenterOfMassType.AVERAGE;
 
 	@Option(names = { "-s", "--significance" }, description = "how much better the first match between two descriptors has to be compareed to the second best one (default: 3.0)")
 	protected Double significance = 3.0;
 
-	@Option(names = { "-sr", "--searchRadius" }, description = "Only for PRECISE_TRANSLATION; limits the search range for corresponding points in global coordinate space (default: no limit)")
+	@Option(names = { "-sr", "--searchRadius" }, description = "the search radius for corresponding points in global coordinate space (px); optional for PRECISE_TRANSLATION and EMBEDDINGS (default: no limit, every point of the other view is a possible partner; for EMBEDDINGS a radius restricts the partners to the registration's uncertainty, e.g. 20 for a well pre-registered dataset, 300-500 for large translations)")
 	protected Double searchRadius = null;
 
 	@Option(names = { "--descriptorSearch" }, description = "Only for PRECISE_TRANSLATION; how descriptors are compared: AUTO (chooses per view pair), FLAT_KDTREE, BLOCKED_BRUTE_FORCE or LEGACY (the original loop) (default: AUTO)")
@@ -176,10 +179,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	protected Double ransacMaxError = null;
 
 	// TODOL ignored by ICP
-	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "RANSAC min inlier ratio (default: 0.1)")
+	@Option(names = { "-rmir", "--ransacMinInlierRatio" }, description = "RANSAC min inlier ratio (default: 0.05; if multi-consensus is chosen 0.0)")
 	protected Double ransacMinInlierRatio = null;
 
-	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "RANSAC minimal number of required inliers (default: 12)")
+	@Option(names = { "-rmni", "--ransacMinNumInliers" }, description = "RANSAC minimal number of required inliers (default: 12; if multi-consensus is chosen 30)")
 	protected Integer ransacMinNumInliers = null;
 
 	@Option(names = { "-rmc", "--ransacMultiConsensus" }, description = "RANSAC perform multiconsensus matching (default: false)")
@@ -200,8 +203,17 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	@Option(names = { "--icpUseRANSAC" }, description = "ICP uses RANSAC at every iteration to filter correspondences (default: false)")
 	protected boolean icpUseRANSAC = false;
 
-	@Option(names = { "--candidatesPath" }, description = "only for LOAD_CANDIDATES: path/URI of the N5 store itself (e.g. /data/candidates.n5) holding match candidates for each view pair in the interestpoints.n5 correspondences layout (tpId_<tp>_viewSetupId_<s>/<label>/correspondences, v2.0.0; consensusSetId column ignored), e.g. written by pcmatch match_pipeline.py --out-candidates; only RANSAC is run on them")
+	@Option(names = { "--candidatesPath" }, description = "only for LOAD_CANDIDATES: path/URI of the N5 store itself (e.g. /data/candidates.n5) holding match candidates for each view pair in the legacy interestpoints.n5 correspondences layout (tpId_<tp>_viewSetupId_<s>/<label>/correspondences, v2.0.0; consensusSetId column ignored; an external N5 of its own, independent of the dataset's interestpoints.zarr), e.g. written by pcmatch match_pipeline.py --out-candidates; only RANSAC is run on them")
 	protected String candidatesPath = null;
+
+	@Option(names = { "--descriptorRatio" }, description = "only for EMBEDDINGS: the ratio test in similarity space, a point's best partner within the search radius is a candidate if (1 - best cosine) < ratio x (1 - second best cosine); smaller is stricter, 1.0 keeps every best partner (default: 0.85)")
+	protected double descriptorRatio = EmbeddingsMatcher.defaultRatio;
+
+	@Option(names = { "--minSimilarity" }, description = "only for EMBEDDINGS: the minimal cosine similarity of a candidate (default: 0.3)")
+	protected double minSimilarity = EmbeddingsMatcher.defaultSmin;
+
+	@Option(names = { "--arrayName" }, description = "only for EMBEDDINGS: the per-point array of interestpoints.zarr that holds the embeddings (<label>/tp<T>/arrays/<name>, written by pcmatch embed --array-name); needed only if the labels have more than one array (default: the one array they have)")
+	protected String arrayName = null;
 
 	@Override
 	public Void call() throws Exception
@@ -219,12 +231,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		if ( registrationMethod == Method.ICP && ( redundancy != 1 || significance != 3.0 || numNeighbors != 3 ))
 		{
 			System.out.println( "ICP does not support parameters redundancy, significance and numNeighbors" );
-			return null;
-		}
-
-		if ( registrationMethod == Method.CENTER_OF_MASS && ( redundancy != 1 || significance != 3.0 || numNeighbors != 3 ))
-		{
-			System.out.println( "CENTER_OF_MASS does not support parameters redundancy, significance and numNeighbors" );
 			return null;
 		}
 
@@ -246,12 +252,42 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			return null;
 		}
 
+		if ( registrationMethod == Method.EMBEDDINGS && ( redundancy != 1 || significance != 3.0 ) )
+		{
+			System.out.println( "EMBEDDINGS does not support parameters redundancy and significance (the stored vectors are compared as they are; the ratio test is --descriptorRatio)." );
+			return null;
+		}
+
+		if ( registrationMethod == Method.EMBEDDINGS && ( groupTiles || groupIllums || groupChannels || splitTimepoints ) )
+		{
+			System.out.println( "EMBEDDINGS does not support grouped views (--groupTiles/--groupIllums/--groupChannels/--splitTimepoints)." );
+			return null;
+		}
+
+		if ( registrationMethod == Method.EMBEDDINGS && !( descriptorRatio > 0 && descriptorRatio <= 1 ) )
+		{
+			System.out.println( "--descriptorRatio must be in (0, 1], got " + descriptorRatio + "." );
+			return null;
+		}
+
+		if ( registrationMethod == Method.EMBEDDINGS && !( minSimilarity >= -1 && minSimilarity <= 1 ) )
+		{
+			System.out.println( "--minSimilarity must be in [-1, 1], got " + minSimilarity + "." );
+			return null;
+		}
+
+		if ( registrationMethod != Method.EMBEDDINGS && ( descriptorRatio != EmbeddingsMatcher.defaultRatio || minSimilarity != EmbeddingsMatcher.defaultSmin || arrayName != null ) )
+		{
+			System.out.println( "--descriptorRatio, --minSimilarity and --arrayName are only used with -m EMBEDDINGS." );
+			return null;
+		}
+
 		// defaults are independent: a user-specified -rme must survive an omitted -rit (and vice versa)
 		if ( ransacIterations == null )
-			ransacIterations = ( registrationMethod == Method.CENTER_OF_MASS ) ? 0 : ( registrationMethod == Method.ICP ) ? 200 : 10000;
+			ransacIterations = ( registrationMethod == Method.ICP ) ? 200 : 10000;
 
 		if ( ransacMaxError == null )
-			ransacMaxError = ( registrationMethod == Method.CENTER_OF_MASS ) ? 0.0 : ( registrationMethod == Method.ICP ) ? 2.5 : 5.0;
+			ransacMaxError = ( registrationMethod == Method.ICP ) ? 2.5 : 5.0;
 
 		if ( registrationMethod == Method.LOAD_CANDIDATES && this.candidatesPath == null )
 		{
@@ -296,6 +332,35 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal = buildLabelMap( dataGlobal, viewIdsGlobal, map );
 
+		// the stored embeddings: the one array the labels have, or the named one of several
+		if ( registrationMethod == Method.EMBEDDINGS )
+		{
+			final SortedSet< String > names = InterestPointArrays.names( dataGlobal.getViewInterestPoints(), labelMapGlobal );
+
+			if ( arrayName == null )
+			{
+				if ( names.isEmpty() )
+				{
+					System.out.println( "The label(s) " + labels + " have no stored embeddings (no per-point array in interestpoints.zarr): run pcmatch embed first." );
+					return null;
+				}
+				else if ( names.size() > 1 )
+				{
+					System.out.println( "The label(s) " + labels + " have several per-point arrays " + names + ": please pick one with --arrayName." );
+					return null;
+				}
+
+				arrayName = names.first();
+			}
+			else if ( !names.contains( arrayName ) )
+			{
+				System.out.println( "No per-point array '" + arrayName + "' for the label(s) " + labels + " (found: " + names + "): run pcmatch embed --array-name " + arrayName + " first." );
+				return null;
+			}
+
+			System.out.println( "Matching on the stored embeddings '" + arrayName + "' " + ( searchRadius == null ? "without a search radius limit (every point of the other view is a possible partner)" : "within a search radius of " + searchRadius + " px" ) + ", ratio " + descriptorRatio + ", minimal cosine similarity " + minSimilarity );
+		}
+
 		// clear all correspondences if wanted
 		if ( clearCorrespondences )
 		{
@@ -322,6 +387,9 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final boolean icpUseRANSAC = this.icpUseRANSAC;
 		final Method registrationMethod = this.registrationMethod;
 		final String candidatesPath = this.candidatesPath;
+		final double descriptorRatio = this.descriptorRatio;
+		final double minSimilarity = this.minSimilarity;
+		final String arrayName = this.arrayName;
 		final DescriptorSearch descriptorSearch = this.descriptorSearch;
 		final double ratioOfDistance = this.significance;
 		final boolean limitSearchRadius = ( this.searchRadius != null && this.searchRadius > 0);
@@ -331,7 +399,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		final double interestPointMergeDistance = this.interestPointMergeDistance;
 		final TransformationModel transformationModel = this.transformationModel;
 		final RegularizationModel regularizationModel = this.regularizationModel;
-		final int centerOfMassTypeInt = this.centerOfMassType.ordinal();
 		final double lambda = this.regularizationLambda;
 		final double ransacMaxTrust = this.ransacMaxTrust;
 		final boolean ransacFilter = this.ransacFilter;
@@ -434,7 +501,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						icpMaxIterations,
 						icpUseRANSAC,
 						candidatesPath,
-						centerOfMassTypeInt);
+						descriptorRatio,
+						minSimilarity,
+						arrayName,
+						data.getViewInterestPoints());
 
 				// compute single pairwise match
 				final Pair<Pair<ViewId, ViewId>, PairwiseResult<InterestPoint>> result =
@@ -557,7 +627,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 						icpMaxIterations,
 						icpUseRANSAC,
 						candidatesPath,
-						centerOfMassTypeInt);
+						descriptorRatio,
+						minSimilarity,
+						arrayName,
+						data.getViewInterestPoints());
 
 				// compute single pairwise match
 				Pair<Pair<Group<ViewId>, Group<ViewId>>, PairwiseResult<GroupedInterestPoint<ViewId>>> result =
@@ -658,15 +731,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		{
 			System.out.println( "Saving corresponding interest points (in parallel) ...");
 
-			final ArrayList< Pair< ViewId, String > > allIps = new ArrayList<>();
-
-			for ( final ViewId v : viewIdsGlobal )
-				for ( final String l : labels )
-					allIps.add( new ValuePair<>( v, l) );
-
-			final Map<ViewId, ViewInterestPointLists> ip = dataGlobal.getViewInterestPoints().getViewInterestPoints();
-
-			allIps.parallelStream().forEach( pair -> ip.get( pair.getA() ).getInterestPointList( pair.getB() ).saveCorrespondingInterestPoints( true ) );
+			// stages every list whose correspondences were modified above and commits them (the XML itself does not change)
+			XmlIoSpimData2.saveInterestPointsInParallel( dataGlobal );
 		}
 
 		sc.close();
@@ -702,10 +768,13 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	}
 
 	/**
-	 * Creates the pairwise matcher for the given {@link Method}: {@link GeometricHashingPairwise} for
-	 * {@code FAST_ROTATION}, {@link RGLDMPairwise} for {@code PRECISE_TRANSLATION},
-	 * {@link IterativeClosestPointPairwise} for {@code ICP}, {@link CenterOfMassPairwise} for
-	 * {@code CENTER_OF_MASS} and {@link LoadCandidatesPairwise} for {@code LOAD_CANDIDATES}. Parameters that the chosen method does not use are ignored.
+	 * Creates the pairwise matcher for the given {@link Method}:
+	 * {@link GeometricHashingPairwise} for {@code FAST_ROTATION},
+	 * {@link RGLDMPairwise} for {@code PRECISE_TRANSLATION},
+	 * {@link IterativeClosestPointPairwise} for {@code ICP},
+	 * {@link LoadCandidatesPairwise} for {@code LOAD_CANDIDATES} and
+	 * {@link EmbeddingsPairwise} for {@code EMBEDDINGS}.
+	 * Parameters that the chosen method does not use are ignored.
 	 *
 	 * @param <I> the type of interest point the matcher operates on
 	 * @param rp the RANSAC parameters (max error, min inlier ratio, min number of inliers, iterations,
@@ -729,7 +798,12 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 	 *             ({@code ICP} only)
 	 * @param candidatesPath path/URI of the N5 store holding the precomputed match candidates
 	 *             ({@code LOAD_CANDIDATES} only, otherwise ignored)
-	 * @param centerOfMassType ordinal of {@link CenterOfMassType} ({@code CENTER_OF_MASS} only)
+	 * @param descriptorRatio the ratio test's threshold in similarity space ({@code EMBEDDINGS} only)
+	 * @param minSimilarity the minimal cosine similarity of a candidate ({@code EMBEDDINGS} only)
+	 * @param arrayName the per-point array of the interest point store that holds the embeddings
+	 *             ({@code EMBEDDINGS} only)
+	 * @param interestPoints the interest point lists of the dataset, through which the stored descriptors and the
+	 *             base labels are read ({@code EMBEDDINGS} only, otherwise ignored and may be null)
 	 * @return the matcher
 	 * @throws IllegalArgumentException if {@code registrationMethod} is {@code null} or unknown
 	 */
@@ -747,7 +821,11 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final int icpMaxIterations,
 			final boolean icpUseRANSAC,
 			final String candidatesPath,
-			final int centerOfMassType )
+			final double descriptorRatio,
+			final double minSimilarity,
+			final String arrayName,
+			final ViewInterestPoints interestPoints
+	)
 	{
 		MatcherPairwise< I > matcher;
 
@@ -756,8 +834,8 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 			final GeometricHashingParameters gp = new GeometricHashingParameters(
 					model,
 					GeometricHashingParameters.differenceThreshold,
-					ratioOfDistance,
-					redundancy );
+					(float)ratioOfDistance,
+					(int)redundancy );
 
 			matcher = new GeometricHashingPairwise<>( rp, gp );
 		}
@@ -773,11 +851,6 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 					redundancy,
 					descriptorSearch );
 			matcher = new RGLDMPairwise<>( rp, dp );
-		}
-		else if ( registrationMethod == Method.CENTER_OF_MASS )
-		{
-			// added to match the "Center of mass" registration algorithm from the GUI
-			matcher = new CenterOfMassPairwise<>( new CenterOfMassParameters( centerOfMassType ) );
 		}
 		else if ( registrationMethod == Method.ICP )
 		{
@@ -795,6 +868,10 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 		else if ( registrationMethod == Method.LOAD_CANDIDATES )
 		{
 			matcher = new LoadCandidatesPairwise<>( rp, model, candidatesPath );
+		}
+		else if ( registrationMethod == Method.EMBEDDINGS )
+		{
+			matcher = new EmbeddingsPairwise<>( rp, new EmbeddingsParameters( model, limitSearchRadius ? searchRadius : Double.POSITIVE_INFINITY, descriptorRatio, minSimilarity, arrayName ), interestPoints );
 		}
 		else
 		{

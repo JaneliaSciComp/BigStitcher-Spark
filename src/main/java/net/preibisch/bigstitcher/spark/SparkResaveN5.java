@@ -23,6 +23,7 @@ package net.preibisch.bigstitcher.spark;
 
 import java.io.Serializable;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -46,6 +47,7 @@ import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.N5Util;
 import net.preibisch.bigstitcher.spark.util.RetryTrackerSpark;
 import net.preibisch.bigstitcher.spark.util.Spark;
+import net.preibisch.mvrecon.fiji.plugin.resave.ParametersResaveN5Api;
 import net.preibisch.mvrecon.fiji.plugin.resave.Resave_HDF5;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
@@ -78,7 +80,10 @@ import util.URITools;
  * ({@code --downsampling}, proposed automatically if not given). Full-resolution blocks are copied from
  * the original image loader and each lower level is computed from the previous one, both as Spark
  * tasks with retries for failed blocks. Finally a new XML ({@code --xmlout}) that points to the new
- * container is written.
+ * container is written. A task loads its compute block into memory before writing it (the virtual
+ * Bio-Formats file-list loader caches one plane, streaming would re-read every plane for every block;
+ * {@code --no-preloadComputeBlocks} streams), and datasets of the views that already exist in the
+ * container stop the run unless {@code --overwriteExistingDatasets} deletes them first.
  */
 public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Serializable
 {
@@ -129,6 +134,13 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 	@Option(names = { "--useSharding" },
 			description = "Enable Zarr v3 sharding using blockScale as shard size factor (default: enabled for ZARR v3, disabled for N5/ZARR v2)")
 	private Boolean useSharding = null; // null = auto-detect
+
+	@Option(names = { "--overwriteExistingDatasets" }, description = "delete the datasets of the views to re-save that already exist in the container (e.g. from an interrupted run) before writing; without it existing datasets stop the resaving; ignored with --only-downsample-existing-s0 (default: false)")
+	private boolean overwriteExistingDatasets = false;
+
+	// picocli: a negatable option whose default is true must be declared by its negated name, otherwise --no-X leaves the default and --X turns it off
+	@Option(names = { "--no-preloadComputeBlocks" }, negatable = true, description = "stream the compute blocks from the image loader instead of loading each one (blockSize x blockScale) into memory before writing it; preloading (the default) lets virtual image loaders (e.g. the Bio-Formats based file list, which caches one plane) read every plane once instead of once per block and needs the memory of one compute block per Spark task")
+	private boolean preloadComputeBlocks = true;
 
 	@Override
 	public Void call() throws Exception
@@ -214,6 +226,24 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "Setting up XML at: " + xmlOutURI );
 		System.out.println( "Setting up N5 writing to basepath: " + n5PathURI );
 
+		// datasets of the views to re-save that already exist in the container (e.g. from an interrupted run): creating them
+		// again fails, so stop with a clear message, or delete only those views' groups (--overwriteExistingDatasets);
+		// --only-downsample-existing-s0 needs the existing s0 datasets and reuses compatible pyramid levels, so nothing is checked
+		final List< ViewId > existingViews = new ArrayList<>();
+
+		if ( !multiscalePyramidFromExistingS0 )
+			for ( final ViewId viewId : viewIdsGlobal )
+				if ( N5ApiTools.existsBDVView( n5Writer, viewId, storageFormat ) )
+					existingViews.add( new ViewId( viewId.getTimePointId(), viewId.getViewSetupId() ) );
+
+		final String existingList = existingViews.stream().limit( 10 ).map( v -> N5ApiTools.createBDVViewGroup( v, storageFormat ) ).collect( Collectors.joining( ", " ) ) + ( existingViews.size() > 10 ? ", ..." : "" );
+
+		if ( !existingViews.isEmpty() && !overwriteExistingDatasets )
+		{
+			n5Writer.close();
+			throw new IllegalStateException( existingViews.size() + " of the " + viewIdsGlobal.size() + " views to re-save already exist in " + n5PathURI + " (" + existingList + "). Run with --overwriteExistingDatasets to delete them first, or delete them yourself." );
+		}
+
 		// all ViewSetupIds (needed to create N5 datasets)
 		final HashMap<Integer, long[]> dimensions =
 				N5ApiTools.assembleDimensions( dataGlobal, viewIdsGlobal );
@@ -246,8 +276,19 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 
 		if ( dryRun )
 		{
+			if ( !existingViews.isEmpty() )
+				System.out.println( "Would delete the existing datasets of " + existingViews.size() + " view(s) in " + n5PathURI + ": " + existingList );
+
 			System.out.println( "This is a dry-run, stopping here.");
 			return null;
+		}
+
+		if ( !existingViews.isEmpty() )
+		{
+			System.out.println( "Deleting existing datasets of " + existingViews.size() + " view(s) in " + n5PathURI + ": " + existingList );
+
+			for ( final ViewId viewId : existingViews )
+				N5ApiTools.removeBDVView( n5Writer, viewId, storageFormat );
 		}
 
 		if (multiscalePyramidFromExistingS0)
@@ -339,6 +380,15 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		System.out.println( "Created BDV-metadata, took " + (System.currentTimeMillis() - time ) + " ms." );
 		System.out.println( "Number of compute blocks = " + gridS0.size() );
 
+		// memory needed to preload the largest compute block, per Spark task (on top of what a task needs anyway)
+		final long maxComputeBlockBytes = gridS0.stream().mapToLong( gb ->
+				Arrays.stream( gb[ 1 ] ).reduce( 1, ( a, b ) -> a * b ) * N5ApiTools.bytesPerPixel( dataTypes.get( N5ApiTools.gridBlockToViewId( gb ).getViewSetupId() ) ) ).max().orElse( 0 );
+
+		if ( !multiscalePyramidFromExistingS0 && preloadComputeBlocks )
+			System.out.println( "Preloading compute blocks into memory: up to " + ParametersResaveN5Api.memoryString( maxComputeBlockBytes ) + " per Spark task (times the concurrent tasks of an executor); --no-preloadComputeBlocks streams them instead, which is slow for virtual (e.g. Bio-Formats file-list) loaders." );
+		else if ( !multiscalePyramidFromExistingS0 )
+			System.out.println( "Streaming compute blocks from the image loader (--no-preloadComputeBlocks): slow for virtual (e.g. Bio-Formats file-list) loaders, every plane is re-read for every block." );
+
 		final SparkConf conf = new SparkConf().setAppName("SparkResaveN5");
 
 		if ( localSparkBindAddress )
@@ -354,6 +404,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		//
 		// Save s0 level
 		//
+		final boolean preload = preloadComputeBlocks;
+
 		if ( !multiscalePyramidFromExistingS0)
 			time = processSNBlocks(
 					sc,
@@ -374,7 +426,8 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 								storageFormat,
 								dataTypes.get( N5ApiTools.gridBlockToViewId( gridBlock ).getViewSetupId() ),
 								N5ApiTools.gridToDatasetBdv( 0, storageFormat ), // a function mapping the gridblock to the dataset name for level 0 and N5
-								gridBlock );
+								gridBlock,
+								preload ); // the compute block in memory first: a virtual loader reads every plane once, not once per N5 block
 
 						n5Lcl.close();
 					} );

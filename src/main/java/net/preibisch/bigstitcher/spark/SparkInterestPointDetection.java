@@ -27,14 +27,15 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Random;
 import java.util.SortedMap;
 import java.util.TreeMap;
-import java.util.Random;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -42,36 +43,21 @@ import java.util.stream.Collectors;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5Writer;
-import org.janelia.saalfeldlab.n5.imglib2.N5Utils;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.janelia.scicomp.n5.zstandard.ZstandardCompression;
 
 import mpicbg.spim.data.generic.sequence.BasicImgLoader;
-import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ImgLoader;
 import mpicbg.spim.data.sequence.MultiResolutionImgLoader;
 import mpicbg.spim.data.sequence.ViewDescription;
 import mpicbg.spim.data.sequence.ViewId;
-import net.imglib2.Dimensions;
 import net.imglib2.FinalInterval;
 import net.imglib2.Interval;
-import net.imglib2.KDTree;
 import net.imglib2.RandomAccessible;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.RealRandomAccess;
-import net.imglib2.RealRandomAccessible;
 import net.imglib2.algorithm.gauss3.Gauss3;
-import net.imglib2.converter.Converters;
-import net.imglib2.img.Img;
-import net.imglib2.img.array.ArrayImgs;
-import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
-import net.imglib2.neighborsearch.NearestNeighborSearchOnKDTree;
-import net.imglib2.position.FunctionRandomAccessible;
 import net.imglib2.realtransform.AffineTransform3D;
-import net.imglib2.type.numeric.RealType;
-import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.Intervals;
 import net.imglib2.util.Pair;
@@ -80,7 +66,6 @@ import net.imglib2.util.ValuePair;
 import net.imglib2.view.Views;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.detection.LazyBackgroundNormalize;
-import net.preibisch.bigstitcher.spark.fusion.OverlappingViews;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.Spark;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
@@ -89,15 +74,22 @@ import net.preibisch.mvrecon.Threads;
 import net.preibisch.mvrecon.fiji.plugin.interestpointdetection.DifferenceOfGUI;
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
+import net.preibisch.legacy.registration.bead.laplace.LaPlaceFunctions;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Axis;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointFilter.Limit;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsN5;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarr;
 import net.preibisch.mvrecon.process.downsampling.Downsample;
 import net.preibisch.mvrecon.process.downsampling.DownsampleTools;
 import net.preibisch.mvrecon.process.downsampling.lazy.LazyDownsample2x;
-import net.preibisch.mvrecon.process.fusion.transformed.TransformVirtual;
 import net.preibisch.mvrecon.process.interestpointdetection.InterestPointTools;
+import net.preibisch.mvrecon.process.interestpointdetection.OverlappingRegions;
+import net.preibisch.mvrecon.process.interestpointdetection.NoiseFloor;
 import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGImgLib2;
-import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParameters;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.DoGScaleSpace;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.scalespace.ScaleSpaceParameters;
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.grouping.Group;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -112,21 +104,16 @@ import util.URITools;
  * Each selected view is virtually downsampled ({@code --downsampleXY}, {@code --downsampleZ}),
  * optionally restricted to the regions that overlap other views ({@code --overlappingOnly}), cut into
  * blocks of {@code --blockSize} and every block is processed as one Spark task. Per-block detections
- * are written to a temporary N5 inside {@code interestpoints.n5}, merged per view (dropping points
- * closer than {@link #combineDistance} to an already collected one), optionally limited to the
- * brightest {@code --maxSpots}, and finally stored under {@code --label} in the XML and
- * {@code interestpoints.n5} unless this is a dry run.
+ * are written to a scratch N5 group ({@code interestpoints.n5/spark_tmp_*}, removed at the end together with a container
+ * that holds nothing else), merged per view (dropping points closer than {@link OverlappingRegions#combineDistance} to an already collected
+ * one), optionally limited to the brightest {@code --maxSpots} and staged by the view's task into the dataset's interest
+ * point store ({@code interestpoints.zarr}, {@link InterestPointsZarr#stagePoints}); the driver registers the entries of
+ * {@code --label} in the XML (after dropping the references to a label of that name) and its XML save commits them, unless
+ * this is a dry run.
  */
 public class SparkInterestPointDetection extends AbstractSelectableViews implements Callable<Void>, Serializable
 {
 	private static final long serialVersionUID = -7654397945854689628L;
-
-	/**
-	 * Distance (in full-resolution pixel coordinates of the view) below which an interest point found in
-	 * one processed region is treated as a duplicate of a point already collected for the same view and
-	 * is dropped when the per-region results of {@code --overlappingOnly} are merged.
-	 */
-	public static double combineDistance = 0.5; // when to merge interestpoints that were found in overlapping ROIS (overlappingOnly)
 
 	/** Which Difference-of-Gaussian extrema to detect. */
 	public enum IP { MIN, MAX, BOTH };
@@ -137,15 +124,35 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		/** Refine each peak to sub-pixel precision by a quadratic fit around the detected extremum. */
 		QUADRATIC
 	};
+	/** The detection: the single-scale Difference-of-Gaussian of BigStitcher (DoGImgLib2) or the scale space (DoGScaleSpace), as in the BigStitcher GUI */
+	public enum Method { DOG, SCALE_SPACE };
 
 	@Option(names = { "-l", "--label" }, required = true, description = "label for the interest points (e.g. beads)")
 	protected String label = null;
 
-	@Option(names = { "-s", "--sigma" }, required = true, description = "sigma for segmentation, e.g. 1.8")
+	@Option(names = { "--method" }, description = "the detection, DOG (the Difference-of-Gaussian of one sigma) or SCALE_SPACE (the scale-space Difference-of-Gaussian, finds structures of all sizes starting at --sigma and stores the sigma of each) (default: DOG)")
+	protected Method method = Method.DOG;
+
+	@Option(names = { "-s", "--sigma" }, required = true, description = "sigma for segmentation, e.g. 1.8; for SCALE_SPACE the sigma of the finest level (the initial blur), e.g. 1.6")
 	protected Double sigma = null;
 
-	@Option(names = { "-t", "--threshold" }, required = true, description = "threshold for segmentation, e.g. 0.008")
+	@Option(names = { "-t", "--threshold" }, description = "threshold for segmentation, e.g. 0.008 (on the image normalized to [0,1]); either this or --noiseFactor")
 	protected Double threshold = null;
+
+	@Option(names = { "--noiseFactor" }, description = "derive the threshold from the noise: noiseFactor x the noise floor (the robust std of the finest Difference-of-Gaussian level, estimated in 16 random blocks of every view, pooled as the highest of the views), e.g. 2.5 as in the BigStitcher GUI; either this or --threshold")
+	protected Double noiseFactor = null;
+
+	@Option(names = { "--anisotropy" }, description = "z voxel / x voxel of the raw data (at full resolution), the Gaussians are then isotropic in physical units; the BigStitcher GUI suggests 0.8 x the calibration ratio since the PSF blurs z more than the calibration says (default: DOG isotropic in pixels, SCALE_SPACE the calibration ratio)")
+	protected Double anisotropy = null;
+
+	@Option(names = { "--steps" }, description = "SCALE_SPACE: steps per octave (default: 4)")
+	protected Integer steps = null;
+
+	@Option(names = { "--octaves" }, description = "SCALE_SPACE: number of octaves, -1 = as many as the image allows (default: -1)")
+	protected Integer octaves = null;
+
+	@Option(names = { "--finestLevel" }, negatable = true, description = "SCALE_SPACE: keep all spatial extrema of the finest level (sub-resolution structures like beads are no scale extrema), --no-finestLevel keeps scale extrema only (default: true)")
+	protected Boolean finestLevel = null;
 
 	@Option(names = { "--type" }, description = "the type of interestpoints to find, MIN, MAX or BOTH (default: MAX)")
 	protected IP type = IP.MAX;
@@ -153,14 +160,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--localization" }, description = "Subpixel localization method, NONE or QUADRATIC (default: QUADRATIC)")
 	protected Localization localization = Localization.QUADRATIC;
 
-	@Option(names = { "--overlappingOnly" }, description = "only find interest points in areas that currently overlap with another view. WARNING: this is usually only useful when running it on a single channel/timepoint, otherwise they usually fully overlap (default: false)")
+	@Option(names = { "--overlappingOnly" }, description = "only find interest points in the regions of each view that overlap other selected views, by the current registrations (the regions are detected one by one and combined, points closer than 0.5 px to one of another region are dropped; a view without partner gets none). Partners are all other selected views, or with --onlyCompareOverlapTiles only other volumes. WARNING: other channels or illuminations of the same volume overlap it fully, so with several of them the regions are the whole view unless --onlyCompareOverlapTiles is set (default: false)")
 	protected boolean overlappingOnly = false;
 
-	@Option(names = { "--onlyCompareOverlapTiles" }, description = "if --overlappingOnly is selected, only test overlap for the Tile attribute; you might need this if you have multiple channels/timepoints (default: false)")
+	@Option(names = { "--onlyCompareOverlapTiles" }, description = "with --overlappingOnly: a partner must be another volume of the same timepoint, i.e. differ in tile or angle (the rule of the BigStitcher GUI); other channels or illuminations of the same volume do not count. Before 2026-10-27 this kept partners of the same timepoint and channel (default: false)")
 	protected boolean onlyCompareOverlapTiles = false;
-
-	@Option(names = { "--storeIntensities" }, description = "creates an additional N5 dataset with the intensities of each detection, linearly interpolated (default: false)")
-	protected boolean storeIntensities = false;
 
 	@Option(names = { "-i0", "--minIntensity" }, required = true, description = "min intensity for segmentation, e.g. 0.0")
 	protected Double minIntensity = null;
@@ -171,11 +175,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--prefetch" }, description = "prefetch all blocks required to process DoG in each Spark job using unlimited threads, useful in cloud environments (default: false)")
 	protected boolean prefetch = false;
 
-	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 in interestpoints.n5 (default: false)")
+	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 of the blocks (interestpoints.n5/spark_tmp_*; the results themselves are in interestpoints.zarr) (default: false)")
 	protected boolean keepTemporaryN5 = false;
 
 
-	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones), e.g. --maxSpots 10000 (default: NO LIMIT)")
+	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones by their image intensity), e.g. --maxSpots 10000; the same as a later filter-interestpoints --keepPoints 10000 --keepBy intensity, which keeps the full detection as a base label (default: NO LIMIT)")
 	protected int maxSpots = -1;
 
 	@Option(names = { "--maxSpotsPerOverlap" }, description = "apply the maximum number of spots individually to every overlapping area, needs --overlappingOnly & --maxSpots to be set to work (default: false)")
@@ -186,6 +190,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 	@Option(names = { "--medianFilter" }, description = "divide by the median filtered image of the given radius prior to interest point detection, e.g. --medianFilter 10")
 	protected Integer medianFilter = null;
+
 
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
 	protected Integer dsxy = 2;
@@ -204,6 +209,18 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		if ( maxSpotsPerOverlap && ( !overlappingOnly || maxSpots <= 0 ) )
 		{
 			System.out.println( "--maxSpotsPerOverlap only works when --overlappingOnly AND --maxSpots is set.");
+			System.exit( 0 );
+		}
+
+		if ( ( this.threshold == null ) == ( this.noiseFactor == null ) )
+		{
+			System.out.println( "Set either --threshold or --noiseFactor (the threshold is then noiseFactor x the pooled noise floor of the views)." );
+			System.exit( 0 );
+		}
+
+		if ( this.method == Method.DOG && ( steps != null || octaves != null || finestLevel != null ) )
+		{
+			System.out.println( "--steps, --octaves and --finestLevel/--no-finestLevel belong to --method SCALE_SPACE." );
 			System.exit( 0 );
 		}
 
@@ -226,21 +243,52 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final double minIntensity = this.minIntensity == null ? Double.NaN : this.minIntensity;
 		final double maxIntensity = this.maxIntensity == null ? Double.NaN : this.maxIntensity;
 		final double sigma = this.sigma;
-		final double threshold = this.threshold;
 		final boolean findMin = (this.type == IP.MIN || this.type == IP.BOTH);
 		final boolean findMax = (this.type == IP.MAX || this.type == IP.BOTH);
 		final boolean onlyOverlappingRegions = overlappingOnly;
-		final double combineDistance = SparkInterestPointDetection.combineDistance;
+		final double combineDistance = OverlappingRegions.combineDistance; // the distance (full-resolution px) below which a point of one region of --overlappingOnly duplicates one of another, as in the GUI
 		final Localization localization = this.localization;
 		final int maxSpots = this.maxSpots;
 		final boolean maxSpotsPerOverlap = this.maxSpotsPerOverlap;
 		final boolean prefetch = this.prefetch;
-		final boolean storeIntensities = this.storeIntensities;
 		final Integer medianFilter = this.medianFilter;
 
+		// the method and its parameters (the defaults of the scale space are the ones of the GUI, ScaleSpaceParameters)
+		final Method method = this.method;
+		final ScaleSpaceParameters defaults = new ScaleSpaceParameters();
+		final int steps = this.steps == null ? defaults.steps : this.steps;
+		final int octaves = this.octaves == null ? defaults.octaves : this.octaves;
+		final boolean finestLevel = this.finestLevel == null ? defaults.detectFinestLevel : this.finestLevel;
+		final double scaleSpaceCombineDistance = defaults.combineDistance;
+		final double anisotropyZ = this.anisotropy == null ? Double.NaN : this.anisotropy;
+
+		final SparkConf conf = new SparkConf().setAppName("SparkInterestPointDetection");
+
+		if ( localSparkBindAddress )
+		{
+			conf.set("spark.driver.bindAddress", "127.0.0.1");
+			conf.set("spark.driver.host", "localhost");
+			org.apache.spark.util.Utils.setCustomHostname("localhost");
+		}
+
+		final JavaSparkContext sc = new JavaSparkContext(conf);
+		sc.setLogLevel("ERROR");
+
+		// the threshold: given, or noiseFactor x the pooled noise floor of the views (one Spark job per view)
+		final double threshold = this.threshold != null ? this.threshold :
+				thresholdFromNoiseFloor( sc, viewIdsGlobal, xmlURI, method, sigma, steps, anisotropyZ, new long[] { downsampleXY, downsampleXY, downsampleZ }, minIntensity, maxIntensity, this.noiseFactor );
+
 		System.out.println( "label: " + label );
+		System.out.println( "method: " + method );
 		System.out.println( "sigma: " + sigma );
-		System.out.println( "threshold: " + threshold );
+		System.out.println( "threshold: " + threshold + ( this.noiseFactor != null ? " (" + this.noiseFactor + " x the noise floor)" : "" ) );
+		if ( method == Method.SCALE_SPACE )
+		{
+			System.out.println( "steps: " + steps );
+			System.out.println( "octaves: " + octaves );
+			System.out.println( "finestLevel: " + finestLevel );
+		}
+		System.out.println( "anisotropy: " + ( Double.isNaN( anisotropyZ ) ? ( method == Method.SCALE_SPACE ? "calibration" : "none (isotropic in pixels)" ) : Double.toString( anisotropyZ ) ) );
 		System.out.println( "type: " + type );
 		System.out.println( "localization: " + localization );
 		System.out.println( "minIntensity: " + minIntensity );
@@ -256,7 +304,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		}
 		System.out.println( "blockSize: " + Util.printCoordinates( blockSize ) );
 		System.out.println( "medianFilter: " + medianFilter );
-		System.out.println( "storeIntensities: " + storeIntensities );
+
+		// the label replaces an existing one of the processed views: drop the correspondences of other views that point at its
+		// old points (and the action history records of it) now, as the GUI does for a re-detection; before the tasks run, since a
+		// staging file of the new points shadows the old entry for every read, and the XML save at the end stages the pruned lists
+		if ( !dryRun )
+		{
+			final List< ViewId > existing = InterestPointTools.viewsWithLabel( dataGlobal, label, viewIdsGlobal );
+
+			if ( !existing.isEmpty() )
+			{
+				System.out.println( "Label '" + label + "' exists in " + existing.size() + " of the selected views, removing the references to it before the re-detection ..." );
+				InterestPointTools.removeReferences( dataGlobal, label, existing );
+			}
+		}
 
 		//
 		// assemble all intervals that need to be processed
@@ -264,15 +325,11 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final ArrayList< Pair< ViewId, Interval > > toProcess = new ArrayList<>();
 		final HashMap< ViewId, long[] > downsampledDimensions = new HashMap<>();
 
-		// assemble all pairs for parallelization with Spark
+		// assemble all pairs for parallelization with Spark: (view, partner) when only the overlapping regions are processed
+		// (OverlappingRegions of multiview-reconstruction, as the GUI's "Only in regions overlapping other views": the partners are
+		// the other selected views whose bounding boxes intersect the view's, with --onlyCompareOverlapTiles only the other volumes
+		// of the same timepoint, i.e. another tile or angle), else (view, null) for the whole view
 		final ArrayList< Tuple2< ViewId, ViewId > > metadataJobs = new ArrayList<>();
-
-		final HashMap< ViewId, AffineTransform3D > registrations =
-				TransformVirtual.adjustAllTransforms(
-						viewIdsGlobal,
-						dataGlobal.getViewRegistrations().getViewRegistrations(),
-						Double.NaN,
-						Double.NaN );
 
 		for ( final ViewId viewDesc : viewIdsGlobal )
 		{
@@ -280,41 +337,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( onlyOverlappingRegions )
 			{
-				for ( final ViewId otherViewId : OverlappingViews.findAllOverlappingViewsFor( viewId, dataGlobal, registrations, viewIdsGlobal ) )
-				{
-					if ( !otherViewId.equals( viewId ) )
-					{
-						if ( onlyCompareOverlapTiles )
-						{
-							final ViewDescription vd = dataGlobal.getSequenceDescription().getViewDescription( viewId );
-							final ViewDescription othervd = dataGlobal.getSequenceDescription().getViewDescription( otherViewId );
-							if ( viewId.getTimePointId() == otherViewId.getTimePointId() && vd.getViewSetup().getChannel().getId() == othervd.getViewSetup().getChannel().getId() )
-								metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
-						}
-						else
-						{
-							metadataJobs.add( new Tuple2<>( viewId, new ViewId( otherViewId.getTimePointId(), otherViewId.getViewSetupId() ) ) );
-						}
-					}
-				}
+				final List< ViewId > candidates = onlyCompareOverlapTiles ? OverlappingRegions.otherVolumes( dataGlobal, viewId, viewIdsGlobal ) : new ArrayList<>( viewIdsGlobal );
+
+				for ( final ViewId otherViewId : OverlappingRegions.overlapping( dataGlobal, viewId, candidates ) )
+					metadataJobs.add( new Tuple2<>( viewId, otherViewId ) );
 			}
 			else
 			{
 				metadataJobs.add( new Tuple2<>( viewId, null ) );
 			}
 		}
-
-		final SparkConf conf = new SparkConf().setAppName("SparkInterestPointDetection");
-
-		if ( localSparkBindAddress )
-		{
-			conf.set("spark.driver.bindAddress", "127.0.0.1");
-			conf.set("spark.driver.host", "localhost");
-			org.apache.spark.util.Utils.setCustomHostname("localhost");
-		}
-
-		final JavaSparkContext sc = new JavaSparkContext(conf);
-		sc.setLogLevel("ERROR");
 
 		final JavaRDD<Tuple2<ViewId, ViewId>> metadataJobsSpark = sc.parallelize( metadataJobs, Math.min( Spark.maxPartitions, metadataJobs.size() ) );
 
@@ -345,46 +377,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			if ( overlappingOnly )
 			{
-				final ViewId otherViewId = metaData._2();
+				// the region of this view that the partner covers, in the pixels of the downsampled image (OverlappingRegions: the
+				// partner's full-resolution box mapped by the current registrations and this view's mipmap transform, clipped to the image)
+				final Interval intersection = OverlappingRegions.intersection( dataLocal, metaData._1(), metaData._2(), new FinalInterval( input.getA() ), input.getB() );
 
-				final AffineTransform3D mipmapTransform = input.getB(); // maps downsampled image into global coordinate system
-				final AffineTransform3D t1 = mipmapTransform.inverse(); // maps global coordinates into coordinate system of the downsampled image
-
-				//
-				// does it overlap?
-				//
-				final Dimensions dim = ViewUtil.getDimensions( dataLocal, vd );
-				final Dimensions dimOtherViewId = ViewUtil.getDimensions( dataLocal, otherViewId );
-				final ViewDescription vdOtherViewId = dataLocal.getSequenceDescription().getViewDescription( vd );
-
-				final ViewRegistration reg = ViewUtil.getViewRegistration( dataLocal, vd );
-				final ViewRegistration regOtherViewId = ViewUtil.getViewRegistration( dataLocal, otherViewId );
-
-				// load other mipmap transform
-				final AffineTransform3D mipmapTransformOtherViewId = new AffineTransform3D();
-
-				openAndDownsample(imgLoader, vdOtherViewId, mipmapTransformOtherViewId, ds, true, true );
-
-				// map the other view into the local coordinate space of the view we find interest points in
-				// apply inverse of the mipmap transform of each
-				final AffineTransform3D t2 = regOtherViewId.getModel().preConcatenate( reg.getModel().inverse() ).preConcatenate( mipmapTransformOtherViewId.inverse() );
-
-				final Interval boundingBox = Intervals.smallestContainingInterval( t1.estimateBounds(new FinalInterval( dim ) ) );
-				final Interval boundingBoxOther = Intervals.smallestContainingInterval( t2.estimateBounds( new FinalInterval( dimOtherViewId ) ) );
-
-				if ( ViewUtil.overlaps( boundingBox, boundingBoxOther ) )
-				{
-					final Interval intersectionBoxes = Intervals.intersect( boundingBox, boundingBoxOther );
-					final Interval intersection = Intervals.intersect( input.getA(), intersectionBoxes ); // make sure it fits (e.g. rounding errors)
-
-					//final long size = ViewUtil.size( intersection );
-					//System.out.println( "intersectionBoxes=" + Util.printInterval( intersectionBoxes ) );
-					//System.out.println( "intersection=" + Util.printInterval( intersection ) + ", size (#px)=" + size );
-					//maxIntervalSize = Math.max( maxIntervalSize, size );
-
+				if ( intersection != null )
 					resultIntervals.add( new Tuple4<>( metaData._1(), intersection.minAsLongArray(), intersection.maxAsLongArray(), input.getA().dimensionsAsLongArray() ) );
-				}
-
 			}
 			else
 			{
@@ -406,6 +404,23 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 						toProcess.add(new ValuePair<ViewId, Interval>(md._1(), new FinalInterval(md._2(), md._3())));
 					downsampledDimensions.put(md._1(), md._4());
 				}));
+
+		// a region inside another one of the same view adds nothing but its own blocks (the corner a diagonal neighbour covers
+		// lies inside the strips of the side neighbours): dropped, as the GUI does (OverlappingRegions.dropContained)
+		if ( overlappingOnly )
+		{
+			final LinkedHashMap< ViewId, List< Interval > > perView = new LinkedHashMap<>();
+			for ( final Pair< ViewId, Interval > p : toProcess )
+				perView.computeIfAbsent( p.getA(), k -> new ArrayList<>() ).add( p.getB() );
+
+			final int before = toProcess.size();
+			toProcess.clear();
+			for ( final Map.Entry< ViewId, List< Interval > > e : perView.entrySet() )
+				for ( final Interval interval : OverlappingRegions.dropContained( e.getValue() ) )
+					toProcess.add( new ValuePair<>( e.getKey(), interval ) );
+
+			System.out.println( "Overlapping regions: " + toProcess.size() + " (" + ( before - toProcess.size() ) + " inside another one dropped)" );
+		}
 
 		long maxIntervalSize = 0;
 
@@ -482,7 +497,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// e.g. Total size of serialized results of 4317 tasks (1024.6 MiB) is bigger than spark.driver.maxResultSize (1024.0 MiB)
 		final JavaRDD<Tuple3<ViewId, long[], long[][]>> rddJob = sc.parallelize( sparkProcess, Math.min( Spark.maxPartitions, sparkProcess.size() ) );
 
-		// return ViewId, interval, filename for serialized SparkIPResults[locations, intensities]
+		// return ViewId, interval, the group of the points of the block (with their attributes) in the temporary N5
 		final JavaRDD< Tuple3< ViewId, long[][], String> > rddResult = rddJob.map( serializedInput ->
 		{
 			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
@@ -503,39 +518,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			// the interval this Spark job will process
 			final Interval processInterval = new FinalInterval( superBlockMin, superBlockMax );
 
-			// the parameters for Difference-of-Gaussian (DoG)
-			final DoGParameters dog = new DoGParameters();
-
-			dog.imgloader = data.getSequenceDescription().getImgLoader();
-			dog.toProcess = new ArrayList< ViewDescription >( Arrays.asList( vd ) );
-
-			dog.localization = localization == Localization.NONE ? 0 : 1;
-			dog.downsampleZ = downsampleZ;
-			dog.downsampleXY = downsampleXY;
-			dog.imageSigmaX = DifferenceOfGUI.defaultImageSigmaX;
-			dog.imageSigmaY = DifferenceOfGUI.defaultImageSigmaY;
-			dog.imageSigmaZ = DifferenceOfGUI.defaultImageSigmaZ;
-
-			dog.minIntensity = minIntensity;
-			dog.maxIntensity = maxIntensity;
-
-			dog.sigma = sigma;
-			dog.threshold = threshold;
-			dog.findMin = findMin;
-			dog.findMax = findMax;
-
-			dog.cuda = null;
-			dog.deviceCUDA = null;
-			dog.accurateCUDA = false;
-			dog.percentGPUMem = 0;
-
-			dog.limitDetections = false;
-			dog.maxDetections = 0;
-			dog.maxDetectionsTypeIndex = 0;
-
-			dog.showProgressMin = Double.NaN;
-			dog.showProgressMax = Double.NaN;
-
 			//
 			// runs virtual downsampling so it only loads what it needs
 			// ideally only run with pre-computed downsample steps for efficiency
@@ -544,19 +526,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			// results than Downsample.simple2x used by non-Spark DoG.java (typically ±1 point)
 			//
 			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
-						dog.imgloader,
+						data.getSequenceDescription().getImgLoader(),
 						vd,
-						new long[] { dog.downsampleXY, dog.downsampleXY, dog.downsampleZ },
+						new long[] { downsampleXY, downsampleXY, downsampleZ },
 						true );
 
 			System.out.println( "Processing " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " of full interval " + Util.printInterval( input.getA() ) );
 
+			// the voxel size of the opened image per dimension relative to x, which the Gaussians compensate (null = isotropic in pixels)
+			final double[] anisotropy = anisotropyOf( method, vd, input.getB(), anisotropyZ );
+
 			if ( prefetch )
 			{
-				// how big is the biggest sigma? It defines the overlap with neighboring blocks that we need
-				final Pair< double[][], Float > sigmas = DoGImgLib2.computeSigmas( (float)dog.sigma, input.getA().numDimensions() );
-				final int[] halfKernelSizes = Gauss3.halfkernelsizes( sigmas.getA()[ 1 ] );
-				final int maxKernelSize = Collections.max( Arrays.stream( halfKernelSizes ).boxed().collect( Collectors.toList()) );
+				// how far do the Gaussians reach? It defines the overlap with neighboring blocks that we need
+				final int maxKernelSize = prefetchHalo( method, sigma, anisotropy, input.getA().numDimensions(), steps, octaves, new FinalInterval( input.getA() ) );
 
 				// here we put in the inverse mipmap transform and pretend its a fusion so we can re-use Tobi's code
 				// that finds which blocks need to be prefetched from an input image
@@ -585,67 +568,68 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			}
 
 			final ExecutorService service = Threads.createFixedExecutorService( 1 );
+			final ArrayList< InterestPoint > ips;
 
-			@SuppressWarnings("unchecked")
-			final ArrayList< InterestPoint > ips = DoGImgLib2.computeDoG(
-					(RandomAccessible)Views.extendMirrorSingle( inputImage ), // the entire image, extended to infinity (must match DoG.java)
-					null, // mask
-					processInterval,
-					dog.sigma,
-					dog.threshold,
-					dog.localization,
-					dog.findMin,
-					dog.findMax,
-					dog.minIntensity,
-					dog.maxIntensity,
-					new int[] {32, 32, 16}, // smaller blocks for testing
-					service,
-					dog.cuda,
-					dog.deviceCUDA,
-					dog.accurateCUDA,
-					dog.percentGPUMem );
-
-			service.shutdown();
+			// the detections carry their response, sigma (in pixels of the opened image) and the intensity of the image at their position
+			try
+			{
+				if ( method == Method.SCALE_SPACE )
+				{
+					@SuppressWarnings("unchecked")
+					final ArrayList< InterestPoint > detected = DoGScaleSpace.computeDoGScaleSpace(
+							(RandomAccessible)Views.extendMirrorSingle( inputImage ), // the entire image, extended to infinity (must match ScaleSpace.java)
+							new FinalInterval( input.getA() ),
+							processInterval,
+							null, // mask
+							scaleSpaceParameters( sigma, threshold, steps, octaves, finestLevel, localization, findMin, findMax, minIntensity, maxIntensity, anisotropy ),
+							service );
+					ips = detected;
+				}
+				else
+				{
+					@SuppressWarnings("unchecked")
+					final ArrayList< InterestPoint > detected = DoGImgLib2.computeDoG(
+							(RandomAccessible)Views.extendMirrorSingle( inputImage ), // the entire image, extended to infinity (must match DoG.java)
+							null, // mask
+							processInterval,
+							sigma,
+							anisotropy,
+							threshold,
+							localization == Localization.NONE ? 0 : 1,
+							findMin,
+							findMax,
+							minIntensity,
+							maxIntensity,
+							new int[] {32, 32, 16}, // smaller blocks for testing
+							service,
+							null, // CUDA
+							null,
+							false,
+							0 );
+					ips = detected;
+				}
+			}
+			finally
+			{
+				service.shutdown();
+			}
 
 			if ( ips == null || ips.size() == 0 )
 			{
 				System.out.println( "No interest points found for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) );
+				//return new Tuple4<>( serializedInput._1(), Spark.serializeInterval( processInterval ), null, null );
 				return new Tuple3<>( viewId, Spark.serializeInterval( processInterval ), "" );
-			}
-
-			final double[] intensities;
-
-			if ( storeIntensities || maxSpots > 0 )
-			{
-				System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
-
-				// for image interpolation
-				final RealRandomAccessible<FloatType> rra = Views.interpolate(
-						Views.extendBorder(
-								Converters.convertRAI(
-										(RandomAccessibleInterval<RealType>)(Object)input.getA(),
-										(a,b) -> b.set( a.getRealFloat() ),
-										new FloatType() ) ),
-						new NLinearInterpolatorFactory<>() );
-				final RealRandomAccess< FloatType> r = rra.realRandomAccess();
-
-				intensities = new double[ ips.size() ];
-
-				for ( int i = 0; i < ips.size(); ++i )
-				{
-					r.setPosition( ips.get( i ) );
-					intensities[ i ] = r.get().get();
-				}
-			}
-			else
-			{
-				intensities = null;
 			}
 
 			// correcting for downsampling
 			System.out.println( "Correcting interest points '" + label + "', " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " for downsampling ... " );
 
 			DownsampleTools.correctForDownsampling( ips, input.getB() );
+
+			//final double[][] points = new double[ ips.size() ][];
+
+			//for ( int i = 0; i < ips.size(); ++i )
+			//	points[ i ] = ips.get( i ).getL();
 
 			System.out.println( "Returning " + ips.size() + " interest points '" + label + "' for " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " ... " );
 
@@ -656,38 +640,10 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			serializeDataset = serializeDataset.replaceAll( "\\]", "_" );
 
 			final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
-
-			if ( ips.size() > 0 )
-			{
-				final int n = ips.get( 0 ).getL().length;
-				final double[] points = new double[ ips.size() * n ];
-
-				int j = 0;
-				for ( int i = 0; i < ips.size(); ++i )
-					for ( int d = 0; d < n; ++d )
-						points[ j++ ] = ips.get( i ).getL()[ d ];
-
-				N5Utils.save(
-						ArrayImgs.doubles( points, new long[] { n, ips.size() } ),
-						n5WriterLocal,
-						tempDataset + "/" + serializeDataset + "/points",
-						new int[] { n, ips.size() },
-						new ZstandardCompression() );
-			}
-
-			if ( intensities != null && intensities.length > 0 )
-			{
-				N5Utils.save(
-						ArrayImgs.doubles( intensities, new long[] { intensities.length } ),
-						n5WriterLocal,
-						tempDataset + "/" + serializeDataset + "/intensities",
-						new int[] { intensities.length },
-						new ZstandardCompression() );
-			}
-
+			InterestPointsN5.saveInterestPointsStatic( n5WriterLocal, tempDataset + "/" + serializeDataset, ips );
 			n5WriterLocal.close();
 
-			// return ViewId, interval, filename for [locations, intensities]
+			// return ViewId, interval, the group of the points (with their attributes)
 			return new Tuple3<>( viewId, Spark.serializeInterval( processInterval ), serializeDataset );
 		});
 
@@ -706,7 +662,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					blocksPerViewIds.get( p.getA() )._2().add( Spark.serializeInterval( p.getB() ) ); // Interval is not Serializable
 
 		// the ViewIds (sorted), and one serializable entry per view for the Spark tasks
-		final List< ViewId > viewIds1 = new ArrayList<>( blocksPerViewIds.keySet() );
+		final List< ViewId > viewIds = new ArrayList<>( blocksPerViewIds.keySet() );
 		final List< Tuple3< ViewId, List< Tuple3<ViewId, long[][], String> >, List< long[][] > > > perView = new ArrayList<>();
 
 		for ( final Map.Entry< ViewId, Tuple2< List< Tuple3<ViewId, long[][], String> >, List< long[][] > > > e : blocksPerViewIds.entrySet() )
@@ -715,88 +671,64 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		// maxIntervalSize is not effectively final
 		final long maxIntervalSizeFinal = maxIntervalSize;
 
-		// now combine all jobs and fix potential overlap (overlappingOnly), one Spark task per view
-		final Map< ViewId, List< InterestPoint > > interestPoints = new ConcurrentHashMap<>();
-		final Map< ViewId, List< Double > > intensitiesIPs = new ConcurrentHashMap<>();
+		// now combine all jobs and fix potential overlap (overlappingOnly), one Spark task per view; each task writes its view's
+		// points to a staging file of the dataset's interest point store, the XML save on the driver commits them
+		final URI baseDirURI = dataGlobal.getBasePathURI();
 
 		System.out.println( "Combining interest points per view (" + results.size() + " blocks) ... " + new java.util.Date() );
 
-		// returns ViewId and the number of combined points, which are written to tempDataset/combined/<viewId> in the temporary N5
+		// returns ViewId and the number of combined points
 		final List< Tuple2< ViewId, Integer > > combined = sc.parallelize( perView, Math.min( Spark.maxPartitions, perView.size() ) ).map( viewData ->
 		{
 			final ViewId viewId = viewData._1();
 
 			final N5Writer n5WriterLocal = URITools.instantiateN5Writer( StorageFormat.N5, tempURI );
 
-			// load all blocks of this view from N5
+			// load all blocks of this view from N5 (the points with their attributes, corrected for the downsampling)
 			final List< List< InterestPoint > > ipsList = new ArrayList<>();
-			final List< List< Double > > intensitiesList = ( storeIntensities || maxSpots > 0 ) ? new ArrayList<>() : null;
 			final List< Interval > intervalsList = new ArrayList<>(); // note: in downsampled coordinates(!)
 
 			for ( final Tuple3<ViewId, long[][], String> tuple : viewData._2() )
 			{
-				final String dataset = tempDataset + "/" + tuple._3();
-
-				if ( !n5WriterLocal.datasetExists( dataset + "/points" ) )
+				if ( tuple._3().isEmpty() ) // no points in this block, nothing was written
 					continue;
 
-				final Img<DoubleType> points = N5Utils.open( n5WriterLocal, dataset + "/points" );
-
-				ipsList.add( Spark.deserializeInterestPoints( points ) );
+				ipsList.add( InterestPointsN5.loadInterestPointsStatic( n5WriterLocal, tempDataset + "/" + tuple._3() ) );
 				intervalsList.add( Spark.deserializeInterval( tuple._2() ) );
-
-				if ( ( storeIntensities || maxSpots > 0 ) && n5WriterLocal.datasetExists( dataset + "/intensities" ) )
-				{
-					final Img<DoubleType> intensities = N5Utils.open( n5WriterLocal, dataset + "/intensities" );
-					final ArrayList< Double > intensitiesBlock = new ArrayList<>();
-					for ( final DoubleType v : Views.flatIterable( intensities ) )
-						intensitiesBlock.add( v.get() );
-					intensitiesList.add( intensitiesBlock );
-				}
 			}
 
 			// we need to filter per overlap before combining
 			if ( maxSpotsPerOverlap && maxSpots > 0 )
 			{
 				// find all intervals of this view, then assign points to it
-				final List< Tuple3< Interval, List< InterestPoint >, List< Double > > > intervalData = new ArrayList<>();
+				final List< Tuple2< Interval, List< InterestPoint > > > intervalData = new ArrayList<>();
 
 				// for each toProcess block of this view do
 				for ( final long[][] serializedInterval : viewData._3() )
 				{
 					final Interval toProcessInterval = Spark.deserializeInterval( serializedInterval );
-
 					final List< InterestPoint > ipsBlock = new ArrayList<>();
-					final List< Double > intensitiesBlock = new ArrayList<>();
 
 					// figure out which computed blockIntervals fall into this toProcessInterval
 					for ( int l = 0; l < ipsList.size(); ++l )
-					{
-						final Interval blockInterval = intervalsList.get( l );
-
-						if ( Intervals.contains( toProcessInterval, blockInterval ) )
-						{
+						if ( Intervals.contains( toProcessInterval, intervalsList.get( l ) ) )
 							ipsBlock.addAll( ipsList.get( l ) );
-							intensitiesBlock.addAll( intensitiesList.get( l ) );
-						}
-					}
 
-					intervalData.add( new Tuple3<>( toProcessInterval, ipsBlock, intensitiesBlock ) );
+					intervalData.add( new Tuple2<>( toProcessInterval, ipsBlock ) );
 				}
 
-				// to later put back into ipsList and intensitiesList
+				// to later put back into ipsList
 				ipsList.clear();
-				intensitiesList.clear();
 
 				// now filter each interval of each view
-				for ( final Tuple3< Interval, List< InterestPoint >, List< Double > > tuple : intervalData )
+				for ( final Tuple2< Interval, List< InterestPoint > > tuple : intervalData )
 				{
 					final int myMaxSpots = (int)Math.round( maxSpots * ( (double)ViewUtil.size( tuple._1() ) /(double)maxIntervalSizeFinal ) );
 
 					if ( myMaxSpots > 0 && myMaxSpots < tuple._2().size() )
 					{
 						final int oldSize = tuple._2().size();
-						filterPoints( tuple._2(), tuple._3(), myMaxSpots );
+						filterPoints( tuple._2(), myMaxSpots );
 						System.out.println( "Filtered interval (limit=" + myMaxSpots + ") " + Util.printInterval( tuple._1() ) + " (" + Group.pvid( viewId ) + "): " + oldSize + " >>> " + tuple._2().size() );
 					}
 					else
@@ -805,50 +737,35 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 					}
 
 					ipsList.add( tuple._2() );
-					intensitiesList.add( tuple._3() );
 				}
 			}
 
-			final ArrayList< InterestPoint > myIps = new ArrayList<>();
-			final ArrayList< Double > myIntensities = new ArrayList<>();
+			// combine the lists: with --overlappingOnly the regions of different partners overlap each other, duplicates are dropped
+			// (OverlappingRegions.combine, the rule and distance of the GUI); otherwise the blocks are disjoint and the lists are appended
+			ArrayList< InterestPoint > myIps = new ArrayList<>();
 
-			// combine points since overlapping areas might exist
-			for ( int l = 0; l < ipsList.size(); ++l )
-			{
-				final List< InterestPoint > ips = ipsList.get( l );
-				final List< Double > intensities;
-
-				if ( storeIntensities || maxSpots > 0 )
-					intensities = intensitiesList.get( l );
-				else
-					intensities = null;
-
-				if ( !overlappingOnly || myIps.isEmpty() )
-				{
+			if ( overlappingOnly )
+				myIps = OverlappingRegions.combine( ipsList, combineDistance );
+			else
+				for ( final List< InterestPoint > ips : ipsList )
 					myIps.addAll( ips );
 
-					if ( storeIntensities || maxSpots > 0 )
-						myIntensities.addAll( intensities );
-				}
-				else
-				{
-					final KDTree< InterestPoint > tree = new KDTree<>(myIps, myIps);
-					final NearestNeighborSearchOnKDTree< InterestPoint > search = new NearestNeighborSearchOnKDTree<>( tree );
+			// the scale space merges near-identical peaks (same sign, closer than combineDistance x 2^octave in pixels of the
+			// detection), which the blocks could not do across their boundaries: once per view, as a run on the whole image does
+			if ( method == Method.SCALE_SPACE && myIps.size() > 1 )
+			{
+				final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+				final AffineTransform3D mipmapTransform = openAndDownsample(
+						data.getSequenceDescription().getImgLoader(),
+						data.getSequenceDescription().getViewDescription( viewId ),
+						new long[] { downsampleXY, downsampleXY, downsampleZ },
+						true ).getB();
+				final double[] scale = new double[] { Math.abs( mipmapTransform.get( 0, 0 ) ), Math.abs( mipmapTransform.get( 1, 1 ) ), Math.abs( mipmapTransform.get( 2, 2 ) ) };
+				final int before = myIps.size();
 
-					for ( int i = 0; i < ips.size(); ++i )
-					{
-						final InterestPoint ip = ips.get( i );
-						search.search( ip );
+				myIps = DoGScaleSpace.mergeDuplicates( myIps, scale, sigma, scaleSpaceCombineDistance );
 
-						if ( search.getDistance() > combineDistance )
-						{
-							myIps.add( ip );
-
-							if ( storeIntensities || maxSpots > 0 )
-								myIntensities.add( intensities.get( i ) );
-						}
-					}
-				}
+				System.out.println( Group.pvid( viewId ) + ": " + ( before - myIps.size() ) + " duplicate(s) across blocks merged" );
 			}
 
 			if ( myIps.size() > 0 )
@@ -857,18 +774,20 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 				final ArrayList< InterestPoint > myIpsNewId = new ArrayList<>();
 
 				for ( int id = 0; id < myIps.size(); ++id )
-					myIpsNewId.add( new InterestPoint( id, myIps.get( id ).getL() ) );
+					myIpsNewId.add( myIps.get( id ).derive( id, myIps.get( id ).getL() ) );
 
 				System.out.println( Group.pvid( viewId ) + ": " + myIpsNewId.size() );
 
 				if ( !maxSpotsPerOverlap && maxSpots > 0 && maxSpots < myIpsNewId.size() )
 				{
-					filterPoints( myIpsNewId, myIntensities, maxSpots );
+					filterPoints( myIpsNewId, maxSpots );
 
 					System.out.println( Group.pvid( viewId ) + " (after applying maxSpots): " + myIpsNewId.size() );
 				}
 
-				saveInterestPoints( n5WriterLocal, combinedDataset( tempDataset, viewId ), myIpsNewId, storeIntensities ? myIntensities : null );
+				if ( !dryRun )
+					InterestPointsZarr.stagePoints( baseDirURI, viewId, label, myIpsNewId );
+
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, myIpsNewId.size() );
@@ -877,36 +796,14 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			{
 				System.out.println( Group.pvid( viewId ) + ": no points found." );
 
+				if ( !dryRun )
+					InterestPointsZarr.stagePoints( baseDirURI, viewId, label, new ArrayList<>() );
+
 				n5WriterLocal.close();
 
 				return new Tuple2<>( viewId, 0 );
 			}
 		} ).collect();
-
-		System.out.println( "Loading combined interest points from temporary N5 ... " + new java.util.Date() );
-
-		combined.parallelStream().forEach( t ->
-		{
-			final ViewId viewId = t._1();
-
-			if ( t._2() == 0 )
-			{
-				interestPoints.put( viewId, new ArrayList<>() );
-				return;
-			}
-
-			final String dataset = combinedDataset( tempDataset, viewId );
-
-			interestPoints.put( viewId, Spark.deserializeInterestPoints( N5Utils.open( n5Writer, dataset + "/points" ) ) );
-
-			if ( storeIntensities )
-			{
-				final ArrayList< Double > intensitiesList = new ArrayList<>();
-				for ( final DoubleType v : Views.flatIterable( N5Utils.<DoubleType>open( n5Writer, dataset + "/intensities" ) ) )
-					intensitiesList.add( v.get() );
-				intensitiesIPs.put( viewId, intensitiesList );
-			}
-		} );
 
 		System.out.println( "Combined interest points ... " + new java.util.Date() );
 
@@ -918,7 +815,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			rdd.foreach( boundingBox ->
 			{
-				// remove the whole block group (not just points/intensities), otherwise n5Writer.remove( tempDataset ) below has to delete thousands of empty directories single-threaded
+				// remove the whole block group (not just its datasets), otherwise n5Writer.remove( tempDataset ) below has to delete thousands of empty directories single-threaded
 				// _3() is "" for blocks without points, which have no group
 				if ( !boundingBox._3().isEmpty() )
 				{
@@ -933,6 +830,14 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 			n5Writer.remove( tempDataset );
 
+			// a scratch container that holds nothing else (every label of the dataset is in the store) goes too, so that no stray
+			// legacy interestpoints.n5 is left behind for the GUI's "Resave as ZARR store" or InterestPointsN5ToZarr to look into
+			if ( n5Writer.list( "" ).length == 0 )
+			{
+				System.out.println( "Removing the empty scratch container '" + tempURI + "' ... " );
+				n5Writer.remove();
+			}
+
 			System.out.println( "All deleted.");
 		}
 
@@ -940,79 +845,37 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		System.out.println( "Computed all interest points, statistics:" );
 
-		for ( final Map.Entry<ViewId, List<InterestPoint>> viewIPs : interestPoints.entrySet() )
-			System.out.println( Group.pvid( viewIPs.getKey() ) + ": " + viewIPs.getValue().size() );
+		for ( final Tuple2< ViewId, Integer > viewAndCount : combined )
+			System.out.println( Group.pvid( viewAndCount._1() ) + ": " + viewAndCount._2() );
 
 		if ( !dryRun )
 		{
-			// save interest points for ALL views that were processed, not only those where we found points
-			// otherwise they are not saved into the XML and into the N5
+			// save interest points for ALL views that were processed, not only those with blocks (and points),
+			// otherwise they are not saved into the XML and into the store
+			final HashSet< ViewId > staged = new HashSet<>( viewIds );
 			for ( final ViewId viewId : viewIdsGlobal )
-				if ( interestPoints.get( viewId ) == null )
-					interestPoints.put( viewId, new ArrayList<>() );
+				if ( !staged.contains( viewId ) )
+					InterestPointsZarr.stagePoints( baseDirURI, viewId, label, new ArrayList<>() );
 
 			// save XML
 			System.out.println( "Saving XML and interest points ..." );
 
-			final String params = "DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-					" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity;
+			// as the GUI's (DifferenceOfGaussianGUI / ScaleSpaceGUI, "t=" is parsed by Filter_Detections.parseThreshold), plus the Spark
+			// specifics; the tail is the GUI's DifferenceOfGUI.commonParameters() (subpixel localization, grouping, threshold type),
+			// which StoredDetectionParameters reads back when the GUI detects the label again
+			final String commonTail = " localization=" + DifferenceOfGUI.localizationKey( localization == Localization.NONE ? 0 : 1 ) + " groupTiles=false groupIllums=false" +
+					( this.noiseFactor != null ? " thresholdType=noisefloor noiseFactor=" + this.noiseFactor : " thresholdType=fixed" );
+			final String params = method == Method.SCALE_SPACE ?
+					"DOG-SS (Spark) s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + finestLevel + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
+							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail :
+					"DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
+							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail;
 
-			InterestPointTools.addInterestPoints( dataGlobal, label, new HashMap<>( interestPoints ), params );
+			// the entries of the label for all processed views; the XML save commits their staged points
+			InterestPointTools.addInterestPointEntries( dataGlobal, label, viewIdsGlobal, params );
 
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 
-			// store image intensities for interest points
-			if( storeIntensities )
-			{
-				viewIdsGlobal.parallelStream().forEach( viewId ->
-				{
-					try
-					{
-						System.out.println( "Retrieving intensities for interest points '" + label + "' for " + Group.pvid(viewId) + " ... " );
-
-						final InterestPointsN5 i = (InterestPointsN5)dataGlobal.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
-
-						final String datasetIntensities = i.ipDataset() + "/intensities";
-
-						if ( interestPoints.get( viewId ).size() == 0 )
-						{
-							n5Writer.createDataset(
-									datasetIntensities,
-									new long[] {0},
-									new int[] {1},
-									DataType.FLOAT32,
-									new ZstandardCompression());
-						}
-						else
-						{
-							List<Double> intensitiesList = intensitiesIPs.get( viewId );
-
-							// 1 x N array (which is a 2D array)
-							final FunctionRandomAccessible< FloatType > intensities =
-									new FunctionRandomAccessible<>(
-											2,
-											(location, value) ->
-											{
-												final int index = location.getIntPosition( 1 );
-												value.set( intensitiesList.get( index ).floatValue() );
-											},
-											FloatType::new );
-
-							final RandomAccessibleInterval< FloatType > intensityData =
-									Views.interval( intensities, new long[] { 0, 0 }, new long[] { 0, intensitiesList.size() - 1 } );
-
-							N5Utils.save( intensityData, n5Writer, datasetIntensities, new int[] { 1, InterestPointsN5.defaultBlockSize }, new ZstandardCompression() );
-						}
-
-						System.out.println( "Saved: " + tempURI + "/" + datasetIntensities );
-						
-					}
-					catch ( Exception e )
-					{
-						System.out.println( "Could not save intensities for: " + Group.pvid(viewId) + ": " + e  );
-					}
-				});
-			}
 		}
 
 		n5Writer.close();
@@ -1020,69 +883,170 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "Done ..." );
 
 		return null;
-		}
-
-	static String combinedDataset( final String tempDataset, final ViewId viewId )
-	{
-		return tempDataset + "/combined/tp" + viewId.getTimePointId() + "_setup" + viewId.getViewSetupId();
 	}
 
-	/** stores the points as [n x size] doubles in dataset/points and, if not null, the intensities in dataset/intensities (same layout as the per-block results) */
-	static void saveInterestPoints( final N5Writer n5, final String dataset, final List< InterestPoint > ips, final List< Double > intensities )
+	/**
+	 * Keeps the {@code maxSpots} brightest interest points of a list, by the image intensity each point carries
+	 * (InterestPointFilter.limit, what a filter-interestpoints --keepPoints --keepBy intensity does with a base label). The list
+	 * is modified in place: the kept points stay in their order and receive new consecutive ids starting at 0.
+	 * {@code maxSpots} must not exceed the number of points.
+	 */
+	public static void filterPoints( final List< InterestPoint > myIps, final int maxSpots )
+	{
+		final ArrayList< InterestPoint > kept = InterestPointFilter.limit( myIps, Axis.INTENSITY, Limit.HIGHEST, maxSpots, true );
+
+		myIps.clear();
+
+		for ( int i = 0; i < kept.size(); ++i )
+			myIps.add( kept.get( i ).derive( i, kept.get( i ).getL() ) ); // new id's again ...
+	}
+
+	/**
+	 * The anisotropy the Gaussians compensate (DownsampleTools.anisotropy, the voxel size of the opened image per dimension
+	 * relative to x): for the Difference-of-Gaussian only if --anisotropy is given (as in the GUI, DoG.java: NaN = isotropic
+	 * in pixels, what BigStitcher always did), for the scale space always (NaN = the ratio of the calibration, ScaleSpace.java)
+	 */
+	protected static double[] anisotropyOf( final Method method, final ViewDescription vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
+	{
+		if ( method == Method.DOG && Double.isNaN( anisotropyZ ) )
+			return null;
+
+		return DownsampleTools.anisotropy( vd, mipmapTransform, anisotropyZ );
+	}
+
+	/**
+	 * The parameters of the scale space of a block (ScaleSpaceParameters, the defaults of the GUI for everything not given)
+	 */
+	protected static ScaleSpaceParameters scaleSpaceParameters(
+			final double sigma,
+			final double threshold,
+			final int steps,
+			final int octaves,
+			final boolean finestLevel,
+			final Localization localization,
+			final boolean findMin,
+			final boolean findMax,
+			final double minIntensity,
+			final double maxIntensity,
+			final double[] anisotropy )
+	{
+		final ScaleSpaceParameters p = new ScaleSpaceParameters();
+
+		p.sigmaMin = sigma;
+		p.steps = steps;
+		p.octaves = octaves;
+		p.threshold = threshold;
+		p.detectFinestLevel = finestLevel;
+		p.localization = localization == Localization.NONE ? 0 : 1;
+		p.findMin = findMin;
+		p.findMax = findMax;
+		p.minIntensity = minIntensity;
+		p.maxIntensity = maxIntensity;
+		p.anisotropy = anisotropy;
+
+		return p;
+	}
+
+	/**
+	 * How far (in pixels of the opened image) the Gaussians reach beyond a block, for prefetching: the half kernel of the
+	 * largest sigma of the Difference-of-Gaussian, or of the coarsest octave of the scale space (an upper bound: its half
+	 * kernel in pixels of that octave times its subsampling)
+	 */
+	protected static int prefetchHalo( final Method method, final double sigma, final double[] anisotropy, final int n, final int steps, final int octaves, final Interval imageInterval )
+	{
+		if ( method == Method.SCALE_SPACE )
 		{
-		final int n = ips.get( 0 ).getL().length;
-		final double[] points = new double[ ips.size() * n ];
+			final ScaleSpaceParameters p = new ScaleSpaceParameters();
+			p.sigmaMin = sigma;
+			p.steps = steps;
+			p.octaves = octaves;
+			p.anisotropy = anisotropy;
 
-		int j = 0;
-		for ( int i = 0; i < ips.size(); ++i )
-			for ( int d = 0; d < n; ++d )
-				points[ j++ ] = ips.get( i ).getL()[ d ];
+			final int numOctaves = octaves > 0 ? octaves : DoGScaleSpace.autoOctaves( imageInterval, p );
+			final double sigmaLast = sigma * Math.pow( LaPlaceFunctions.computeK( steps ), steps + 1 ); // the last Gaussian level of an octave
 
-		N5Utils.save( ArrayImgs.doubles( points, new long[] { n, ips.size() } ), n5, dataset + "/points", new int[] { n, ips.size() }, new ZstandardCompression() );
-
-		if ( intensities != null && intensities.size() > 0 )
+			return Gauss3.halfkernelsize( sigmaLast ) * ( 1 << Math.max( 0, numOctaves - 1 ) );
+		}
+		else
 		{
-			final double[] values = intensities.stream().mapToDouble( Double::doubleValue ).toArray();
-			N5Utils.save( ArrayImgs.doubles( values, new long[] { values.length } ), n5, dataset + "/intensities", new int[] { values.length }, new ZstandardCompression() );
+			final Pair< double[][], Float > sigmas = DoGImgLib2.computeSigmas( (float)sigma, anisotropy, n );
+			final int[] halfKernelSizes = Gauss3.halfkernelsizes( sigmas.getA()[ 1 ] );
+
+			return Collections.max( Arrays.stream( halfKernelSizes ).boxed().collect( Collectors.toList()) );
 		}
 	}
 
 	/**
-	 * Keeps only the {@code maxSpots} brightest interest points. Both lists are modified in place: the
-	 * points are sorted by descending intensity, truncated to {@code maxSpots} entries and the kept
-	 * points receive new consecutive ids starting at 0. {@code maxSpots} must not exceed the number of
-	 * points.
-	 *
-	 * @param myIps the interest points, in the same order as {@code myIntensities}; replaced by the
-	 *            filtered points
-	 * @param myIntensities the intensity of each interest point; replaced by the filtered intensities
-	 * @param maxSpots the number of points to keep
+	 * The threshold as the GUI's "Estimate from noise floor" finds it (DifferenceOfGUI.estimateNoiseFloor): the noise floor of
+	 * every view (NoiseFloor, the robust std of the finest Difference-of-Gaussian level in 16 random blocks), one Spark job per
+	 * view on the virtually downsampled image normalized with the given intensity range, pooled as the highest of the views,
+	 * times the factor. The per-view floors and the pooled one are printed.
 	 */
-	public static void filterPoints(
-			final List< InterestPoint > myIps,
-			final List< Double > myIntensities,
-			final int maxSpots )
+	protected static double thresholdFromNoiseFloor(
+			final JavaSparkContext sc,
+			final List< ViewId > viewIds,
+			final URI xmlURI,
+			final Method method,
+			final double sigma,
+			final int steps,
+			final double anisotropyZ,
+			final long[] downsampling,
+			final double minIntensity,
+			final double maxIntensity,
+			final double factor )
 	{
-		// filter for the brightnest N spots
-		final ArrayList< Pair< Double, InterestPoint > > combinedList = new ArrayList<>();
+		// the legacy Difference-of-Gaussian corresponds to 4 steps per octave (DifferenceOfGaussianGUI)
+		final float k = LaPlaceFunctions.computeK( method == Method.SCALE_SPACE ? steps : 4 );
 
-		for ( int i = 0; i < myIps.size(); ++i )
-			combinedList.add( new ValuePair<Double, InterestPoint>(myIntensities.get( i ), myIps.get( i )));
+		System.out.println( "Estimating the noise floor of " + viewIds.size() + " view(s) at downsampling " + Util.printCoordinates( downsampling ) + " (sigma " + sigma + ", k " + k + ") ..." );
 
-		// sort from large to small
-		Collections.sort(combinedList, (a,b) -> b.getA().compareTo( a.getA() ) );
-
-		myIps.clear();
-		myIntensities.clear();
-
-		for ( int i = 0; i < maxSpots; ++i )
+		final List< Tuple2< ViewId, double[] > > estimates = sc.parallelize( Spark.toViewIds( viewIds ), Math.min( Spark.maxPartitions, viewIds.size() ) ).map( viewId ->
 		{
-			myIntensities.add( combinedList.get( i ).getA() );
-			myIps.add( new InterestPoint( i, combinedList.get( i ).getB().getL() ) ); // new id's again ...
-		}
+			final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+			final ViewDescription vd = data.getSequenceDescription().getViewDescription( viewId );
+
+			if ( !vd.isPresent() )
+				return new Tuple2<>( viewId, (double[])null );
+
+			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample( data.getSequenceDescription().getImgLoader(), vd, downsampling, true );
+			final ExecutorService service = Threads.createFixedExecutorService( 1 );
+
+			try
+			{
+				@SuppressWarnings("unchecked")
+				final NoiseFloor.Estimate e = NoiseFloor.estimate( (RandomAccessibleInterval)input.getA(), minIntensity, maxIntensity, sigma, k, anisotropyOf( method, vd, input.getB(), anisotropyZ ), service );
+
+				System.out.println( "noise floor of " + Group.pvid( viewId ) + ": " + e );
+
+				return new Tuple2<>( viewId, new double[] { e.floor, e.median, e.numSamples, e.numExcluded, e.numBlocks } );
+			}
+			finally
+			{
+				service.shutdown();
+			}
+		} ).collect();
+
+		final NoiseFloor.Pooled pooled = new NoiseFloor.Pooled();
+
+		for ( final Tuple2< ViewId, double[] > t : estimates )
+			if ( t._2() != null )
+				pooled.perView.put( t._1(), new NoiseFloor.Estimate( t._2()[ 0 ], t._2()[ 1 ], (long)t._2()[ 2 ], (long)t._2()[ 3 ], (int)t._2()[ 4 ] ) );
+
+		System.out.println( pooled.describe() );
+
+		if ( Double.isNaN( pooled.floor() ) )
+			throw new RuntimeException( "No view yielded a noise floor (no data in the sampled blocks?), cannot derive a threshold from --noiseFactor." );
+
+		final double threshold = pooled.threshold( factor );
+
+		System.out.println( "threshold = " + factor + " x " + pooled.floor() + " = " + threshold );
+
+		return threshold;
 	}
 
 	// TODO: this has been pushed up to the multiview-reconstruction code, use new version
+	/**
+	 * Opens a view and downsamples it by the given factors	// TODO: this has been pushed up to the multiview-reconstruction code, use new version
 	/**
 	 * Opens a view and downsamples it by the given factors, reading the closest suitable pre-computed
 	 * level if the loader is a {@link MultiResolutionImgLoader} and downsampling the remainder 2x per
@@ -1228,7 +1192,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		return input;
 	}
 
-	private static boolean contains( final int i, final int[] values )
+	private static final boolean contains( final int i, final int[] values )
 	{
 		for ( final int j : values )
 			if ( i == j )
