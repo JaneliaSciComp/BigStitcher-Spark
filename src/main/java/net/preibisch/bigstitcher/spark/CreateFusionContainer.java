@@ -384,7 +384,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 		// set up downsampling
 		//
 		if ( !Downsampling.testDownsamplingParameters( this.multiRes, this.downsampling ) )
-			return null;
+			throw new IllegalArgumentException("Multires/downsampling conflict");
 
 		final int[][] downsamplings;
 
@@ -396,7 +396,7 @@ public class CreateFusionContainer extends AbstractBasic implements Callable<Voi
 			downsamplings = new int[][]{{ 1, 1, 1 }};
 
 		if ( downsamplings == null )
-			return null;
+			throw new IllegalArgumentException("Missing or wrong downsampling values");
 
 		System.out.println( "The following downsampling pyramid will be created:" );
 		System.out.println( Arrays.deepToString( downsamplings ) );
