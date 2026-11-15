@@ -60,9 +60,11 @@ import scala.Tuple3;
  * view: it loads the dataset, the model (pcmatch's ONNX export with its {@code .onnx.json} sidecar, evaluated in Java,
  * {@code mvrecon.process.interestpointembedding}; a local file, or a model of the Hugging Face Hub, {@code hf://...}, which the
  * driver pins to its commit and every executor downloads once into its cache, {@link ModelHub}) and the view's points, samples the cubes from the image pyramid, runs the
- * network block by block and writes the view's rows into the array ({@code setup<S>}); the driver creates the array
- * (replacing one of another model) before the tasks run and records the action in the XML afterwards. The arrays are not
- * part of the store's generations, so the tasks need no staging and no commit.
+ * network block by block and writes the view's rows as one staging file of the store ({@code InterestPointEmbedding.write});
+ * the driver creates the array (replacing one of another model) before the tasks run and saves the XML afterwards, which
+ * records the action and moves the rows of all views into the array's one table (an array is one sharded table for all
+ * views, written like the interest points: {@code InterestPointArrays.commit}). The rows of a run that fails before the
+ * save stay staged: they are the rows of their views for every reader, and the next save of the dataset moves them.
  *
  * @author Stephan Preibisch
  */
@@ -148,7 +150,7 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 		System.out.println( "blockSize: " + blockSize );
 		System.out.println( "views: " + views.size() );
 
-		// the arrays of the (base label, timepoint) groups, created or replaced once, before the tasks write their setups
+		// the arrays of the (base label, timepoint) groups, created or replaced once, before the tasks write the rows of their views
 		if ( !dryRun )
 		{
 			final HashSet< String > prepared = new HashSet<>();
@@ -218,7 +220,8 @@ public class SparkInterestPointEmbedding extends AbstractSelectableViews impleme
 			ActionHistoryRecorder.put( params, "fingerprint", driverModel.contract().fingerprint() );
 			ActionHistoryRecorder.record( dataGlobal, Embed_Interest_Points.ACTION_ID, SparkInterestPointEmbedding.class.getName(), params, new ArrayList<>( views ), "interestpoints:" + label );
 
-			System.out.println( "Saving XML (action history) ..." );
+			// the save is also the commit of the arrays: the rows the tasks staged move into the array's table
+			System.out.println( "Saving XML (action history) and moving the embeddings of all views into their table ..." );
 			new XmlIoSpimData2().save( dataGlobal, xmlURI );
 		}
 
