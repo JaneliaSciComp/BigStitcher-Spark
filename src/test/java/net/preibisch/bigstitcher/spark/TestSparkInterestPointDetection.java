@@ -30,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,8 @@ import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestP
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPointsZarrStore.Key;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoG;
+import net.preibisch.mvrecon.process.interestpointdetection.methods.dog.DoGParameters;
 import net.preibisch.mvrecon.tests.TestInterestPointDetection;
 import net.preibisch.mvrecon.tests.TestRegistration;
 import picocli.CommandLine;
@@ -144,6 +147,56 @@ public class TestSparkInterestPointDetection
 	 * The scale space in Spark (with an anisotropy): points of several sigmas, all with their attributes, the parameters
 	 * as the GUI writes them; and a second label whose threshold comes from the noise floor
 	 */
+	/**
+	 * Different downsampling in x and y (-dsx / -dsy override -dsxy): the views are opened with both factors, the sigma
+	 * refers to the lateral axis with the smaller pixel in the opened image (y here, which is not downsampled), so the
+	 * stored sigma is the given one; the parameter string records both factors; the detections are those of
+	 * multiview-reconstruction's driver with the same downsampling
+	 */
+	@Test
+	public void testDifferentDownsamplingInXAndY() throws Exception
+	{
+		System.setProperty( "spark.master", "local[*]" );
+
+		final SpimData2 spimData = SimulateUtil.setUp();
+		final File xmlFile = tempDir.resolve( "dataset.xml" ).toFile();
+		new XmlIoSpimData2().save( spimData, xmlFile.toURI() );
+
+		final int exitCode = new CommandLine( new SparkInterestPointDetection() ).execute(
+				"-x", xmlFile.getAbsolutePath(), "-l", STANDARD_LABEL, "-s", String.valueOf( STANDARD_SIGMA ), "-t", String.valueOf( STANDARD_THRESHOLD ),
+				"-i0", String.valueOf( GLOBAL_MIN_INTENSITY ), "-i1", String.valueOf( GLOBAL_MAX_INTENSITY ),
+				"-dsxy", "2", "-dsy", "1", "-dsz", "1", "--localSparkBindAddress" );
+
+		assertEquals( 0, exitCode );
+
+		final SpimData2 result = new XmlIoSpimData2().load( xmlFile.toURI() );
+
+		// the sigma: pixels of y, which are full-resolution pixels (it would be twice that if the factor of x applied to it)
+		int numPoints = 0;
+
+		for ( final ViewInterestPointLists vipl : result.getViewInterestPoints().getViewInterestPoints().values() )
+			for ( final InterestPoint ip : vipl.getInterestPointList( STANDARD_LABEL ).getInterestPointsCopy().values() )
+			{
+				assertEquals( (float)STANDARD_SIGMA, ip.getSigma(), 0f );
+				assertTrue( Math.abs( ip.getResponse() ) >= STANDARD_THRESHOLD, "response " + ip.getResponse() );
+				++numPoints;
+			}
+
+		assertTrue( numPoints > 100, "points: " + numPoints );
+		assertTrue( parameters( result, STANDARD_LABEL ).contains( " downsampleX=2 downsampleY=1 downsampleZ=1 " ), parameters( result, STANDARD_LABEL ) );
+
+		// multiview-reconstruction's driver with the same downsampling (it downsamples non-virtually: a point may cross the threshold)
+		final DoGParameters dog = new DoGParameters( new ArrayList<>( result.getSequenceDescription().getViewDescriptions().values() ), result.getSequenceDescription().getImgLoader(), STANDARD_SIGMA, STANDARD_THRESHOLD );
+		dog.downsampling = new long[] { 2, 1, 1 };
+		dog.minIntensity = GLOBAL_MIN_INTENSITY;
+		dog.maxIntensity = GLOBAL_MAX_INTENSITY;
+
+		final HashMap< ViewId, List< InterestPoint > > driver = DoG.findInterestPoints( dog );
+
+		for ( final ViewId view : driver.keySet() )
+			assertTrue( Math.abs( count( result, view ) - driver.get( view ).size() ) <= 3, "view " + view.getViewSetupId() + ": " + count( result, view ) + " points by Spark, " + driver.get( view ).size() + " by the driver" );
+	}
+
 	@Test
 	public void testSparkScaleSpaceAndNoiseFloor() throws Exception
 	{

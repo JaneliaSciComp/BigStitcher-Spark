@@ -140,7 +140,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--noiseFactor" }, description = "derive the threshold from the noise: noiseFactor x the noise floor (the robust std of the finest Difference-of-Gaussian level, estimated in 16 random blocks of every view, pooled as the highest of the views), e.g. 2.5 as in the BigStitcher GUI; either this or --threshold")
 	protected Double noiseFactor = null;
 
-	@Option(names = { "--anisotropy" }, description = "z voxel / x voxel of the raw data (at full resolution), the Gaussians are then isotropic in physical units; the BigStitcher GUI suggests 0.8 x the calibration ratio since the PSF blurs z more than the calibration says (default: DOG isotropic in pixels, SCALE_SPACE the calibration ratio)")
+	@Option(names = { "--anisotropy" }, description = "z voxel / finer lateral voxel (x or y) of the raw data (at full resolution), the Gaussians are then isotropic in physical units; the BigStitcher GUI suggests 0.8 x the calibration ratio since the PSF blurs z more than the calibration says (default: DOG as wide in z pixels as laterally, SCALE_SPACE the calibration ratio; unequal pixel sizes in x and y are always taken from the calibration)")
 	protected Double anisotropy = null;
 
 	@Option(names = { "--steps" }, description = "SCALE_SPACE: steps per octave (default: 4)")
@@ -193,6 +193,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "-dsxy", "--downsampleXY" }, description = "downsampling in XY to use for segmentation, e.g. 4 (default: 2)")
 	protected Integer dsxy = 2;
 
+	@Option(names = { "-dsx", "--downsampleX" }, description = "downsampling in X if it differs from Y (e.g. for unequal pixel sizes in x and y), overrides -dsxy for x (default: the value of -dsxy)")
+	protected Integer dsx = null;
+
+	@Option(names = { "-dsy", "--downsampleY" }, description = "downsampling in Y if it differs from X, overrides -dsxy for y (default: the value of -dsxy)")
+	protected Integer dsy = null;
+
 	@Option(names = { "-dsz", "--downsampleZ" }, description = "downsampling in Z to use for segmentation, e.g. 2 (default: 1)")
 	protected Integer dsz = 1;
 
@@ -236,7 +242,9 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final int[] blockSize = Import.csvStringToIntArray(blockSizeString);
 		final URI xmlURI = this.xmlURI;
 		final String label = this.label;
-		final int downsampleXY = this.dsxy;
+		// x and y may be downsampled differently (-dsx / -dsy), -dsxy is the factor of both otherwise
+		final int downsampleX = this.dsx == null ? this.dsxy : this.dsx;
+		final int downsampleY = this.dsy == null ? this.dsxy : this.dsy;
 		final int downsampleZ = this.dsz;
 		final double minIntensity = this.minIntensity == null ? Double.NaN : this.minIntensity;
 		final double maxIntensity = this.maxIntensity == null ? Double.NaN : this.maxIntensity;
@@ -274,7 +282,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 
 		// the threshold: given, or noiseFactor x the pooled noise floor of the views (one Spark job per view)
 		final double threshold = this.threshold != null ? this.threshold :
-				thresholdFromNoiseFloor( sc, viewIdsGlobal, xmlURI, method, sigma, steps, anisotropyZ, new long[] { downsampleXY, downsampleXY, downsampleZ }, minIntensity, maxIntensity, this.noiseFactor );
+				thresholdFromNoiseFloor( sc, viewIdsGlobal, xmlURI, method, sigma, steps, anisotropyZ, new long[] { downsampleX, downsampleY, downsampleZ }, minIntensity, maxIntensity, this.noiseFactor );
 
 		System.out.println( "label: " + label );
 		System.out.println( "method: " + method );
@@ -291,7 +299,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		System.out.println( "localization: " + localization );
 		System.out.println( "minIntensity: " + minIntensity );
 		System.out.println( "maxIntensity: " + maxIntensity );
-		System.out.println( "downsampleXY: " + downsampleXY );
+		System.out.println( downsampleX == downsampleY ? "downsampleXY: " + downsampleX : "downsampleX: " + downsampleX + ", downsampleY: " + downsampleY );
 		System.out.println( "downsampleZ: " + downsampleZ );
 		System.out.println( "overlappingOnly: " + onlyOverlappingRegions );
 		System.out.println( "onlyCompareOverlapTiles: " + onlyCompareOverlapTiles );
@@ -355,7 +363,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final ViewDescription vd = dataLocal.getSequenceDescription().getViewDescription( metaData._1() );
 			final ImgLoader imgLoader = dataLocal.getSequenceDescription().getImgLoader();
 
-			final long[] ds = new long[] { downsampleXY, downsampleXY, downsampleZ };
+			final long[] ds = new long[] { downsampleX, downsampleY, downsampleZ };
 
 			if ( overlappingOnly )
 				System.out.println( "Fetching metadata for " + Group.pvid( vd ) + " <=> " + Group.pvid( metaData._2() ) + ", level " + Arrays.toString( ds ));
@@ -526,12 +534,12 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			final Pair<RandomAccessibleInterval, AffineTransform3D> input = openAndDownsample(
 						data.getSequenceDescription().getImgLoader(),
 						vd,
-						new long[] { downsampleXY, downsampleXY, downsampleZ },
+						new long[] { downsampleX, downsampleY, downsampleZ },
 						true );
 
 			System.out.println( "Processing " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " of full interval " + Util.printInterval( input.getA() ) );
 
-			// the voxel size of the opened image per dimension relative to x, which the Gaussians compensate (null = isotropic in pixels)
+			// the voxel size of the opened image per dimension relative to its finer lateral axis, which the Gaussians compensate (null = isotropic in pixels)
 			final double[] anisotropy = anisotropyOf( method, vd, input.getB(), anisotropyZ );
 
 			if ( prefetch )
@@ -622,7 +630,8 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			// correcting for downsampling
 			System.out.println( "Correcting interest points '" + label + "', " + Group.pvid(viewId) + ", " + Util.printInterval( processInterval ) + " for downsampling ... " );
 
-			DownsampleTools.correctForDownsampling( ips, input.getB() );
+			// positions per axis, the sigma to full-resolution pixels of the finer lateral axis of the view
+			DownsampleTools.correctForDownsampling( ips, input.getB(), vd.getViewSetup().hasVoxelSize() ? vd.getViewSetup().getVoxelSize() : null );
 
 			//final double[][] points = new double[ ips.size() ][];
 
@@ -754,15 +763,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			if ( method == Method.SCALE_SPACE && myIps.size() > 1 )
 			{
 				final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+				final ViewDescription vdMerge = data.getSequenceDescription().getViewDescription( viewId );
 				final AffineTransform3D mipmapTransform = openAndDownsample(
 						data.getSequenceDescription().getImgLoader(),
-						data.getSequenceDescription().getViewDescription( viewId ),
-						new long[] { downsampleXY, downsampleXY, downsampleZ },
+						vdMerge,
+						new long[] { downsampleX, downsampleY, downsampleZ },
 						true ).getB();
-				final double[] scale = new double[] { Math.abs( mipmapTransform.get( 0, 0 ) ), Math.abs( mipmapTransform.get( 1, 1 ) ), Math.abs( mipmapTransform.get( 2, 2 ) ) };
 				final int before = myIps.size();
 
-				myIps = DoGScaleSpace.mergeDuplicates( myIps, scale, sigma, scaleSpaceCombineDistance );
+				// the octave of a point follows from its sigma, which was scaled to full resolution with DownsampleTools.sigmaScale
+				myIps = DoGScaleSpace.mergeDuplicates( myIps, DownsampleTools.scale( mipmapTransform ), DownsampleTools.sigmaScale( vdMerge, mipmapTransform ), sigma, scaleSpaceCombineDistance );
 
 				System.out.println( Group.pvid( viewId ) + ": " + ( before - myIps.size() ) + " duplicate(s) across blocks merged" );
 			}
@@ -864,11 +874,13 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 			// which StoredDetectionParameters reads back when the GUI detects the label again
 			final String commonTail = " localization=" + DifferenceOfGUI.localizationKey( localization == Localization.NONE ? 0 : 1 ) + " groupTiles=false groupIllums=false" +
 					( this.noiseFactor != null ? " thresholdType=noisefloor noiseFactor=" + this.noiseFactor : " thresholdType=fixed" );
+			// one factor for x and y as always; different ones as the GUI records them (StoredDetectionParameters reads both forms)
+			final String downsampling = ( downsampleX == downsampleY ? " downsampleXY=" + downsampleX : " downsampleX=" + downsampleX + " downsampleY=" + downsampleY ) + " downsampleZ=" + downsampleZ;
 			final String params = method == Method.SCALE_SPACE ?
 					"DOG-SS (Spark) s=" + sigma + " steps=" + steps + " octaves=" + octaves + " finestLevel=" + finestLevel + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail :
+							downsampling + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail :
 					"DOG (Spark) s=" + sigma + " t=" + threshold + " overlappingOnly=" + overlappingOnly + " min=" + findMin + " max=" + findMax +
-							" downsampleXY=" + downsampleXY + " downsampleZ=" + downsampleZ + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail;
+							downsampling + " anisotropy=" + anisotropyZ + " minIntensity=" + minIntensity + " maxIntensity=" + maxIntensity + commonTail;
 
 			// the entries of the label for all processed views; the XML save commits their staged points
 			InterestPointTools.addInterestPointEntries( dataGlobal, label, viewIdsGlobal, params );
@@ -901,14 +913,16 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	}
 
 	/**
-	 * The anisotropy the Gaussians compensate (DownsampleTools.anisotropy, the voxel size of the opened image per dimension
-	 * relative to x): for the Difference-of-Gaussian only if --anisotropy is given (as in the GUI, DoG.java: NaN = isotropic
-	 * in pixels, what BigStitcher always did), for the scale space always (NaN = the ratio of the calibration, ScaleSpace.java)
+	 * The anisotropy the Gaussians compensate (the voxel size of the opened image per dimension relative to its finer
+	 * lateral axis), shared with multiview-reconstruction's drivers: for the Difference-of-Gaussian
+	 * DownsampleTools.anisotropyDoG (DoG.java: without --anisotropy the Gaussians are as wide in z pixels as laterally and
+	 * follow the calibration only if the pixel sizes in x and y differ, null = isotropic in pixels otherwise, what
+	 * BigStitcher always did), for the scale space DownsampleTools.anisotropy (NaN = the ratio of the calibration, ScaleSpace.java)
 	 */
 	protected static double[] anisotropyOf( final Method method, final ViewDescription vd, final AffineTransform3D mipmapTransform, final double anisotropyZ )
 	{
-		if ( method == Method.DOG && Double.isNaN( anisotropyZ ) )
-			return null;
+		if ( method == Method.DOG )
+			return DownsampleTools.anisotropyDoG( vd, mipmapTransform, anisotropyZ );
 
 		return DownsampleTools.anisotropy( vd, mipmapTransform, anisotropyZ );
 	}

@@ -801,8 +801,8 @@ public class SplitDatasets extends AbstractBasic
 				if ( vd.isPresent() )
 					allViewIds.add( vd );
 
-			final double avgAnisoF = net.preibisch.mvrecon.process.interestpointregistration.TransformationTools.getAverageAnisotropyFactor( data, allViewIds );
-			final double[] anisotropy = new double[] { 1, 1, avgAnisoF };
+			// the voxel size per dimension relative to the finer of x and y ({ 1, 1, z / x } for equal pixel sizes in x and y)
+			final double[] anisotropy = net.preibisch.mvrecon.process.interestpointregistration.TransformationTools.getAverageVoxelRatios( data, allViewIds );
 			IOFunctions.println( "Using anisotropy factor: " + Arrays.toString( anisotropy ) );
 
 			final int[] minSizeMultiplier = parseMinSizeMultiplier( minTileSizeString, minSizeMultiplierString, minStepSize );
