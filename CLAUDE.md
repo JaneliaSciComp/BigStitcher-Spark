@@ -8,7 +8,7 @@ See `README.md` for usage. This file contains technical / co-dev notes.
 
 ## Co-development with mvr
 
-This project pins to `multiview-reconstruction 10.0.2-SNAPSHOT` (mvr `master`, since 2026-11-15 for the embeddings as one table per array; the released 10.0.0 before that, 10.0.0-SNAPSHOT of branch `scalespace-pr108` until 2026-11-09) and imports ~30+ mvr packages directly. SNAPSHOT is **not** in Maven Central — every mvr change must be installed locally before BigStitcher-Spark sees it:
+This project pins to `multiview-reconstruction 10.0.2-SNAPSHOT` on `main` (mvr `master`, since 2026-11-15 for the embeddings as one table per array; the released 10.0.0 before that, 10.0.0-SNAPSHOT of branch `scalespace-pr108` until 2026-11-09) and to `11.0.0-SNAPSHOT` on branch `shear-aniso_xy` (mvr's branch of the same name, 2026-11-15: unequal pixel sizes in x and y; the version tells the branch build apart from mvr `master` in `~/.m2`) and imports ~30+ mvr packages directly. SNAPSHOT is **not** in Maven Central — every mvr change must be installed locally before BigStitcher-Spark sees it:
 
 ```bash
 cd /path/to/multiview-reconstruction
@@ -412,6 +412,8 @@ Cluster/cloud: submit the cluster jar via `spark-submit --class net.preibisch.bi
 
 ## Branches
 
+- `shear-aniso_xy` (2026-11-15) — unequal pixel sizes in x and y and `-dsx` / `-dsy` of `detect-interestpoints`; depends on mvr 11.0.0-SNAPSHOT,
+  the branch of the same name in mvr (install it from that branch: `mvn install -DskipTests`).
 - `main` — the one branch since 2026-11-09: `scalespace` (and with it `scalespace-pr108`'s work) was merged into it, as mvr's
   `scalespace` was merged into mvr `master`. `main` therefore depended on mvr 10.0.0-SNAPSHOT until mvr 10.0.0 was released (pinned by 7621179). Since 2026-11-15 it depends on
   mvr 10.0.2-SNAPSHOT (the embeddings' table, see `embed-interestpoints` above); the release script refuses SNAPSHOT dependencies,
