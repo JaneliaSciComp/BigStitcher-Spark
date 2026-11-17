@@ -146,6 +146,29 @@ public class Spark {
 		return sparkEnv == null ? null : sparkEnv.executorId();
 	}
 
+	/** the dataset last loaded by {@link #getCachedSparkJobSpimData2(URI)} on this thread */
+	private static final ThreadLocal< Pair< URI, SpimData2 > > cachedJobSpimData = new ThreadLocal<>();
+
+	/**
+	 * Like {@link #getSparkJobSpimData2(URI)}, but loads the XML only once per thread and returns the same
+	 * instance on later calls. Use it only if the tasks do not modify the returned instance and the XML file
+	 * does not change while they run.
+	 *
+	 * @param xmlPath URI of the dataset XML to load
+	 * @return this thread's data instance
+	 * @throws SpimDataException if the XML cannot be loaded
+	 */
+	public static SpimData2 getCachedSparkJobSpimData2( final URI xmlPath ) throws SpimDataException
+	{
+		final Pair< URI, SpimData2 > cached = cachedJobSpimData.get();
+		if ( cached != null && cached.getA().equals( xmlPath ) )
+			return cached.getB();
+
+		final SpimData2 data = getSparkJobSpimData2( xmlPath );
+		cachedJobSpimData.set( new ValuePair<>( xmlPath, data ) );
+		return data;
+	}
+
 	/**
 	 * Loads the dataset XML with the image loader's fetcher threads set to 0, i.e. without background fetching.
 	 *
