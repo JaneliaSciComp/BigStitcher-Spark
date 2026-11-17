@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -42,7 +43,6 @@ import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.Tile;
 import mpicbg.models.TranslationModel3D;
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.registration.ViewRegistration;
 import mpicbg.spim.data.sequence.ViewId;
 import net.imglib2.multithreading.SimpleMultiThreading;
@@ -50,7 +50,6 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Pair;
 import net.imglib2.util.ValuePair;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration;
-import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractRegistration.RegularizationModel;
 import net.preibisch.bigstitcher.spark.util.Import;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 import net.preibisch.legacy.mpicbg.PointMatchGeneric;
@@ -61,6 +60,7 @@ import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.Ba
 import net.preibisch.mvrecon.fiji.spimdata.SpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.XmlIoSpimData2;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.CorrespondingInterestPoints;
+import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoints;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.InterestPoint;
 import net.preibisch.mvrecon.fiji.spimdata.stitchingresults.PairwiseStitchingResult;
 import net.preibisch.mvrecon.process.interestpointregistration.TransformationTools;
@@ -82,6 +82,17 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * Command-line tool that runs the global optimization ("solve") of a BigStitcher dataset, turning pairwise
+ * links between views into one transformation per view. The links come either from corresponding interest
+ * points ({@code -s IP}, one or more labels with weights) or from the pairwise stitching results stored in
+ * the XML ({@code -s STITCHING}). Views can be grouped (illuminations, channels, tiles) or split per
+ * timepoint; the independent registration subsets and the default fixed views are determined exactly like
+ * in the GUI, and one of the {@link GlobalOpt}, {@link GlobalOptIterative} or {@link GlobalOptTwoRound}
+ * variants is run. Optionally the result of every subset is mapped back onto a reference view
+ * ({@code --enableMapbackViews}, requires {@code --disableFixedViews}). The solved transformations are
+ * appended to the views' {@link ViewRegistration}s and, unless {@code --dryRun} is set, the XML is saved.
+ */
 public class Solver extends AbstractRegistration
 {
 	/*
@@ -95,13 +106,25 @@ public class Solver extends AbstractRegistration
 	*/
 	private static final long serialVersionUID = 5220898723968914742L;
 
-	public enum SolverSource { IP, STITCHING };
+	/** Where the pairwise links for the solve come from. */
+	public enum SolverSource
+	{
+		/** Corresponding interest points of the given {@code --label}(s). */
+		IP,
+		/** Pairwise stitching results (image-correlation shifts) stored in the XML. */
+		STITCHING
+	};
+
+	/** Whether the views are pre-aligned before the global optimization starts. */
 	public enum PreAlign { PREALIGN, NO_PREALIGN };
 
 	public ArrayList< ViewId > fixedViewIds;
 
+	/** Type of transformation model used to map the solved result back onto a reference view. */
 	public enum MapbackModel { TRANSLATION, RIGID };
+
 	public ArrayList< ViewId > mapBackViewIds;
+
 	public Model<?> mapBackModel;
 
 	@Option(names = { "-s", "--sourcePoints" }, required = true, description = "which source to use for the solve, IP (interest points) or STITCHING")
@@ -170,7 +193,7 @@ public class Solver extends AbstractRegistration
 		this.setRegion();
 		initRegistrationParameters();
 
-		if ( !this.setupParameters( dataGlobal, viewIdsGlobal ) )
+		if ( !this.setupParameters( dataGlobal ) )
 			return null;
 
 		final HashMap< ViewId, HashMap< String, Double > > labelMapGlobal;
@@ -290,9 +313,8 @@ public class Solver extends AbstractRegistration
 
 		final PointMatchCreator pmc;
 
-		// TODO: BUG, not connected tiles are missing for global opt
 		if ( sourcePoints == SolverSource.IP )
-			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, setup.getPairs(), fixedViewIds, vsComparisonPairs );
+			pmc = setupPointMatchesFromInterestPoints(dataGlobal, viewIdsGlobal, labelMapGlobal, groups, fixedViewIds, vsComparisonPairs );
 		else
 			pmc = setupPointMatchesStitching(dataGlobal, viewIdsGlobal, vsComparisonPairs);
 
@@ -317,7 +339,8 @@ public class Solver extends AbstractRegistration
 							pmc,
 							cs,
 							fixedViewIds,
-							groups );
+							groups,
+							false );
 		}
 		else if ( globalOptParameters.method == GlobalOptType.ONE_ROUND_ITERATIVE )
 		{
@@ -329,7 +352,8 @@ public class Solver extends AbstractRegistration
 							new MaxErrorLinkRemoval(),
 							removedInconsistentPairs,
 							fixedViewIds,
-							groups );
+							groups,
+							false );
 		}
 		else //if ( globalOptParameters.method == GlobalOptType.TWO_ROUND_SIMPLE || globalOptParameters.method == GlobalOptType.TWO_ROUND_ITERATIVE )
 		{
@@ -350,7 +374,8 @@ public class Solver extends AbstractRegistration
 									dataGlobal.getViewRegistrations().getViewRegistrations() ) ),
 					new ConvergenceStrategy( Double.MAX_VALUE ),
 					fixedViewIds,
-					groups );
+					groups,
+					true );
 		}
 
 		// update models in ViewRegistration
@@ -459,12 +484,38 @@ public class Solver extends AbstractRegistration
 		return null;
 	}
 
-	public static ImageCorrelationPointMatchCreator setupPointMatchesStitching(
+	/**
+	 * Builds the point-match creator for a solve from the pairwise stitching results stored in the dataset.
+	 * Only results between selected views are used, i.e. all views of both groups of a result must be in
+	 * {@code viewIdsGlobal}. If {@code vsComparisonPairs} is given, only results whose two view setup IDs
+	 * form an allowed pair are kept. Results whose stored hash does not match the current
+	 * {@link ViewRegistration}s of the two views (i.e. the views were transformed after stitching) are
+	 * dropped with an explanatory message. Selected views without any remaining result are reported and
+	 * still take part in the solve (without links), so that the two-round methods can place them using
+	 * the metadata weak links, like {@link #setupPointMatchesFromInterestPoints} does for interest points.
+	 *
+	 * @param dataGlobal the dataset holding the stitching results and view registrations
+	 * @param viewIdsGlobal the views being solved; results involving any other view are ignored
+	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
+	 *             allow all pairs
+	 * @return a creator over the remaining stitching results (plus the unconnected selected views), or
+	 *         {@code null} if no link remains
+	 */
+	public static PointMatchCreator setupPointMatchesStitching(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
 			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
 	{
 		Collection< PairwiseStitchingResult< ViewId > > results = dataGlobal.getStitchingResults().getPairwiseResults().values();
+
+		// only process links between selected views (as the GUI does), i.e. drop every result in which
+		// one of the two groups contains a view that is not part of this solve
+		final HashSet< ViewId > selectedViews = new HashSet<>( viewIdsGlobal );
+		final int numAll = results.size();
+		results = results.stream().filter( psr ->
+				selectedViews.containsAll( psr.pair().getA().getViews() ) && selectedViews.containsAll( psr.pair().getB().getViews() ) )
+			.collect( Collectors.toList() );
+		System.out.println( "Selected views filter: kept " + results.size() + " of " + numAll + " stitching pairs." );
 
 		if ( vsComparisonPairs != null )
 		{
@@ -505,14 +556,92 @@ public class Solver extends AbstractRegistration
 			return null;
 		}
 
-		return new ImageCorrelationPointMatchCreator(results);
+		final ImageCorrelationPointMatchCreator pmc = new ImageCorrelationPointMatchCreator( results );
+
+		// ImageCorrelationPointMatchCreator only knows the views of its results, so a selected view without
+		// any (remaining) stitching result would get no tile in the global optimization: one-round methods
+		// store identity for it anyway, but the two-round methods could not place it using the metadata weak
+		// links either. Add such views to the set of views (without links), as the interest point path does.
+		final HashSet< ViewId > connectedViews = pmc.getAllViews();
+		final List< ViewId > unconnectedViews =
+				viewIdsGlobal.stream().filter( v -> !connectedViews.contains( v ) ).sorted().collect( Collectors.toList() );
+
+		System.out.println( "Total number of pairs of views that are connected: " + results.size() );
+		System.out.println( "Total number of views: " + viewIdsGlobal.size() );
+		System.out.println( "Total number of connected views: " + connectedViews.size() + " (" + unconnectedViews.size() + " missing that are not connected)");
+
+		if ( unconnectedViews.isEmpty() )
+			return pmc;
+
+		System.out.println( "The following views have no stitching result and are added to the global optimization without links:" );
+		unconnectedViews.forEach( v -> System.out.println( "\t" + Group.pvid( v ) ) );
+
+		final HashSet< ViewId > allViews = new HashSet<>( connectedViews );
+		allViews.addAll( unconnectedViews );
+
+		return new PointMatchCreator()
+		{
+			@Override
+			public HashSet< ViewId > getAllViews()
+			{
+				return new HashSet<>( allViews ); // GlobalOpt modifies the returned set
+			}
+
+			@Override
+			public < M extends Model< M > > void assignWeights(
+					final HashMap< ViewId, Tile< M > > tileMap,
+					final ArrayList< Group< ViewId > > groups,
+					final Collection< ViewId > fixedViews )
+			{
+				pmc.assignWeights( tileMap, groups, fixedViews );
+			}
+
+			@Override
+			public < M extends Model< M > > void assignPointMatches(
+					final HashMap< ViewId, Tile< M > > tileMap,
+					final ArrayList< Group< ViewId > > groups,
+					final Collection< ViewId > fixedViews )
+			{
+				pmc.assignPointMatches( tileMap, groups, fixedViews );
+			}
+		};
 	}
 
+	/** the list of a (view, label) */
+	private static InterestPoints interestPointList( final SpimData2 data, final ViewId viewId, final String label )
+	{
+		return data.getViewInterestPoints().getViewInterestPointLists( viewId ).getInterestPointList( label );
+	}
+
+	/**
+	 * Builds the point-match creator for a solve from the stored corresponding interest points. The interest
+	 * points of the requested views and labels are loaded once, in parallel, and shared by all pairs. The pairs
+	 * come from the stored correspondences themselves: the partners of every (view, label), which the interest
+	 * point store answers from its index without loading points (Lila Schweinfurth, branch ip-store-update),
+	 * restricted to the selected views and labels and optionally by {@code vsComparisonPairs}. For every pair
+	 * and every combination of their labels, the correspondences of view A that point to view B (read for that
+	 * partner only) are turned into point matches whose coordinates are transformed into global space with the
+	 * views' current registration models, and added as inliers of a {@link PairwiseResult} that carries both
+	 * labels (used to assign the label weights). Pairs in which both views are fixed, or both belong to the same
+	 * group, are skipped. Views without any connection are added as a self-pair without inliers so that they
+	 * still take part in the solve. If loading fails with an {@link InterruptedException} or
+	 * {@link ExecutionException}, the stack trace is printed and the JVM exits with status 1.
+	 *
+	 * @param dataGlobal the dataset holding interest points, correspondences and view registrations
+	 * @param viewIdsGlobal the views to connect
+	 * @param labelMap for every view, the interest point labels to use mapped to their weights
+	 * @param groups groups of views that are treated as one view; pairs within a group are not connected
+	 * @param fixedViewIds views held fixed during the solve; pairs of two fixed views are not connected
+	 * @param vsComparisonPairs allowed pairs of view setup IDs as {@code (min, max)}, or {@code null} to
+	 *             allow all pairs
+	 * @return a creator over all connected pairs (plus the unconnected views), or {@code null} if no pair
+	 *         at all was found
+	 */
 	public static InterestPointMatchCreator setupPointMatchesFromInterestPoints(
 			final SpimData2 dataGlobal,
 			final ArrayList< ViewId > viewIdsGlobal,
 			final Map< ViewId, ? extends Map< String, Double > > labelMap,
-			final Collection< ? extends Pair< ViewId, ViewId > > candidatePairs,
+			final Collection< Group< ViewId > > groups,
 			final HashSet< ViewId > fixedViewIds,
 			final HashSet< Pair< Integer, Integer > > vsComparisonPairs )
 	{
@@ -524,6 +653,8 @@ public class Solver extends AbstractRegistration
 
 		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = Collections.synchronizedList( new ArrayList<>() );
 		final Set< ViewId > connectedViews = Collections.synchronizedSet( new HashSet<>() );
+		// interest points per (view, label), shared by all pairs
+		final Map< Pair< ViewId, String >, Map< Integer, InterestPoint > > pointMaps = new ConcurrentHashMap<>();
 
 		final ForkJoinPool pool = new ForkJoinPool( Math.max( 32, Runtime.getRuntime().availableProcessors() ) );
 
@@ -533,8 +664,7 @@ public class Solver extends AbstractRegistration
 
 			pool.submit( () -> ipsToLoad.parallelStream().forEach( info ->
 			{
-				dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getInterestPointsCopy();
-				dataGlobal.getViewInterestPoints().getViewInterestPointLists( info.getA() ).getInterestPointList( info.getB() ).getCorrespondingInterestPointsCopy();
+				pointMaps.put( info, interestPointList( dataGlobal, info.getA(), info.getB() ).getInterestPointsCopy() );
 
 				ViewUtil.progressPercentage(progress.incrementAndGet(), ipsToLoad.size() );
 			})).get();
@@ -542,21 +672,53 @@ public class Solver extends AbstractRegistration
 			// extract all corresponding interest points for given ViewId's and label
 			System.out.println( "\nSetting up all corresponding interest points (in parallel) ... ");
 
-			final ArrayList< Pair< ViewId, ViewId > > tasks = new ArrayList<>();
+			// only view pairs that share correspondences, ordered as in viewIdsGlobal (vA before vB)
+			final Map< ViewId, Integer > viewIndex = new HashMap<>();
+			for ( int i = 0; i < viewIdsGlobal.size(); ++i )
+				viewIndex.put( viewIdsGlobal.get( i ), i );
 
-			// the pairs of the PairwiseSetup (registration strategy, overlap, groups), same as the GUI, instead of all n^2 pairs
-			for ( final Pair< ViewId, ViewId > pair : candidatePairs )
+			final Set< Pair< ViewId, ViewId > > connectedPairs = Collections.synchronizedSet( new HashSet<>() );
+			pool.submit( () -> viewIdsGlobal.parallelStream().forEach( vA ->
 			{
-				final ViewId vA = pair.getA();
-				final ViewId vB = pair.getB();
-				if ( vsComparisonPairs != null )
+				for ( final String labelA : labelMap.get( vA ).keySet() )
 				{
-					final Pair< Integer, Integer > key = new ValuePair<>( Math.min( vA.getViewSetupId(), vB.getViewSetupId() ), Math.max( vA.getViewSetupId(), vB.getViewSetupId() ) );
-					if ( !vsComparisonPairs.contains( key ) )
-						continue;
+					for ( final Pair< ViewId, String > partner : interestPointList( dataGlobal, vA, labelA ).getCorrespondingViews() )
+					{
+						final ViewId vB = partner.getA();
+						final String labelB = partner.getB();
+
+						if ( vB.equals( vA ) || !viewIndex.containsKey( vB ) )
+							continue;
+
+						if ( !labelMap.get( vB ).containsKey( labelB ) )
+							continue;
+
+						if ( vsComparisonPairs != null )
+						{
+							final int setupA = vA.getViewSetupId();
+							final int setupB = vB.getViewSetupId();
+							final Pair< Integer, Integer > setupPair = new ValuePair<>( Math.min( setupA, setupB ), Math.max( setupA, setupB ) );
+							if ( !vsComparisonPairs.contains( setupPair ) )
+								continue;
+						}
+
+						if ( viewIndex.get( vA ) < viewIndex.get( vB ) )
+							connectedPairs.add( new ValuePair<>( vA, vB ) );
+						else
+							connectedPairs.add( new ValuePair<>( vB, vA ) );
+					}
 				}
-				tasks.add( new ValuePair<>( vA, vB ) ); // order doesn't matter, saved symmetrically
-			}
+			})).get();
+
+			final ArrayList< Pair< ViewId, ViewId > > tasks = new ArrayList<>( connectedPairs );
+			tasks.sort( ( first, second ) ->
+			{
+				final int compareA = Integer.compare( viewIndex.get( first.getA() ), viewIndex.get( second.getA() ) );
+				if ( compareA != 0 )
+					return compareA;
+				return Integer.compare( viewIndex.get( first.getB() ), viewIndex.get( second.getB() ) );
+			} );
+			System.out.println( "Views pairs with correspondences: " + tasks.size() );
 
 			progress.set( 0 );
 
@@ -586,6 +748,14 @@ public class Solver extends AbstractRegistration
 					return;
 				}
 
+				// both are part of the same group, no need to connect them
+				for ( final Group< ViewId > group : groups )
+					if ( group.contains( vA ) && group.contains( vB ) )
+					{
+						System.out.println( "Not assigning " + Group.pvid( vA ) + " <> " + Group.pvid( vB ) + " because they are part of the same group." );
+						return;
+					}
+
 				final AffineTransform3D mA = models.get( vA );
 				final AffineTransform3D mB = models.get( vB );
 
@@ -600,11 +770,18 @@ public class Solver extends AbstractRegistration
 						pairResult.setLabelA( labelA );
 						pairResult.setLabelB( labelB );
 		
-						final Collection<CorrespondingInterestPoints> cpA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getCorrespondingInterestPointsCopy();
-						//List<CorrespondingInterestPoints> cpB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( label ).getCorrespondingInterestPointsCopy();
-		
-						final Map< Integer, InterestPoint> ipListA = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vA ).getInterestPointList( labelA ).getInterestPointsCopy();
-						final Map< Integer, InterestPoint> ipListB = dataGlobal.getViewInterestPoints().getViewInterestPointLists( vB ).getInterestPointList( labelB ).getInterestPointsCopy();
+						// only the correspondences from (vA, labelA) to (vB, labelB)
+						final Collection<CorrespondingInterestPoints> cpA =
+								interestPointList( dataGlobal, vA, labelA ).getCorrespondingInterestPointsCopy( vB, labelB );
+						if ( cpA.isEmpty() )
+							continue;
+
+						final Map< Integer, InterestPoint> ipListA = pointMaps.computeIfAbsent(
+								new ValuePair<>( vA, labelA ),
+								key -> interestPointList( dataGlobal, vA, labelA ).getInterestPointsCopy() );
+						final Map< Integer, InterestPoint> ipListB = pointMaps.computeIfAbsent(
+								new ValuePair<>( vB, labelB ),
+								key -> interestPointList( dataGlobal, vB, labelB ).getInterestPointsCopy() );
 		
 						for ( final CorrespondingInterestPoints p : cpA )
 						{
@@ -674,7 +851,12 @@ public class Solver extends AbstractRegistration
 			return null;
 	}
 
-	/** GUI "Fix first view": the first (sorted) view of every subset. */
+	/**
+	 * GUI "Fix first view": the first (sorted) view of every subset.
+	 *
+	 * @param subsets the independent registration subsets; empty subsets are skipped
+	 * @return the first view of every non-empty subset
+	 */
 	public static HashSet< ViewId > assembleFixed( final List< Subset< ViewId > > subsets )
 	{
 		final HashSet< ViewId > fixed = new HashSet<>();
@@ -687,8 +869,13 @@ public class Solver extends AbstractRegistration
 	}
 
 	/**
-	 * GUI "Map back to first/user defined view": one reference view per subset.
+	 * GUI "Map back to first/user defined view": one reference view per subset. For each subset the first
+	 * view of {@code mapBackViewIds} that it contains is used; if there is none, the first (sorted) view of
+	 * the subset. The chosen reference views are printed.
 	 *
+	 * @param subsets the independent registration subsets; empty subsets are skipped
+	 * @param mapBackViewIds user-defined reference views, or {@code null} to use the first view of every
+	 *             subset
 	 * @return for every view the mapback (reference) view of its subset
 	 */
 	public static HashMap< ViewId, ViewId > assembleMapBack(
@@ -724,7 +911,22 @@ public class Solver extends AbstractRegistration
 		return map;
 	}
 
-	public boolean setupParameters( final SpimData2 dataGlobal, final ArrayList< ViewId > viewIdsGlobal )
+	/**
+	 * Validates the fixed-view and mapback options and resolves them against the dataset. With
+	 * {@code --disableFixedViews}, {@link #fixedViewIds} is set to {@code null}; if
+	 * {@code --enableMapbackViews} is also set, {@code --mapbackViews} is parsed into {@link #mapBackViewIds}
+	 * ({@code null} if not given, meaning the first view of every subset) and {@link #mapBackModel} is
+	 * instantiated according to {@code --mapbackModel}. Otherwise {@code --fixedViews} is parsed into
+	 * {@link #fixedViewIds} ({@code null} if not given). View IDs that do not exist in the dataset are
+	 * dropped with a warning.
+	 *
+	 * @param dataGlobal the dataset against which the given view IDs are validated
+	 * @return always {@code true}
+	 * @throws IllegalArgumentException if {@code --enableMapbackViews} is used without
+	 *             {@code --disableFixedViews} or together with {@code -rtp TO_REFERENCE_TIMEPOINT}, or if
+	 *             none of the given fixed or mapback views exists in the dataset
+	 */
+	public boolean setupParameters( final SpimData2 dataGlobal )
 	{
 		if ( !disableFixedViews && enableMapbackViews )
 			throw new IllegalArgumentException("You cannot use '--enableMapbackViews' without '--disableFixedViews'.");
@@ -804,7 +1006,7 @@ public class Solver extends AbstractRegistration
 		return true;
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new Solver()).execute(args));

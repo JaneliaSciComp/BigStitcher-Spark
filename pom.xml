@@ -10,7 +10,7 @@
 
     <groupId>net.preibisch</groupId>
     <artifactId>BigStitcher-Spark</artifactId>
-    <version>0.1.2-SNAPSHOT</version>
+    <version>0.2.1-SNAPSHOT</version>
 
     <name>BigStitcher Spark</name>
     <description>Spark-based parallel BigStitcher project.</description>
@@ -81,6 +81,9 @@
 		<package-name>net.preibisch.bigstitcher.spark</package-name>
 
         <scijava.jvm.version>21</scijava.jvm.version>
+        <!-- Link to the Java 21 API docs (with module info) instead of the Java 8 default, which javadoc
+             otherwise reports as "packages ... are in the unnamed module". -->
+        <scijava.javadoc.url.java>https://javadoc.scijava.org/Java21/</scijava.javadoc.url.java>
         <license.licenseName>bsd</license.licenseName>
         <license.copyrightOwners>Developers.</license.copyrightOwners>
 
@@ -111,10 +114,10 @@
 		<bigdataviewer-core.version>10.6.12</bigdataviewer-core.version>
 		<bigdataviewer-n5.version>1.0.3</bigdataviewer-n5.version>
 
-		<multiview-reconstruction.version>9.0.14</multiview-reconstruction.version>
-		<BigStitcher.version>3.0.0</BigStitcher.version>
+		<multiview-reconstruction.version>10.0.2-SNAPSHOT</multiview-reconstruction.version>
+		<BigStitcher.version>3.1.0</BigStitcher.version>
 
-		<!-- N5 stable versions aligned with multiview-reconstruction 9.0.0-SNAPSHOT -->
+		<!-- N5 stable versions aligned with multiview-reconstruction 10.0.0 -->
 		<n5.version>4.0.1</n5.version>
 		<commons-compress.version>1.28.0</commons-compress.version>
 		<commons-io.version>2.20.0</commons-io.version>
@@ -127,8 +130,6 @@
 
 		<mpicbg.mpicbg.version>1.6.6</mpicbg.mpicbg.version>
 
-		<!--for the old bioformats to work properly (compared with old main branch to find out)-->
-		<ome-codecs.version>0.3.0</ome-codecs.version>
     </properties>
 
     <repositories>
@@ -140,11 +141,13 @@
         </repository>
         -->
 
+		<!-- Default (warn) checksum policy on purpose: maven.scijava.org serves a few old artifacts
+		     without .sha1/.md5 files (e.g. ome:jxrlib-all:0.2.4, Bio-Formats' JPEG-XR codec), which a
+		     "fail" policy rejects and which breaks CI on a cold Maven cache. The ome repository below
+		     stays as a fallback for maven.scijava.org outages. -->
 		<repository>
-		<id>scijava.public</id>
+			<id>scijava.public</id>
 			<url>https://maven.scijava.org/content/groups/public</url>
-			<releases><checksumPolicy>fail</checksumPolicy></releases>
-			<snapshots><checksumPolicy>fail</checksumPolicy></snapshots>
 		</repository>
 		<repository>
 			<id>ome</id>
@@ -362,6 +365,11 @@
             <groupId>info.picocli</groupId>
             <artifactId>picocli</artifactId>
         </dependency>
+        <!-- the screenshot manifest and the viewer-transform files (version managed by pom-scijava) -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.janelia.saalfeldlab</groupId>
             <artifactId>n5-hdf5</artifactId>
@@ -440,14 +448,17 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- old bioformats -->
+        <!-- Bio-Formats at the pom-scijava managed version (8.4.0 with pom-scijava 44), the same version
+             multiview-reconstruction is built against. It is excluded from mvr/BigStitcher above and re-declared
+             here only to exclude com.esotericsoftware:kryo (5.x, used by the Memoizer), which clashes with Spark's kryo-shaded 4.x.
+             Do not pin a version here: maven.scijava.org has no checksums for the old 6.x artifacts and the
+             repository is configured with checksumPolicy=fail. -->
         <dependency>
             <groupId>org.openmicroscopy</groupId>
             <artifactId>ome-common</artifactId>
-            <version>6.0.4</version>
             <exclusions>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -455,10 +466,9 @@
         <dependency>
             <groupId>ome</groupId>
             <artifactId>formats-bsd</artifactId>
-            <version>6.5.1</version>
             <exclusions>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -466,14 +476,13 @@
         <dependency>
             <groupId>ome</groupId>
             <artifactId>formats-gpl</artifactId>
-            <version>6.5.1</version>
             <exclusions>
                 <exclusion>
                     <groupId>ch.systems.cisd</groupId>
                     <artifactId>jhdf5</artifactId>
                 </exclusion>
                 <exclusion>
-                    <groupId>com.esotericsoftware.kryo</groupId>
+                    <groupId>com.esotericsoftware</groupId>
                     <artifactId>kryo</artifactId>
                 </exclusion>
             </exclusions>
@@ -495,6 +504,10 @@
                     <!-- Javadoc is not a deliverable of this project: don't fail the build on javadoc-tool errors
                          such as unreachable external doc links (javadoc.scijava.org/Icy currently 404s). -->
                     <failOnError>false</failOnError>
+                    <!-- Check references, HTML, syntax and accessibility, but do not require a comment on every
+                         public/protected member (the command-line option fields and Serializable fields are
+                         described by their picocli annotations, not by Javadoc). -->
+                    <doclint>all,-missing</doclint>
                 </configuration>
             </plugin>
 

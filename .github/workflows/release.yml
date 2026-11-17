@@ -67,8 +67,16 @@ jobs:
         run: |
           set -eux
           version="${GITHUB_REF_NAME#BigStitcher-Spark-}"
+          # Release tags point at maven-release-plugin commits that release-version.sh keeps off main,
+          # so GitHub cannot work out the previous release by itself and --generate-notes would list
+          # every PR in the repo. Start the notes at the most recent published release instead.
+          previous="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          notes_args=(--generate-notes)
+          if [ -n "$previous" ] && [ "$previous" != "$GITHUB_REF_NAME" ]; then
+            notes_args+=(--notes-start-tag "$previous")
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --verify-tag \
             --title "BigStitcher-Spark $version" \
-            --generate-notes \
+            "${notes_args[@]}" \
             dist/*.jar

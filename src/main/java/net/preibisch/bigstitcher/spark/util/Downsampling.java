@@ -23,8 +23,21 @@ package net.preibisch.bigstitcher.spark.util;
 
 import java.util.List;
 
+/**
+ * Validation of the multi-resolution pyramid command-line options shared by the fusion and export tools.
+ */
 public class Downsampling
 {
+	/**
+	 * Checks that the pyramid options are consistent: either automatic ({@code --multiRes}) or manual
+	 * ({@code --downsampling}) mode may be selected, not both. Prints an explanation to {@code System.out}
+	 * if the combination is invalid.
+	 *
+	 * @param multiRes whether automatic multi-resolution pyramid creation was requested
+	 * @param downsampling the manually specified downsampling steps (e.g. {@code 2,2,1; 2,2,1; 2,2,2}),
+	 *        or {@code null} if none were given
+	 * @return {@code false} if both modes were selected, {@code true} otherwise
+	 */
 	public static boolean testDownsamplingParameters( final boolean multiRes, final List<String> downsampling )
 	{
 		// no not create multi-res pyramid

@@ -41,6 +41,12 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
+/**
+ * Command-line tool that applies the full registration (the concatenated affine model) of one view of a
+ * BigStitcher project to 3D points given on the command line ({@code -p}) and/or read from a CSV file
+ * ({@code --csvIn}), and writes the transformed {@code x,y,z} coordinates to {@code --csvOut} or, if omitted,
+ * to {@code stdout}. Also prints the maximal bounding box of the whole acquisition. Not a Spark job.
+ */
 public class TransformPoints extends AbstractBasic
 {
 	@Option(names = { "-vi" }, required = true, description = "specifically list the view id (time point id, view setup id) from which the transformation should be loaded, e.g. -vi '0,5' (timepoint 0, viewsetup 5)")

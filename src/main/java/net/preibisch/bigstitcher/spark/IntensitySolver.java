@@ -10,7 +10,6 @@ import org.janelia.saalfeldlab.n5.N5Writer;
 import org.janelia.saalfeldlab.n5.universe.StorageFormat;
 import org.slf4j.LoggerFactory;
 
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.bigstitcher.spark.abstractcmdline.AbstractSelectableViews;
 import net.preibisch.bigstitcher.spark.util.Import;
@@ -24,6 +23,15 @@ import net.preibisch.mvrecon.process.fusion.intensity.ViewPairCoefficientMatches
 import picocli.CommandLine;
 import util.URITools;
 
+/**
+ * Command-line tool that solves globally for per-view intensity correction coefficients. It reads the
+ * pairwise {@link ViewPairCoefficientMatches} written by {@link SparkIntensityMatching} for all pairs of
+ * the selected views, runs {@link IntensityCorrection#solve} for at most {@code --maxIterations}
+ * iterations and writes the resulting per-view {@link Coefficients} into an N5/Zarr/HDF5 container, one
+ * dataset per view at {@code <group>/setup<s>/timepoint<t>/<dataset>}. The storage format is guessed
+ * from the extension of the output path unless given with {@code -s}; a mismatch between the coefficient
+ * grid size stored with the matches and {@code --numCoefficients} is reported on stderr but is not fatal.
+ */
 public class IntensitySolver extends AbstractSelectableViews {
 
 	@CommandLine.Option(names = { "--numCoefficients" }, description = "number of coefficients per dimension (default: 8,8,8)")
@@ -122,7 +130,7 @@ public class IntensitySolver extends AbstractSelectableViews {
 		return null;
 	}
 
-	public static void main(final String... args) throws SpimDataException
+	public static void main(final String... args)
 	{
 		System.out.println(Arrays.toString(args));
 		System.exit(new CommandLine(new IntensitySolver()).execute(args));

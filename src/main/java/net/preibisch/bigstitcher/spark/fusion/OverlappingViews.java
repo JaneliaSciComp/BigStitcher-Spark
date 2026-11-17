@@ -11,9 +11,25 @@ import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.util.Intervals;
 import net.preibisch.bigstitcher.spark.util.ViewUtil;
 
+/**
+ * Static helpers that decide which views of a dataset overlap a given world-space interval, or
+ * overlap each other, based on the views' registered (transformed) bounding boxes. The fusion
+ * tools use them to restrict loading and rendering to the views that actually contribute to a
+ * block.
+ */
 public class OverlappingViews
 {
+	/**
+	 * Default expansion (in pixels, per side) of a block interval when searching for overlapping
+	 * views in affine fusion ({@code SparkFusion} with {@code FusionMethod.AFFINE}).
+	 */
 	public static final int defaultAffineExpansion = 2;
+
+	/**
+	 * Default expansion (in pixels, per side) of a block interval when searching for overlapping
+	 * views in thin-plate-spline fusion; much larger than {@link #defaultAffineExpansion} because
+	 * the non-rigid deformation can pull content in from outside the affinely transformed bounds.
+	 */
 	public static final int defaultTPSExpansion = 50;
 
 	/**
@@ -49,30 +65,6 @@ public class OverlappingViews
 		}
 
 		return overlapping;
-	}
-
-	public static ArrayList< ViewId > findAllOverlappingViewsFor(
-			final ViewId viewIdA,
-			final SpimData spimData,
-			final HashMap< ViewId, AffineTransform3D > registrations,
-			final List<ViewId> viewIds)
-	{
-		final ArrayList< ViewId > overlappingViews = new ArrayList<>();
-
-		final Interval bounds1 = ViewUtil.getTransformedBoundingBox( spimData, viewIdA, registrations.get( viewIdA ) );
-
-		for ( final ViewId viewIdB : viewIds )
-		{
-			if ( viewIdA.equals( viewIdB ) )
-				continue;
-
-			final Interval bounds2 = ViewUtil.getTransformedBoundingBox( spimData, viewIdB, registrations.get( viewIdB ) );
-
-			if ( ViewUtil.overlaps( bounds1, bounds2 ) )
-				overlappingViews.add( viewIdB );
-		}
-
-		return overlappingViews;
 	}
 
 }

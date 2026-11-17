@@ -44,14 +44,34 @@ import net.imglib2.view.Views;
 import net.preibisch.legacy.io.IOFunctions;
 import util.Lazy;
 
-public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> implements Consumer<RandomAccessibleInterval<FloatType>>
+/**
+ * Lazy, cell-wise background normalization used before interest point detection: for each requested
+ * output cell every XY slice of the source is median-filtered (ImageJ {@code RankFilters}, radius
+ * {@code radiusXY}) and each output pixel is set to {@code value / median}, i.e. the image is divided by
+ * its local background, or set to 0 where the median is not positive. Instances serve as the cell
+ * loader of the cached image created by {@link #init}.
+ * 2D sources are treated as 3D with a single slice; more than 3 dimensions are not supported.
+ *
+ * @param <T> the pixel type of the source image
+ */
+public class LazyBackgroundNormalize<T extends RealType<T> & NativeType<T>> implements Consumer<RandomAccessibleInterval<FloatType>>
 {
 	final private int radiusXY;
 	final long[] globalMin;
 	final private RandomAccessible<T> source;
 	final int n;
 
-	public LazyBackgroundSubtract(
+	/**
+	 * Creates the operator; a 2D source is extended to 3D, a source with more than 3 dimensions causes
+	 * a {@code RuntimeException}.
+	 *
+	 * @param min the global min of the processed interval; output cells (which start at the origin)
+	 *            are translated by it before the source is read
+	 * @param source the input image; must be defined on the processed interval expanded by
+	 *            {@code radiusXY} in X and Y
+	 * @param radiusXY the radius of the median filter in XY (pixels)
+	 */
+	public LazyBackgroundNormalize(
 			final long[] min,
 			RandomAccessible<T> source,
 			final int radiusXY )
@@ -118,7 +138,7 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 			//ImageJFunctions.show( imgMedian );
 			//ImageJFunctions.show( img );
 
-			// subtract only the center
+			// divide only the center (the output cell) by its median; the margin was just filter support
 			final Cursor< FloatType > out = Views.flatIterable( Views.hyperSlice( output, 2, z ) ).cursor();
 			final Cursor< FloatType > median = Views.flatIterable( imgMedianCrop ).cursor();
 			final Cursor< FloatType > image = Views.flatIterable( imgCrop ).cursor();
@@ -139,6 +159,20 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 		}
 	}
 
+	/**
+	 * Creates a lazily evaluated, cached {@link FloatType} image of {@code processingInterval} in which
+	 * each pixel of {@code input} is divided by the median of its XY neighborhood of radius
+	 * {@code radiusXY}. Cells of {@code blockSize} are computed on demand by a
+	 * {@link LazyBackgroundNormalize}.
+	 *
+	 * @param <T> the pixel type of the input
+	 * @param input the input image; must be defined on {@code processingInterval} expanded by
+	 *            {@code radiusXY} in X and Y
+	 * @param processingInterval the interval to compute; the result is located at this interval
+	 * @param radiusXY the radius of the median filter in XY (pixels)
+	 * @param blockSize the cell size of the cached result
+	 * @return the background-corrected image, located at {@code processingInterval}
+	 */
 	public static final <T extends RealType<T> & NativeType<T>> RandomAccessibleInterval<FloatType> init(
 			final RandomAccessible< T > input,
 			final Interval processingInterval,
@@ -147,8 +181,8 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 	{
 		final long[] min = processingInterval.minAsLongArray();
 
-		final LazyBackgroundSubtract<T> lazyBG =
-				new LazyBackgroundSubtract<>(
+		final LazyBackgroundNormalize<T> lazyBG =
+				new LazyBackgroundNormalize<>(
 						min,
 						input,
 						radiusXY );
@@ -180,7 +214,7 @@ public class LazyBackgroundSubtract<T extends RealType<T> & NativeType<T>> imple
 
 		ImageJFunctions.show( inputCropped );
 
-		RandomAccessibleInterval<FloatType> bgCorrected = LazyBackgroundSubtract.init(
+		RandomAccessibleInterval<FloatType> bgCorrected = LazyBackgroundNormalize.init(
 				inputCropped,
 				new FinalInterval(inputCropped),
 				10,

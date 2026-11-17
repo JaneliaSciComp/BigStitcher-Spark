@@ -36,8 +36,21 @@ import net.imglib2.type.numeric.integer.UnsignedShortType;
 import net.imglib2.type.numeric.real.DoubleType;
 import net.imglib2.type.numeric.real.FloatType;
 
+/**
+ * Conversion from N5 {@link DataType}s to the corresponding imglib2 pixel types.
+ */
 public class DataTypeUtil {
 
+	/**
+	 * Returns a new imglib2 type instance for an N5 data type, e.g. {@link UnsignedShortType} for
+	 * {@code UINT16} or {@link FloatType} for {@code FLOAT32}. All signed/unsigned integer and
+	 * floating-point N5 types are supported.
+	 *
+	 * @param <T> the expected imglib2 type (unchecked cast; must match {@code dataType})
+	 * @param dataType the N5 data type
+	 * @return a fresh instance of the matching imglib2 type
+	 * @throws RuntimeException if {@code dataType} is not one of the numeric types
+	 */
 	@SuppressWarnings("unchecked")
 	public static < T extends RealType< T > & NativeType< T > > T toType( final DataType dataType )
 	{

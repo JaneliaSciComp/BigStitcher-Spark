@@ -40,7 +40,6 @@ import mpicbg.models.Model;
 import mpicbg.models.RigidModel3D;
 import mpicbg.models.TranslationModel3D;
 import mpicbg.spim.data.SpimData;
-import mpicbg.spim.data.SpimDataException;
 import mpicbg.spim.data.sequence.ViewId;
 import net.preibisch.mvrecon.fiji.plugin.Interest_Point_Registration;
 import net.preibisch.mvrecon.fiji.plugin.interestpointregistration.parameters.BasicRegistrationParameters.OverlapType;
@@ -61,11 +60,24 @@ import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constell
 import net.preibisch.mvrecon.process.interestpointregistration.pairwise.constellation.range.TimepointRange;
 import picocli.CommandLine.Option;
 
+/**
+ * Base class of the commands that register views using interest points. It adds the registration options
+ * (time-series registration type, reference and range timepoint, which views to compare, transformation and
+ * regularization model, allowed view-setup comparison pairs, log caps) and the helpers that turn them into
+ * the {@link PairwiseSetup}, {@link Model} and {@link OverlapDetection} instances multiview-reconstruction
+ * works with, mirroring the BigStitcher GUI ({@code Interest_Point_Registration}).
+ */
 public abstract class AbstractRegistration extends AbstractSelectableViews
 {
 	private static final long serialVersionUID = 6435121614117716228L;
 
+	/** Transformation model fitted to each view (or group of views) during registration. */
 	public enum TransformationModel { TRANSLATION, RIGID, AFFINE };
+
+	/**
+	 * Model the {@link TransformationModel} is regularized towards, by interpolating between the two with
+	 * weight {@code --lambda} ({@link InterpolatedAffineModel3D}).
+	 */
 	public enum RegularizationModel { NONE, IDENTITY, TRANSLATION, RIGID, AFFINE };
 
 	@Option(names = { "-rtp", "--registrationTP" }, description = "time series registration type; TIMEPOINTS_INDIVIDUALLY (i.e. no registration across time), TO_REFERENCE_TIMEPOINT, ALL_TO_ALL or ALL_TO_ALL_WITH_RANGE (default: TIMEPOINTS_INDIVIDUALLY)")
@@ -104,7 +116,16 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	protected SpimData2 dataGlobal;
 	protected ArrayList< ViewId > viewIdsGlobal;
 
-	public void initRegistrationParameters() throws SpimDataException
+	/**
+	 * Loads the dataset and the selected views into {@link #dataGlobal} and {@link #viewIdsGlobal}, propagates
+	 * the {@code --maxPerPairLog}, {@code --maxPerPairCorrLog} and {@code --maxPerViewTransformLog} caps into
+	 * their static homes in multiview-reconstruction, and resolves {@code --referenceTP}: it defaults to the
+	 * timepoint of the first selected view and must otherwise be one of the selected timepoints.
+	 *
+	 * @throws IllegalArgumentException if the dataset or no views could be loaded, or if the reference
+	 *         timepoint is not part of the selected views
+	 */
+	public void initRegistrationParameters()
 	{
 		// propagate log-cap knobs into their mvr static homes before any registration code runs
 		InterestPointMatchCreator.maxPerPairLog = maxPerPairLog;
@@ -136,6 +157,17 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			System.out.println( "Reference timepoint = " + this.referenceTP );
 	}
 
+	/**
+	 * Creates the mpicbg model for the given choice: the plain {@link TranslationModel3D}, {@link RigidModel3D}
+	 * or {@link AffineModel3D} if {@code regularizationModel} is {@code NONE}, otherwise an
+	 * {@link InterpolatedAffineModel3D} that interpolates between the transformation model and the
+	 * regularization model with weight {@code lambda}.
+	 *
+	 * @param transformationModel the transformation model to fit
+	 * @param regularizationModel the model to regularize towards, or {@code NONE}
+	 * @param lambda weight of the regularization model, {@code 0} = unregularized, {@code 1} = regularizer only
+	 * @return a new, unfitted model instance
+	 */
 	public static Model< ? > createModelInstance( TransformationModel transformationModel, RegularizationModel regularizationModel, double lambda )
 	{
 		// parse model
@@ -170,6 +202,11 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 
 	/**
 	 * Same as the GUI (Interest_Point_Registration): groups, registration strategy, overlap-based pairs, connected subsets.
+	 *
+	 * @param viewReg which view pairs to compare, {@code OVERLAPPING_ONLY} or {@code ALL_AGAINST_ALL}
+	 * @param groupsGlobal the groups of views that are registered as one unit
+	 * @return the pairwise setup for {@link #viewIdsGlobal} with pairs defined, non-overlapping pairs removed
+	 *         and connected subsets detected
 	 */
 	public PairwiseSetup< ViewId > setupGroups( final OverlapType viewReg, final Set< Group< ViewId > > groupsGlobal )
 	{
@@ -181,6 +218,18 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 	}
 
 	// TODO: move to multiview-reconstruction (AdvancedRegistrationParameters)
+	/**
+	 * Creates the {@link PairwiseSetup} implementing the requested time-series registration strategy:
+	 * {@link IndividualTimepoints}, {@link AllToAll}, {@link AllToAllRange} with a {@link TimepointRange} of
+	 * {@code rangeTP}, or {@link ReferenceTimepoint}.
+	 *
+	 * @param registrationType the time-series registration type
+	 * @param views the views to register
+	 * @param groups the groups of views that are registered as one unit
+	 * @param rangeTP maximal timepoint distance of compared views; only used for {@code ALL_TO_ALL_WITH_RANGE}
+	 * @param referenceTP id of the reference timepoint; only used for {@code TO_REFERENCE_TIMEPOINT}
+	 * @return a new pairwise setup for the given views and groups
+	 */
 	public static PairwiseSetup< ViewId > pairwiseSetupInstance(
 			final RegistrationType registrationType,
 			final List< ViewId > views,
@@ -200,6 +249,15 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 
 
 	// TODO: move to multiview-reconstruction (BasicRegistrationParameters)
+	/**
+	 * Creates the overlap test used to prune view pairs: an {@link AllAgainstAllOverlap}, which treats every
+	 * pair as overlapping, for {@code ALL_AGAINST_ALL}; otherwise a {@link SimpleBoundingBoxOverlap} based on
+	 * the current view registrations.
+	 *
+	 * @param spimData the dataset whose registrations the bounding-box test uses
+	 * @param overlapType {@code OVERLAPPING_ONLY} or {@code ALL_AGAINST_ALL}
+	 * @return a new overlap detection
+	 */
 	public static OverlapDetection< ViewId > getOverlapDetection( final SpimData spimData, final OverlapType overlapType )
 	{
 		if ( overlapType == OverlapType.ALL_AGAINST_ALL )
@@ -208,6 +266,17 @@ public abstract class AbstractRegistration extends AbstractSelectableViews
 			return new SimpleBoundingBoxOverlap<>( spimData );
 	}
 
+	/**
+	 * Reads a {@code --vsComparisonsFile}: one {@code vsIdA,vsIdB} pair of view-setup ids per line; blank lines
+	 * and lines starting with {@code #} are skipped. Each pair is stored with the smaller id first, so the
+	 * order within a line does not matter.
+	 *
+	 * @param filePath path of the text file, or {@code null} if no restriction was given
+	 * @return the set of allowed (smaller id, larger id) view-setup pairs, or {@code null} if {@code filePath}
+	 *         is {@code null}
+	 * @throws IllegalArgumentException if a line does not consist of exactly two comma-separated values
+	 * @throws RuntimeException if the file cannot be read
+	 */
 	public static HashSet< Pair< Integer, Integer > > parseVsComparisonsFile( final String filePath )
 	{
 		if ( filePath == null )

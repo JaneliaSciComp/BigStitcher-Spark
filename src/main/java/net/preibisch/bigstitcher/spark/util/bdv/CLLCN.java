@@ -26,6 +26,12 @@ import mpicbg.ij.integral.BlockStatistics;
  */
 public class CLLCN extends BlockStatistics {
 
+	/**
+	 * Creates the normalizer for a {@link FloatProcessor}; the integral images of pixel values and squared
+	 * values that all {@code run*} methods use for local block statistics are built here.
+	 *
+	 * @param fp the image to normalize in place
+	 */
 	public CLLCN(final FloatProcessor fp) {
 
 		super(fp);
@@ -36,6 +42,15 @@ public class CLLCN extends BlockStatistics {
 //	f(x, a, b) = x < b ? x : (x - b + g(a))**a + b - g(a)**a
 
 
+	/**
+	 * Subtracts the local block mean from every pixel and re-centers the result at the midpoint of the
+	 * image's display range ({@code fp.getMin()..fp.getMax()}), i.e. removes low-frequency intensity
+	 * variation without changing local contrast. Operates in place on {@code fp}.
+	 *
+	 * @param blockRadiusX half width of the local block (the block spans {@code 2*blockRadiusX+1} pixels,
+	 *        clipped at the image border)
+	 * @param blockRadiusY half height of the local block
+	 */
 	public void runCenter(
 			final int blockRadiusX,
 			final int blockRadiusY) {
@@ -70,6 +85,17 @@ public class CLLCN extends BlockStatistics {
 		}
 	}
 
+	/**
+	 * Stretches contrast by the local block standard deviation: each pixel's deviation from the
+	 * display-range midpoint is scaled by {@code fpLength / (2 * meanFactor * std)}, so a deviation of
+	 * {@code meanFactor} local standard deviations maps onto half the display range. The local mean is
+	 * not removed. Pixels in blocks with zero standard deviation are set to the display-range midpoint.
+	 * Operates in place on {@code fp}.
+	 *
+	 * @param blockRadiusX half width of the local block
+	 * @param blockRadiusY half height of the local block
+	 * @param meanFactor how many local standard deviations span half the display range
+	 */
 	public void runStretch(
 			final int blockRadiusX,
 			final int blockRadiusY,
@@ -102,8 +128,9 @@ public class CLLCN extends BlockStatistics {
 				final double std = var < 0 ? 0 : Math.sqrt(var);
 				final float v = fp.getf(i);
 				final double d = meanFactor * std;
+				final double s = d == 0 ? 0 : 0.5 / d * fpLength;
 
-				fp.setf(i, (float)((v - fpMean) / 2 / d * fpLength + fpMean));
+				fp.setf(i, (float)((v - fpMean) * s + fpMean));
 			}
 		}
 	}
@@ -121,6 +148,21 @@ public class CLLCN extends BlockStatistics {
 		return x < limit ? x : Math.pow(x + gradientOnePointMinusLimit, gamma) + limitMinusGradientOnePointPowGamma;
 	}
 
+	/**
+	 * Contrast-limited variant of {@link #runStretch(int, int, float)}: the local stretch factor
+	 * {@code fpLength / (meanFactor * std)} is passed through a soft limiter that is the identity below
+	 * {@code limit} and continues as a power function with exponent {@code gamma} (continuous, with unit
+	 * slope at {@code limit}) above it, so that nearly flat blocks are not amplified without bound.
+	 * Pixels in blocks with zero standard deviation are set to the display-range midpoint. Operates in
+	 * place on {@code fp}.
+	 *
+	 * @param blockRadiusX half width of the local block
+	 * @param blockRadiusY half height of the local block
+	 * @param meanFactor how many local standard deviations span half the display range
+	 * @param limit stretch factor above which the limiting power function takes over
+	 * @param gamma exponent of the limiting power function; must not be {@code 1} (the limiter is
+	 *        undefined there), see {@link #run(int, int, float, float, float, boolean, boolean, boolean)}
+	 */
 	public void runStretch(
 			final int blockRadiusX,
 			final int blockRadiusY,
@@ -166,12 +208,27 @@ public class CLLCN extends BlockStatistics {
 						gradientOnePointMinusLimit,
 						limitMinusGradientOnePointPowGamma);
 
+				// TODO: fpLength is applied twice here: once inside the argument of limit() (as in the
+				// unlimited runStretch, where s = 0.5 / d * fpLength is used directly) and again below.
+				// Below the limit this stretches fpLength times stronger than the unlimited variant, and
+				// the limited runCenterStretch does not multiply again either. Same in the hot-knife
+				// original (org.janelia.saalfeldlab.hotknife.ops.CLLCN), so kept for now; verify intent.
 				fp.setf(i, (float)((v - fpMean) * s * fpLength + fpMean));
 			}
 		}
 	}
 
 
+	/**
+	 * Centers and stretches in one pass: maps the local range
+	 * {@code [mean - meanFactor*std, mean + meanFactor*std]} of each pixel's block linearly onto the
+	 * display range {@code [fp.getMin(), fp.getMax()]}. Pixels in blocks with zero standard deviation
+	 * are set to the display-range midpoint. Operates in place on {@code fp}.
+	 *
+	 * @param blockRadiusX half width of the local block
+	 * @param blockRadiusY half height of the local block
+	 * @param meanFactor how many local standard deviations map onto half the display range
+	 */
 	protected void runCenterStretch(
 			final int blockRadiusX,
 			final int blockRadiusY,
@@ -205,14 +262,27 @@ public class CLLCN extends BlockStatistics {
 				final double std = var < 0 ? 0 : Math.sqrt(var);
 				final float v = fp.getf(i);
 				final double d = meanFactor * std;
-				final double min = mean - d;
+				final double s = d == 0 ? 0 : 0.5 / d * fpLength;
 
-				fp.setf(i, (float)((v - min) / 2 / d * fpLength + fpMin));
+				fp.setf(i, (float)((v - mean) * s + fpLength / 2.0 + fpMin));
 			}
 		}
 	}
 
 
+	/**
+	 * Contrast-limited variant of {@link #runCenterStretch(int, int, float)}, using the same soft
+	 * limiter as {@link #runStretch(int, int, float, float, float)}. Pixels in blocks with zero standard
+	 * deviation are set to the display-range midpoint. Operates in place on {@code fp}.
+	 *
+	 * @param blockRadiusX half width of the local block
+	 * @param blockRadiusY half height of the local block
+	 * @param meanFactor how many local standard deviations map onto half the display range
+	 * @param limit stretch factor above which the limiting power function takes over
+	 * @param gamma exponent of the limiting power function; must not be {@code 1}
+	 * @param keepMinMax if {@code true}, pixels that are exactly at the display-range minimum or maximum
+	 *        (e.g. background or saturated values) are left unchanged
+	 */
 	protected void runCenterStretch(
 			final int blockRadiusX,
 			final int blockRadiusY,
@@ -262,17 +332,31 @@ public class CLLCN extends BlockStatistics {
 						gamma,
 						gradientOnePointMinusLimit,
 						limitMinusGradientOnePointPowGamma);
-				final double min = mean - fpLength / s * 0.5;
 
-//				if (d != 0 )
-//					System.out.println(0.5 / d * fpLength + " " + s);
-
-				fp.setf(i, (float)((v - min) * s + fpMin));
+				fp.setf(i, (float)((v - mean) * s + fpLength / 2.0 + fpMin));
 			}
 		}
 	}
 
 
+	/**
+	 * Entry point that dispatches to the centering and/or stretching variants. With {@code gamma == 1}
+	 * the unlimited variants are used and {@code limit} is ignored; otherwise the contrast-limited ones.
+	 * {@code center} alone removes the local mean, {@code stretch} alone normalizes by the local standard
+	 * deviation, both together map the local mean +/- {@code meanFactor} standard deviations onto the
+	 * display range. Nothing happens if neither flag is set. Operates in place on {@code fp}.
+	 *
+	 * @param blockRadiusX half width of the local block
+	 * @param blockRadiusY half height of the local block
+	 * @param meanFactor how many local standard deviations span half the display range
+	 * @param limit stretch factor above which the limiting power function takes over (unused if
+	 *        {@code gamma == 1})
+	 * @param gamma exponent of the limiting power function; {@code 1} selects the unlimited variants
+	 * @param center whether to subtract the local mean
+	 * @param stretch whether to normalize by the local standard deviation
+	 * @param keepMinMax whether to leave pixels at the display-range min/max untouched (only honoured by
+	 *        the contrast-limited center+stretch variant)
+	 */
 	public void run(
 			final int blockRadiusX,
 			final int blockRadiusY,

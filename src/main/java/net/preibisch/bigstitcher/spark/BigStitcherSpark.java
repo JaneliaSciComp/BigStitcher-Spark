@@ -65,6 +65,8 @@ public class BigStitcherSpark implements Runnable
 		// workflow tools
 		COMMANDS.put( "resave", SparkResaveN5.class );
 		COMMANDS.put( "detect-interestpoints", SparkInterestPointDetection.class );
+		COMMANDS.put( "filter-interestpoints", FilterInterestPoints.class );
+		COMMANDS.put( "embed-interestpoints", SparkInterestPointEmbedding.class );
 		COMMANDS.put( "match-interestpoints", SparkGeometricDescriptorMatching.class );
 		COMMANDS.put( "stitching", SparkPairwiseStitching.class );
 		COMMANDS.put( "solver", Solver.class );
@@ -74,6 +76,8 @@ public class BigStitcherSpark implements Runnable
 		COMMANDS.put( "fusion", SparkFusion.class );
 		COMMANDS.put( "nonrigid-fusion", SparkNonRigidFusion.class );
 		// utils
+		COMMANDS.put( "define-dataset", DefineDataset.class );
+		COMMANDS.put( "apply-transformation", ApplyTransformation.class );
 		COMMANDS.put( "split-images", SplitDatasets.class );
 		COMMANDS.put( "filter-views", Filter_Views.class );
 		COMMANDS.put( "downsample", SparkDownsample.class );
@@ -81,6 +85,7 @@ public class BigStitcherSpark implements Runnable
 		COMMANDS.put( "clear-registrations", ClearRegistrations.class );
 		COMMANDS.put( "transform-points", TransformPoints.class );
 		COMMANDS.put( "overlay-landmarks", OverlayLandmarks.class );
+		COMMANDS.put( "screenshot", Screenshot.class );
 	}
 
 	@Spec
@@ -92,7 +97,12 @@ public class BigStitcherSpark implements Runnable
 		throw new ParameterException( spec.commandLine(), "Missing required subcommand." );
 	}
 
-	/** The fully wired command line; commands are instantiated lazily, only when invoked. */
+	/**
+	 * The fully wired command line; commands are instantiated lazily, only when invoked.
+	 *
+	 * @return a new {@link CommandLine} for this class with every entry of {@link #COMMANDS} registered as a
+	 *         subcommand, each with the standard help options and the shared {@link Version} provider
+	 */
 	public static CommandLine commandLine()
 	{
 		final CommandLine top = new CommandLine( new BigStitcherSpark() );
