@@ -53,8 +53,8 @@ import picocli.CommandLine;
 
 /**
  * {@code embed-interestpoints} end to end on the simulated beads with a tiny ONNX model written by mvrecon's test
- * {@code TestOnnxModels}: one Spark task per view writes the view's rows into the per-point array of the label, which the
- * matcher's reader accepts by its count rule; a filtered label is embedded through its base; a dry run writes nothing; a hub
+ * {@code TestOnnxModels}: one Spark task per view writes the view's rows (a staging file), the driver's save moves them into
+ * the one table of the label's per-point array, which the matcher's reader accepts by its count rule; a filtered label is embedded through its base; a dry run writes nothing; a hub
  * model ({@code --model hf://...}, against mvrecon's {@code TestModelHub.FakeHub}) is pinned, downloaded into {@code --modelCache}
  * and recorded by its pinned URI.
  */
@@ -111,6 +111,15 @@ public class TestInterestPointEmbedding
 			total += points;
 		}
 		assertTrue( total > 30 );
+
+		// the driver's save moved the rows of all views into the array's one table: no staging file is left, no tables per view
+		assertEquals( views.size(), InterestPointArrays.rowsInStore( base, LABEL, 0, InterestPointArrays.EMBEDDING ).size() );
+		final File store = new File( new File( base ), "interestpoints.zarr" );
+		final String[] staged = new File( store, "staging" ).list( ( dir, name ) -> name.endsWith( ".rows" ) );
+		assertTrue( staged == null || staged.length == 0 );
+		final String[] inArray = new File( store, LABEL + "/tp0/" + InterestPointArrays.ARRAYS + "/" + InterestPointArrays.EMBEDDING ).list();
+		assertEquals( 1, java.util.Arrays.stream( inArray ).filter( child -> child.matches( "g\\d+" ) ).count() );
+		assertEquals( 0, java.util.Arrays.stream( inArray ).filter( child -> child.startsWith( InterestPointArrays.SETUP_PREFIX ) ).count() );
 
 		// recorded in the XML
 		final List< ActionRecord > records = data.getActionHistory().getRecords();
