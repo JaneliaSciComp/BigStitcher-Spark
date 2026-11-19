@@ -432,7 +432,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 			rddResults = rdd.map( task ->
 			{
-				final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+				final SpimData2 data = Spark.getCachedSparkJobSpimData2( xmlURI ); // not once per pair
 				final ArrayList< ViewId > views = task.viewsAsList();
 
 				// filter so we only load interest points we actually need
@@ -538,7 +538,7 @@ public class SparkGeometricDescriptorMatching extends AbstractRegistration
 
 			rddResults = rdd.map( task ->
 			{
-				final SpimData2 data = Spark.getSparkJobSpimData2( xmlURI );
+				final SpimData2 data = Spark.getCachedSparkJobSpimData2( xmlURI ); // not once per pair
 
 				final ArrayList< ViewId > views = new ArrayList<>();
 				views.addAll( task.vA.getViews() );
