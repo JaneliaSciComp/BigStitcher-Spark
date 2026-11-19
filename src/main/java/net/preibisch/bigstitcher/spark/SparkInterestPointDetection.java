@@ -178,7 +178,6 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 	@Option(names = { "--keepTemporaryN5" }, description = "do NOT delete the temporary spark N5 of the blocks (interestpoints.n5/spark_tmp_*; the results themselves are in interestpoints.zarr) (default: false)")
 	protected boolean keepTemporaryN5 = false;
 
-
 	@Option(names = {"--maxSpots" }, description = "limit the number of spots per view (choose the brightest ones by their image intensity), e.g. --maxSpots 10000; the same as a later filter-interestpoints --keepPoints 10000 --keepBy intensity, which keeps the full detection as a base label (default: NO LIMIT)")
 	protected int maxSpots = -1;
 
@@ -227,7 +226,7 @@ public class SparkInterestPointDetection extends AbstractSelectableViews impleme
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
-			return null;
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
 		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
 

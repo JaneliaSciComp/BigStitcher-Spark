@@ -153,7 +153,7 @@ public class SparkResaveN5 extends AbstractBasic implements Callable<Void>, Seri
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
-			return null;
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
 		if ( xmlOutURIString == null )
 			xmlOutURIString = xmlURIString;

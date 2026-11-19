@@ -110,7 +110,7 @@ public class Filter_Views extends AbstractBasic
 
 		final SpimData2 dataGlobal = this.loadSpimData2();
 		if ( dataGlobal == null )
-			return null;
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
 		final URI xmlOutURI = ( xmlOutURIString != null ) ? URITools.toURI( xmlOutURIString ) : xmlURI;
 		System.out.println( "xmlout: " + xmlOutURI );

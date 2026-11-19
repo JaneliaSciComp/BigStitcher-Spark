@@ -301,7 +301,7 @@ public class ClearInterestPoints extends AbstractSelectableViews
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
-			return null;
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
 		final ViewInterestPoints vip = dataGlobal.getViewInterestPoints();
 		final Map<ViewId, ViewInterestPointLists> ips = vip.getViewInterestPoints();

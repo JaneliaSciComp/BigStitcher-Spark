@@ -193,7 +193,7 @@ public class SparkNonRigidFusion extends AbstractSelectableViews implements Call
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
-			return null;
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
 		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
 

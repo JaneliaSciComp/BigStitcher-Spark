@@ -90,7 +90,7 @@ public class ClearRegistrations extends AbstractSelectableViews
 		final SpimData2 dataGlobal = this.loadSpimData2();
 
 		if ( dataGlobal == null )
-			return null;
+			throw new IllegalArgumentException( "Couldn't load SpimData XMl project." );
 
 		final ArrayList< ViewId > viewIdsGlobal = this.loadViewIds( dataGlobal );
 
