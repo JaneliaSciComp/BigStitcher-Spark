@@ -26,6 +26,15 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 	@Option(names = {"--input-pattern"}, description = "Glob pattern for input images, e.g. /data/images/*.tif")
 	private String inputPattern = "*";
 
+	@Option(names = {"--swap-xy"}, description = "Exchange the x and y stage positions read from the image metadata; applied before --flip-x / --flip-y (default: false)")
+	private boolean swapXY = false;
+
+	@Option(names = {"--flip-x"}, description = "Negate the x stage positions read from the image metadata (default: false)")
+	private boolean flipX = false;
+
+	@Option(names = {"--flip-y"}, description = "Negate the y stage positions read from the image metadata (default: false)")
+	private boolean flipY = false;
+
 	@Override
 	public Void call() throws Exception {
 		this.setRegion();
@@ -42,7 +51,8 @@ public class CreateDataset extends AbstractBasic implements Callable<Void>, Seri
 	}
 
 	private SpimData2 createDataset() {
-		SpimDatasetBuilder spimDatasetBuilder = new SpimDatasetBuilder(inputPattern);
+		SpimDatasetBuilder spimDatasetBuilder = new SpimDatasetBuilder(inputPattern)
+				.transformStagePositions(swapXY, flipX, flipY);
 		return spimDatasetBuilder.createDataset(URITools.toURI(inputPath));
 	}
 

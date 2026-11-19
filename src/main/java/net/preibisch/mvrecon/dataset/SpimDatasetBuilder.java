@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,6 +31,7 @@ import mpicbg.spim.data.sequence.Channel;
 import mpicbg.spim.data.sequence.FinalVoxelDimensions;
 import mpicbg.spim.data.sequence.Illumination;
 import mpicbg.spim.data.sequence.ImgLoader;
+import mpicbg.spim.data.sequence.MissingViews;
 import mpicbg.spim.data.sequence.SequenceDescription;
 import mpicbg.spim.data.sequence.Tile;
 import mpicbg.spim.data.sequence.TimePoint;
@@ -47,6 +49,7 @@ import net.preibisch.mvrecon.fiji.spimdata.imgloaders.FileMapImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.LegacyStackImgLoaderLOCI;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.CZIImageLoader;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapEntry;
+import net.preibisch.mvrecon.fiji.spimdata.imgloaders.filemap2.FileMapImgLoaderLOCI2;
 import net.preibisch.mvrecon.fiji.spimdata.imgloaders.util.BioformatsReaderUtils;
 import net.preibisch.mvrecon.fiji.spimdata.intensityadjust.IntensityAdjustments;
 import net.preibisch.mvrecon.fiji.spimdata.interestpoints.ViewInterestPoints;
@@ -181,9 +184,12 @@ public class SpimDatasetBuilder {
 		private final Map<Integer, StackFile> viewToStackFileMap = new HashMap<>();
 
 		LOCIViewSetupBuilder(TimePoints timePoints) {
+			// the virtual loaders look up present views through the missing views, which must not be null
 			this.sequenceDescription = new SequenceDescription(
 					timePoints,
-					/*view setups*/Collections.emptyList()
+					/*view setups*/Collections.emptyList(),
+					/*img loader*/null,
+					new MissingViews(Collections.emptyList())
 			);
 		}
 
@@ -255,9 +261,7 @@ public class SpimDatasetBuilder {
 						stackFile.sizeY = formatReader.getSizeY();
 						stackFile.sizeX = formatReader.getSizeX();
 
-						double oX = getOffsetX(retrieve, globalMetadata, series);
-						double oY = getOffsetY(retrieve, globalMetadata, series);
-						double oZ = getOffsetZ(retrieve, globalMetadata, series);
+						double[] tileLocation = getTileLocation(retrieve, globalMetadata, series);
 						Length resX = retrieve.getPixelsPhysicalSizeX(series);
 						Length resY = retrieve.getPixelsPhysicalSizeY(series);
 						Length resZ = retrieve.getPixelsPhysicalSizeZ(series);
@@ -283,7 +287,7 @@ public class SpimDatasetBuilder {
 							// for now I am ignoring them because so far we never needed them.
 							int viewIndex = metadataChIndex * nfiles * seriesCount + sfi * seriesCount + series;
 							Tile tile = new Tile(stackFile.getTi() * seriesCount + series);
-							tile.setLocation(new double[]{oX, oY, oZ});
+							tile.setLocation(tileLocation);
 							Channel channel = new Channel(stackFile.getCh() + metadataChIndex, chName);
 							ViewSetup vs = new ViewSetup(
 									viewIndex,
@@ -304,6 +308,17 @@ public class SpimDatasetBuilder {
 				}
 			}
 			return this;
+		}
+
+		/**
+		 * Location of the tile (x, y, z in um) of the given series, set on the Tile of every view of the series.
+		 */
+		protected double[] getTileLocation(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
+			return new double[]{
+					getOffsetX(metadataRetrieve, globalMetadata, series),
+					getOffsetY(metadataRetrieve, globalMetadata, series),
+					getOffsetZ(metadataRetrieve, globalMetadata, series)
+			};
 		}
 
 		private double getOffsetX(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
@@ -421,6 +436,58 @@ public class SpimDatasetBuilder {
 		@Override
 		protected ImgLoader createImageLoader(Map<BasicViewDescription<?>, FileMapEntry> fileMap) {
 			return new CZIImageLoader(fileMap, getSequenceDescription());
+		}
+	}
+
+	/**
+	 * Nikon ND2 files: every series is one XY stage position (tile) with all its channels.
+	 * ND2Reader stores the stage position as OME plane positions only (no stage labels and no
+	 * Position|X style global keys), so the location of a tile is the position of its first plane.
+	 * The images are read plane by plane on demand (FileMapImgLoaderLOCI2), an ND2 holds hundreds of GB.
+	 */
+	static class ND2ViewSetupBuilder extends LOCIViewSetupBuilder {
+
+		ND2ViewSetupBuilder(TimePoints timePoints) {
+			super(timePoints);
+		}
+
+		@Override
+		protected double[] getTileLocation(MetadataRetrieve metadataRetrieve, Map<String, Object> globalMetadata, int series) {
+			// the stage coordinates are taken as they are; the axis convention (mvr's LegacyStackImgLoaderLOCI
+			// negates x and y of ND2 plane positions) still has to be checked against the image content
+			double[] location = new double[3];
+			if (metadataRetrieve.getPlaneCount(series) == 0) {
+				return location;
+			}
+			Length[] position = {
+					metadataRetrieve.getPlanePositionX(series, 0),
+					metadataRetrieve.getPlanePositionY(series, 0),
+					metadataRetrieve.getPlanePositionZ(series, 0)
+			};
+			for (int d = 0; d < 3; d++) {
+				if (position[d] != null && position[d].value(UNITS.MICROMETER) != null) {
+					location[d] = position[d].value(UNITS.MICROMETER).doubleValue();
+				}
+			}
+			return location;
+		}
+
+		@Override
+		protected ImgLoader createImageLoader(Map<BasicViewDescription<?>, FileMapEntry> fileMap) {
+			return new FileMapImgLoaderLOCI2(fileMap, getSequenceDescription());
+		}
+
+		@Override
+		public ND2ViewSetupBuilder createViewSetups(List<StackFile> stackFiles) {
+			super.createViewSetups(stackFiles);
+			// timepoints inside a file are not mapped to timepoints of the dataset (yet)
+			for (StackFile stackFile : stackFiles) {
+				if (stackFile.nTp > 1) {
+					throw new IllegalArgumentException(stackFile.getFilePath() + " has " + stackFile.nTp +
+							" timepoints; only ND2 files with a single timepoint are supported");
+				}
+			}
+			return this;
 		}
 	}
 
@@ -553,10 +620,27 @@ public class SpimDatasetBuilder {
 	}
 
 	private final StackPattern fileNamePattern;
+	private boolean swapXY = false;
+	private boolean flipX = false;
+	private boolean flipY = false;
 
 	public SpimDatasetBuilder(String fileNamePattern )
 	{
 		this.fileNamePattern = new StackPattern(fileNamePattern);
+	}
+
+	/**
+	 * Map the stage positions read from the image metadata (the tile locations) onto the image axes,
+	 * for microscopes whose stage axes differ from the camera's: swapXY exchanges x and y first,
+	 * then flipX / flipY negate x / y of the result. Together they give all eight orientations,
+	 * e.g. swapXY + flipX + flipY maps (x, y) to (-y, -x).
+	 */
+	public SpimDatasetBuilder transformStagePositions(boolean swapXY, boolean flipX, boolean flipY)
+	{
+		this.swapXY = swapXY;
+		this.flipX = flipX;
+		this.flipY = flipY;
+		return this;
 	}
 
 	public SpimData2 createDataset(URI imagePath) {
@@ -567,10 +651,12 @@ public class SpimDatasetBuilder {
 				.map(si -> new TimePoint(si.viewIndex.tp))
 				.collect(Collectors.toSet());
 
-		SequenceDescription sequenceDescription = createViewSetupBuilder(imagePath, new TimePoints(timePoints))
+		SequenceDescription sequenceDescription = createViewSetupBuilder(imagePath, stackFiles, new TimePoints(timePoints))
 				.createViewSetups(stackFiles)
 				.setImgLoader()
 				.getSequenceDescription();
+
+		transformTileLocations(sequenceDescription);
 
 		// get the min resolution from all calibrations
 		double minResolution = DatasetCreationUtils.minResolution(
@@ -595,6 +681,31 @@ public class SpimDatasetBuilder {
 				new StitchingResults(),
 				new IntensityAdjustments()
 		);
+	}
+
+	private void transformTileLocations(SequenceDescription sequenceDescription) {
+		if (!swapXY && !flipX && !flipY) {
+			return;
+		}
+		// view setups of the same tile may share one Tile object, transform every object once
+		Set<Tile> transformed = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (ViewSetup vs : sequenceDescription.getViewSetupsOrdered()) {
+			Tile tile = vs.getTile();
+			double[] location = tile == null ? null : tile.getLocation();
+			if (location == null || location.length < 2 || !transformed.add(tile)) {
+				continue;
+			}
+			double[] newLocation = location.clone();
+			if (swapXY) {
+				newLocation[0] = location[1];
+				newLocation[1] = location[0];
+			}
+			if (flipX) newLocation[0] = -newLocation[0];
+			if (flipY) newLocation[1] = -newLocation[1];
+			tile.setLocation(newLocation);
+		}
+		long nTiles = transformed.stream().mapToInt(Tile::getId).distinct().count();
+		System.out.println("Transformed the stage positions of " + nTiles + " tiles (swap xy: " + swapXY + ", flip x: " + flipX + ", flip y: " + flipY + ")");
 	}
 
 	/**
@@ -645,9 +756,16 @@ public class SpimDatasetBuilder {
 		}
 	}
 
-	private ViewSetupBuilder createViewSetupBuilder(URI imageURI, TimePoints timePoints) {
-		if ( imageURI.getPath().contains(".czi") ) {
+	private static boolean allStackFilesHaveExtension(List<StackFile> stackFiles, String extension) {
+		return !stackFiles.isEmpty() && stackFiles.stream()
+				.allMatch(sf -> sf.relativeFilePath.toLowerCase().endsWith(extension));
+	}
+
+	private ViewSetupBuilder createViewSetupBuilder(URI imageURI, List<StackFile> stackFiles, TimePoints timePoints) {
+		if ( imageURI.getPath().contains(".czi") || allStackFilesHaveExtension(stackFiles, ".czi") ) {
 			return new CZIViewSetupBuilder(timePoints);
+		} else if ( allStackFilesHaveExtension(stackFiles, ".nd2") ) {
+			return new ND2ViewSetupBuilder(timePoints);
 		} else if ( imageURI.getScheme().equals("n5") || imageURI.getScheme().equals("file") && imageURI.getPath().contains(".n5") ) {
 			return new N5MultichannelViewSetupBuilder(imageURI, timePoints);
 		} else {
