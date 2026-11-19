@@ -55,7 +55,8 @@ public class TestSolverMapback
 		final AffineTransform3D otherBefore = before.getViewRegistrations().getViewRegistration( other ).getModel().copy();
 
 		run( new Solver(), "-x", xml, "-s", "IP", "-l", "beads", "-tm", "RIGID", "-rm", "NONE",
-				"--disableFixedViews", "--enableMapbackViews", "--mapbackViews", "0,0", "--mapbackModel", "RIGID" );
+				"--disableFixedViews", "--enableMapbackViews", "--mapbackViews", "0,0", "--mapbackModel", "RIGID",
+				"--localSparkBindAddress" );
 
 		final SpimData2 after = new XmlIoSpimData2().load( xmlFile.toURI() );
 		final AffineTransform3D refAfter = after.getViewRegistrations().getViewRegistration( ref ).getModel();
