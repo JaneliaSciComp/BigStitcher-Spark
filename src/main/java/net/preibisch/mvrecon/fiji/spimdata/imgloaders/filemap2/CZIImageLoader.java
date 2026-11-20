@@ -32,7 +32,6 @@ import net.imglib2.type.NativeType;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.util.CloseableThreadLocal;
-import net.preibisch.mvrecon.fiji.spimdata.imgloaders.util.BioformatsReaderSetupHook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import util.ImgLib2Tools;
